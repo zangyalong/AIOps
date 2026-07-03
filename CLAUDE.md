@@ -10,8 +10,6 @@
 
 **为什么做**：作为学习者从 0 到 1 掌握 AI Agent + 全栈开发的载体项目。选运维方向是因为它天然有"工具调用"的场景（SSH、Prometheus、日志系统、K8s 等），能自然引出 Agent 的核心能力。
 
-**当前状态**：项目刚初始化，只有本文档。尚未开始编码。
-
 ---
 
 ## 2. 技术栈
@@ -76,68 +74,11 @@ AIOMS/
 └── docker-compose.yml       # 后期加：pg + backend + frontend
 ```
 
-**说明**：这只是目标结构，**不要一次性全建**。每个阶段只建当下需要的目录，用到再加。
+**说明**：这只是目标结构，**不要一次性全建**。用到什么再加什么，不用的目录不要提前搭。
 
 ---
 
-## 5. 阶段路线图（学习路径）
-
-按顺序推进，每个阶段结束时应该有一个能跑起来的产物。**不要跳阶段**。
-
-### 阶段 0：环境与工具链（预计 0.5 天）
-
-- 确认 Python / Node / Postgres 版本
-- 选择 Python 依赖管理工具（推荐 `uv`）
-- 建立 `backend/` 和 `frontend/` 骨架，各自能启动 hello world
-
-### 阶段 1：后端最小服务（预计 1 天）
-
-- FastAPI 起一个 `/health` 端点
-- 接上 PostgreSQL，用 SQLAlchemy 定义第一张表（如 `servers`）
-- Alembic 生成第一个迁移
-- 一条 CRUD 链路跑通
-
-### 阶段 2：前端最小页面（预计 1 天）
-
-- Vue3 + Vite + TS 起项目
-- 一个页面调用后端 `/servers` 接口，展示列表
-- 配好开发时的 API 代理
-
-### 阶段 3：第一个 LangChain 工具（预计 1 天）
-
-- 装 `langchain` + `langchain-openai`（DeepSeek 走 OpenAI 兼容接口，用 `ChatOpenAI` + 自定义 `base_url`）
-- 写一个最简单的 Tool（例如"查询 servers 表"）
-- 让 LLM 通过 Tool Calling 调用它（**先确认 DeepSeek V4 Flash 是否支持 function calling / tool calling，这是能不能用 Agent 模式的前提**）
-- 后端暴露 `/chat` 端点，前端加个对话框
-
-### 阶段 4：引入 LangGraph（预计 2 天）
-
-- 把单轮工具调用改成 LangGraph 状态机
-- 增加"计划 → 执行 → 反思"的多步骤流程
-- 引入持久化（checkpointer）
-
-### 阶段 5：真实运维工具接入（预计 3 天+）
-
-- SSH 执行命令工具（**要严格设白名单**）
-- 日志检索工具（先本地文件，后期 Loki/ES）
-- 告警接入（先手动模拟，后期 Prometheus Alertmanager）
-
-### 阶段 6：多 Agent 协作（预计 3 天+）
-
-- 拆分角色：Diagnostician（诊断）/ Executor（执行）/ Reporter（汇报）
-- 用 LangGraph 的多 Agent 模式串联
-
-### 阶段 7：生产化打磨
-
-- Docker Compose 一键起
-- 权限、审计日志、Prompt 注入防护
-- 前端 UX 优化（流式回复、工具调用可视化）
-
-**当前阶段：阶段 0-2 已完成，阶段 3（第一个 LangChain 工具）尚未开始。**
-
----
-
-## 6. 代码约定
+## 5. 代码约定
 
 ### Python / 后端
 
@@ -163,12 +104,13 @@ AIOMS/
 
 ### Git
 
-- 提交信息中文可，尽量小步提交
-- 每完成一个阶段建议打 tag：`v0.1-stage-N`
+- 提交信息中文可，尽量小步提交，标题用 Conventional Commits 前缀（`feat`/`fix`/`refactor`/`docs`/`chore` 等）加 scope：`<type>(<scope>): <中文描述>`
+- 不加 `Co-Authored-By` 落款
+- 重要节点可以打 tag 标记
 
 ---
 
-## 7. 安全红线（运维场景特别注意）
+## 6. 安全红线（运维场景特别注意）
 
 - **AI 决定的破坏性操作必须人工二次确认**：重启服务、删除数据、修改防火墙、`rm -rf` 这类，Agent 只能"建议"，不能"执行"。
 - SSH/Shell 工具要走**白名单命令**，不要开放任意执行。
@@ -177,7 +119,7 @@ AIOMS/
 
 ---
 
-## 8. 常用命令（随进度补充）
+## 7. 常用命令（随进度补充）
 
 ```bash
 # 启动后端（FastAPI，默认 8010 端口，因为 8000 被本机其他项目占用）：
@@ -194,18 +136,17 @@ psql -d aioms                        # 连接 aioms 库
 cd backend && uv run alembic upgrade head        # 应用迁移
 cd backend && uv run alembic revision --autogenerate -m "说明"  # 改了 models/ 后生成新迁移
 
-# 跑测试：暂无测试套件（阶段1-2 未涉及，后续阶段按需补）
+# 跑测试：暂无测试套件，需要时再补
 ```
 
 ---
 
-## 9. 附：给 Claude 的默认动作
+## 8. 附：给 Claude 的默认动作
 
-当用户开新对话说"继续做 AIOMS"时，你的默认动作是：
+具体开发节奏、顺序、优先级由用户自己把控，不设固定阶段/路线图，Claude 不主动规划"接下来该做什么"。
 
-1. 读一下 `CLAUDE.md` 里的"当前阶段"
-2. 看 `git log` 最近的提交，判断上次做到哪儿
-3. 用一段话向用户回顾："上次我们做完了 X，这次的目标是 Y，涉及新概念 Z，我建议这样切分小步骤：……"
-4. 等用户确认后再动手
+当用户开新对话说"继续做 AIOMS"时，默认动作是：
 
-**不要**上来就写代码。**不要**替用户跳过阶段。
+1. 看 `git log` 最近的提交和当前代码状态，了解目前进度
+2. 用一段话简要回顾现状（做到哪了、最近改了什么）
+3. 等用户说明这次要做什么，再动手——不要自己假设下一步该干嘛
