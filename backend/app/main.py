@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from app.agents.graphs.chat_graph import build_chat_graph
 from app.api import chat, conversations, health, servers
 from app.db.session import engine
-from app.models import conversation, message, server  # noqa: F401  # 注册模型到 Base.metadata
+from app.models import alert_event, conversation, message, server  # noqa: F401  # 注册模型到 Base.metadata
 from app.models.base import Base
 
 

@@ -11,16 +11,30 @@ from langgraph.graph.state import CompiledStateGraph
 from pydantic import BaseModel, Field
 from functools import lru_cache
 
+from app.agents.tools.alerts import query_alerts
+from app.agents.tools.commands import run_whitelisted_command
+from app.agents.tools.logs import search_logs
 from app.agents.tools.servers import query_servers
 from app.core.config import settings
 
-TOOLS = [query_servers]
+TOOLS = [query_servers, search_logs, query_alerts, run_whitelisted_command]
 TOOLS_BY_NAME = {t.name: t for t in TOOLS}
 
 # 反思环节最多重试几次，防止“一直觉得不满意”死循环
 MAX_ATTEMPTS = 2
 
-PERSONA = "你是 AIOMS 的运维助手。可用工具：query_servers（查询 servers 表）。"
+# call_model <-> call_tools 循环最多走几轮，防止模型死循环调工具；到上限后
+# call_model_node 会直接不给模型挂工具，强制它基于已有信息收尾。
+MAX_TOOL_ITERATIONS = 5
+
+PERSONA = (
+    "你是 AIOMS 的运维助手。可用工具：\n"
+    "- query_servers：查询 servers 表里的服务器列表\n"
+    "- search_logs：模拟日志检索（还没接入真实日志系统，结果是模拟数据）\n"
+    "- query_alerts：查询 alert_events 表里未处理的告警（表里数据是手动模拟生成的，还没接真实监控系统）\n"
+    "- run_whitelisted_command：通过 SSH 在白名单内执行只读诊断命令（只对配置了 SSH 连接信息的服务器生效，是真实执行）\n"
+    "工具返回的模拟数据要如实告诉用户是模拟的，不要当成真实结果陈述。"
+)
 
 
 class ReflectionVerdict(BaseModel):
@@ -33,6 +47,7 @@ class ChatState(TypedDict):
     plan: str
     satisfied: bool
     attempts: int
+    tool_iterations: int
 
 @lru_cache(maxsize=None)
 def _llm(bind_tools: bool) -> ChatOpenAI:
@@ -61,24 +76,33 @@ async def plan_node(state: ChatState) -> dict:
     prompt = [
         SystemMessage(
             PERSONA
-            + "现在请你先规划：用一两句话说明打算怎么回答用户最新的问题，"
-            "需不需要用 query_servers 查一下。只说计划，不要直接回答。"
+            + "\n现在请你先规划：用一两句话说明打算怎么回答用户最新的问题，"
+            "需不需要用上面列的工具查一下、要用哪个。只说计划，不要直接回答。"
         ),
         *state["messages"],
     ]
     response = await _llm(bind_tools=False).ainvoke(prompt)
     print(f"[graph] plan_node 耗时 {time.monotonic() - t0:.1f}s，plan={response.content!r}")
-    return {"plan": str(response.content), "attempts": 0}
+    return {"plan": str(response.content), "attempts": 0, "tool_iterations": 0}
 
 
 async def call_model_node(state: ChatState) -> dict:
-    """按当前计划执行：可能直接回答，也可能先调用工具。"""
+    """按当前计划执行：可能直接回答，也可能先调用工具。
+
+    达到工具调用步数上限后，不再把工具挂给模型（bind_tools=False）——这样模型
+    在 API 层面就没有工具可选，不是"提示它别调了"，从根上避免死循环调工具，
+    也避免产出一条不会再被回应的 tool_calls 消息。
+    """
     t0 = time.monotonic()
+    at_limit = state["tool_iterations"] >= MAX_TOOL_ITERATIONS
+    persona = PERSONA
+    if at_limit:
+        persona += "\n已达到工具调用次数上限，不能再调用任何工具，请直接基于目前已知的信息回答。"
     prompt = [
-        SystemMessage(f"{PERSONA}\n当前计划：{state['plan']}"),
+        SystemMessage(f"{persona}\n当前计划：{state['plan']}"),
         *state["messages"],
     ]
-    response = await _llm(bind_tools=True).ainvoke(prompt)
+    response = await _llm(bind_tools=not at_limit).ainvoke(prompt)
     print(
         f"[graph] call_model_node 耗时 {time.monotonic() - t0:.1f}s，"
         f"tool_calls={response.tool_calls!r}"
@@ -96,7 +120,7 @@ async def call_tools_node(state: ChatState) -> dict:
         result = await selected_tool.ainvoke(tool_call["args"])
         results.append(ToolMessage(content=result, tool_call_id=tool_call["id"]))
     print(f"[graph] call_tools_node 耗时 {time.monotonic() - t0:.1f}s")
-    return {"messages": results}
+    return {"messages": results, "tool_iterations": state["tool_iterations"] + 1}
 
 
 async def reflect_node(state: ChatState) -> dict:
