@@ -70,11 +70,21 @@ docker logs aioms-test-server
 连不上时能立刻判断是这一层的问题还是代码的问题。
 
 ```bash
-ssh -i ssh/aioms-test -p 2222 opsuser@127.0.0.1
+ssh -i ssh/aioms-test -p 2222 \
+  -o UserKnownHostsFile=/dev/null \
+  -o StrictHostKeyChecking=no \
+  opsuser@127.0.0.1
 ```
 
-第一次连接会提示确认 host key 指纹，输入 `yes`。能登进去、跑一下 `uptime` 看到正常输出，
-就说明这一层没问题，`exit` 退出来继续下一步。
+加了 `-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no` 是刻意跳过 host key
+校验——这个镜像没有持久化 host key（没挂 `/config` 卷），**每次重新起容器 host key
+都是新生成的**，用普通 `ssh` 命令会因为"跟上次记的指纹不一样"被拒绝连接
+（`REMOTE HOST IDENTIFICATION HAS CHANGED`）。对一次性本地沙箱来说这个校验意义不大
+（流量根本没出这台 Mac），所以直接跳过，也跟 `commands.py` 里 `asyncssh.connect(...,
+known_hosts=None)` 保持一致——**这个跳过只对这种一次性沙箱成立，连真实/生产服务器
+不能这样**。
+
+能登进去、跑一下 `uptime` 看到正常输出，就说明这一层没问题，`exit` 退出来继续下一步。
 
 ## 第 4 步：把测试容器注册进 servers 表
 
@@ -111,6 +121,7 @@ curl -X POST http://localhost:8010/servers \
 
 | 现象 | 大概率原因 |
 | --- | --- |
+| `REMOTE HOST IDENTIFICATION HAS CHANGED` / `Host key verification failed` | 容器 host key 每次重启都会变，`~/.ssh/known_hosts` 里缓存的是旧指纹。先 `ssh-keygen -R "[127.0.0.1]:2222"` 清掉旧缓存，再用第 3 步里带 `-o StrictHostKeyChecking=no` 的命令连接，以后就不会再撞上这个问题 |
 | `Permissions 0644 for 'ssh/aioms-test' are too open` | 私钥权限不对：`chmod 600 ssh/aioms-test` |
 | `Permission denied (publickey)` | 公钥没挂对，检查 `docker logs aioms-test-server` 有没有报错，或确认 `.pub` 文件内容完整 |
 | `Connection refused` | 容器没起来或端口没映射对，`docker ps` 看一下状态 |
