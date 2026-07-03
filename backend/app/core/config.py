@@ -8,6 +8,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # 而不是相对这个文件。我们的 uvicorn 是从仓库根目录用 `uv run --project backend ...` 启动的，
 # CWD 是仓库根目录，写相对路径会找不到 backend/.env（之前 DEEPSEEK_API_KEY 一直读不到就是这个原因）。
 ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env"
+# 仓库根目录：从这个文件（backend/app/core/config.py）往上数 4 层。
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 
 class Settings(BaseSettings):
@@ -17,6 +19,10 @@ class Settings(BaseSettings):
     database_echo: bool = False
     database_pool_size: int = 10
     database_max_overflow: int = 20
+
+    # SSH 私钥统一放仓库根目录的 ssh/ 下（.gitignore 忽略，不提交仓库），
+    # servers 表里只存文件名（ssh_key_filename），实际路径是 ssh_key_dir / 文件名拼出来的。
+    ssh_key_dir: Path = REPO_ROOT / "ssh"
 
     # DeepSeek 走 OpenAI 兼容接口，base_url/model 以官方文档为准（2026-07 查证）
     deepseek_api_key: str = ""

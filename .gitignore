@@ -13,6 +13,10 @@ frontend/dist/
 .env.*
 !.env.example
 
+# SSH 私钥（本地测试沙箱用），只保留说明文件，不提交任何密钥内容
+/ssh/*
+!/ssh/README.md
+
 # 编辑器/系统
 .DS_Store
 .vscode/
