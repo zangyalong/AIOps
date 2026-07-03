@@ -5,7 +5,6 @@ from typing import Annotated, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
-from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.graph.state import CompiledStateGraph
@@ -140,7 +139,10 @@ def route_after_reflect(state: ChatState) -> str:
     return "call_model"
 
 
-def build_chat_graph(checkpointer: BaseCheckpointSaver) -> CompiledStateGraph:
+def build_chat_graph() -> CompiledStateGraph:
+    # 不传 checkpointer：多轮对话的持久化现在自己用 messages 表管（每轮把完整历史
+    # 当输入喂给图），图本身只在一次 ainvoke/astream_events 调用内部跑，
+    # reflect -> call_model 这个环不需要 checkpointer 也能正常执行。
     builder = StateGraph(ChatState)
     builder.add_node("plan", plan_node)
     builder.add_node("call_model", call_model_node)
@@ -153,4 +155,4 @@ def build_chat_graph(checkpointer: BaseCheckpointSaver) -> CompiledStateGraph:
     builder.add_edge("call_tools", "call_model")
     builder.add_conditional_edges("reflect", route_after_reflect)
 
-    return builder.compile(checkpointer=checkpointer)
+    return builder.compile()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
@@ -24,6 +25,6 @@ class ServerUpdate(BaseModel):
 class ServerRead(ServerBase):
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
+    id: uuid.UUID
     created_at: datetime
     updated_at: datetime

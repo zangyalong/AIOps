@@ -35,6 +35,7 @@
 5. **报错时先教读错误**。看到 traceback，先指认关键行，再给修复方案；不要一上来就贴 patch。
 6. **中文交流**。代码里的标识符用英文，注释和面向用户的解释用中文。
 7. **不要制造演示假象**。做不到的、没测过的、只在脑子里跑过的，明确说"这段我没跑过，你跑一下看结果"。
+8. **不要启动服务**。开发完不要自己起后端/前端 dev server 来验证——用户自己有常驻服务在跑，另起一个只会端口冲突。改完代码用静态检查（类型检查、编译、import 是否报错这类一次性执行完就退出的检查）确认没有明显错误即可，运行时验证交给用户自己做。
 
 ---
 
@@ -54,11 +55,11 @@ AIOMS/
 │   │   │   └── prompts/     # Prompt 模板
 │   │   ├── models/          # SQLAlchemy ORM 模型
 │   │   ├── schemas/         # Pydantic 数据模型
+│   │   ├── repositories/    # 数据访问层（增删改查，不含业务逻辑）
 │   │   ├── services/        # 业务逻辑
-│   │   ├── db/              # 数据库连接、迁移
+│   │   ├── db/              # 数据库连接、建表
 │   │   └── core/            # 配置、日志、依赖注入
 │   ├── tests/
-│   ├── alembic/             # 数据库迁移
 │   └── pyproject.toml
 ├── frontend/                # Vue3 应用
 │   ├── src/
@@ -71,6 +72,7 @@ AIOMS/
 │   ├── index.html
 │   └── package.json
 ├── docs/                    # 学习笔记、架构决策记录（ADR）
+│   └── aiops-feature-survey.md  # Keep/OpenSRE 源码级功能调研，涉及告警/工具/安全/Agent架构设计时先看这个
 └── docker-compose.yml       # 后期加：pg + backend + frontend
 ```
 
@@ -85,7 +87,7 @@ AIOMS/
 - Python 3.11+，类型注解写全（`from __future__ import annotations` 常备）
 - 格式化：`ruff format`；静态检查：`ruff check`
 - Pydantic v2；FastAPI 依赖注入优先于全局变量
-- 数据库操作走 service 层，路由层不直接调 ORM
+- 路由层不直接调 ORM；具体的 `select`/`add`/`commit` 这类查库代码放 `repositories/`，`services/` 只写业务逻辑（标题生成、schema↔model 转换等）并调用 repository
 - 敏感配置走 `.env` + Pydantic Settings，**不提交任何密钥**
 - LLM 相关环境变量统一用 `DEEPSEEK_API_KEY` / `DEEPSEEK_BASE_URL` / `DEEPSEEK_MODEL`，具体 base_url 和 model 字符串以 DeepSeek 官方文档为准（接入时现查，不要用记忆里的旧值）
 
@@ -99,8 +101,9 @@ AIOMS/
 ### 数据库
 
 - 表名小写下划线复数（`servers`, `alert_events`）
-- 主键统一 `id BIGSERIAL`；时间字段 `created_at` / `updated_at` 带时区
-- 所有 schema 变更走 Alembic，禁止手动改库
+- 主键统一 `id UUID`（`gen_random_uuid()` 默认值）；时间字段 `created_at` / `updated_at` 带时区
+- 所有 ORM 模型继承 `app/models/base.py` 里唯一的 `Base`，主键用 `UUIDMixin`、需要 `updated_at` 的表再加 `TimestampMixin`——**全项目只能有这一个 `DeclarativeBase`**，不要在别处再定义一个，否则新模型会注册到不同的 metadata 上，启动建表时会看不到那些表
+- schema 由 `app/models/` 里的 SQLAlchemy 模型直接定义，后端启动时自动跑 `Base.metadata.create_all()` 建出缺的表（不会改动/删除已有表）。项目早期不引入迁移工具——改已有表的列（加字段、改类型）需要手动 `ALTER` 或本地删表重建；等 schema 稳定、需要多环境同步时再考虑引入迁移工具
 
 ### Git
 
@@ -122,7 +125,7 @@ AIOMS/
 ## 7. 常用命令（随进度补充）
 
 ```bash
-# 启动后端（FastAPI，默认 8010 端口，因为 8000 被本机其他项目占用）：
+# 启动后端（FastAPI，默认 8010 端口，因为 8000 被本机其他项目占用；启动时会自动建表，不用单独迁移）：
 cd backend && uv run uvicorn app.main:app --reload --port 8010
 
 # 启动前端（Vite dev server，默认 5173）：
@@ -131,10 +134,6 @@ cd frontend && npm run dev
 # 起数据库：Postgres 走 Homebrew service，长期运行，一般不用手动起
 brew services list | grep postgres   # 确认 postgresql@18 是 started
 psql -d aioms                        # 连接 aioms 库
-
-# 数据库迁移：
-cd backend && uv run alembic upgrade head        # 应用迁移
-cd backend && uv run alembic revision --autogenerate -m "说明"  # 改了 models/ 后生成新迁移
 
 # 跑测试：暂无测试套件，需要时再补
 ```

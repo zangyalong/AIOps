@@ -1,15 +1,32 @@
 from __future__ import annotations
 
-from pydantic import BaseModel
+import uuid
+from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict
 
 
 class ChatRequest(BaseModel):
     message: str
-    # 同一个 thread_id 的多轮对话共享 LangGraph checkpointer 里持久化的历史；
-    # 第一次不传，后端生成一个新的并在响应里带回去，前端后续请求带着它。
-    thread_id: str | None = None
+    # 同一个 conversation_id 的多轮对话，每次请求都从 messages 表把历史加载出来
+    # 喂给图；第一次不传，后端建一条新 conversation，SSE 流结束时用 "done" 事件带回去。
+    conversation_id: uuid.UUID | None = None
 
 
-class ChatResponse(BaseModel):
-    reply: str
-    thread_id: str
+class ConversationSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    title: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ChatMessageOut(BaseModel):
+    role: str
+    content: str
+
+
+class ConversationDetail(BaseModel):
+    conversation: ConversationSummary
+    messages: list[ChatMessageOut]

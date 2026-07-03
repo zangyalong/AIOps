@@ -1,23 +1,40 @@
 from __future__ import annotations
 
-import uuid
+import json
+from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Request
-from langchain_core.messages import HumanMessage
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 
-from app.schemas.chat import ChatRequest, ChatResponse
+from app.dependencies import DBSession
+from app.schemas.chat import ChatRequest
+from app.services import chat_service, conversation_service
 
 router = APIRouter(tags=["chat"])
 
 
-@router.post("/chat", response_model=ChatResponse)
-async def chat(data: ChatRequest, request: Request) -> ChatResponse:
-    thread_id = data.thread_id or str(uuid.uuid4())
+def _sse(payload: dict) -> str:
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+@router.post("/chat")
+async def chat(data: ChatRequest, request: Request, db: DBSession) -> StreamingResponse:
+    new_title: str | None = None
+
+    if data.conversation_id is None:
+        new_title = conversation_service.make_title(data.message)
+        conversation = await conversation_service.create_conversation(db, title=new_title)
+    else:
+        conversation = await conversation_service.get_conversation(db, data.conversation_id)
+        if conversation is None:
+            raise HTTPException(status_code=404, detail="conversation not found")
+
     graph = request.app.state.chat_graph
 
-    result = await graph.ainvoke(
-        {"messages": [HumanMessage(data.message)]},
-        {"configurable": {"thread_id": thread_id}},
-    )
+    async def event_stream() -> AsyncIterator[str]:
+        async for event in chat_service.stream_chat_turn(
+            graph, db, conversation.id, data.message, new_title=new_title
+        ):
+            yield _sse(event)
 
-    return ChatResponse(reply=str(result["messages"][-1].content), thread_id=thread_id)
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
