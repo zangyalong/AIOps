@@ -20,5 +20,11 @@ class Settings(BaseSettings):
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-v4-flash"
 
+    @property
+    def checkpoint_dsn(self) -> str:
+        """LangGraph 的 AsyncPostgresSaver 直接用 psycopg，连接串不认识 SQLAlchemy
+        的 `+psycopg` 方言后缀，这里从 database_url 剥掉它。"""
+        return self.database_url.replace("postgresql+psycopg://", "postgresql://")
+
 
 settings = Settings()

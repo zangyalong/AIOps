@@ -7,6 +7,9 @@ const messages = ref<ChatMessage[]>([])
 const input = ref('')
 const sending = ref(false)
 const error = ref<string | null>(null)
+// 同一个 threadId 下的多轮对话，后端靠它从 LangGraph checkpointer 里接着聊；
+// 换一个 threadId（或不传）就是开新对话，互相不共享上下文。
+const threadId = ref<string | null>(null)
 
 async function send() {
   const text = input.value.trim()
@@ -18,19 +21,29 @@ async function send() {
   error.value = null
 
   try {
-    const reply = await sendChatMessage(text)
-    messages.value.push({ role: 'assistant', content: reply })
+    const data = await sendChatMessage(text, threadId.value)
+    threadId.value = data.thread_id
+    messages.value.push({ role: 'assistant', content: data.reply })
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
     sending.value = false
   }
 }
+
+function newConversation() {
+  messages.value = []
+  threadId.value = null
+  error.value = null
+}
 </script>
 
 <template>
   <section class="chat-view">
-    <h1>运维助手</h1>
+    <div class="header-row">
+      <h1>运维助手</h1>
+      <button type="button" class="new-chat" @click="newConversation">新对话</button>
+    </div>
 
     <div class="messages">
       <p v-if="messages.length === 0" class="hint">
@@ -61,6 +74,16 @@ async function send() {
   max-width: 720px;
   margin: 2rem auto 0;
   padding: 0 2rem 2rem;
+}
+
+.header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.new-chat {
+  padding: 0.4rem 0.75rem;
 }
 
 .messages {
