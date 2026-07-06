@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { fetchConversations } from '../api/conversations'
+import { deleteConversation, fetchConversations } from '../api/conversations'
 import type { ConversationSummary } from '../types/chat'
 
 defineProps<{
@@ -9,6 +9,8 @@ defineProps<{
 
 const emit = defineEmits<{
   select: [conversationId: string]
+  // 删完某个对话后通知父组件——如果删的正好是当前打开的那个，父组件要清空聊天区
+  deleted: [conversationId: string]
 }>()
 
 const conversations = ref<ConversationSummary[]>([])
@@ -20,6 +22,17 @@ async function refresh() {
     conversations.value = await fetchConversations()
   } finally {
     loading.value = false
+  }
+}
+
+async function remove(c: ConversationSummary) {
+  if (!confirm(`删除对话「${c.title}」？此操作不可恢复。`)) return
+  try {
+    await deleteConversation(c.id)
+    emit('deleted', c.id)
+    await refresh()
+  } catch (e) {
+    alert(e instanceof Error ? e.message : String(e))
   }
 }
 
@@ -40,7 +53,8 @@ onMounted(refresh)
         :class="{ active: c.id === selectedConversationId }"
         @click="emit('select', c.id)"
       >
-        {{ c.title }}
+        <span class="title">{{ c.title }}</span>
+        <button type="button" class="del-btn" title="删除对话" @click.stop="remove(c)">×</button>
       </li>
     </ul>
   </aside>
@@ -77,22 +91,57 @@ ul {
 }
 
 li {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
   padding: 0.5rem 0.6rem;
   border-radius: var(--radius);
   cursor: pointer;
   font-size: 0.9rem;
+}
+
+.title {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.del-btn {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0 0.25rem;
+  border-radius: 4px;
+  opacity: 0; /* 平时隐藏，悬停整条时才露出来 */
 }
 
 li:hover {
   background: var(--color-bg);
 }
 
+li:hover .del-btn {
+  opacity: 0.55;
+}
+
+.del-btn:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.08);
+}
+
 li.active {
   background: var(--color-accent);
   color: var(--color-accent-contrast);
   font-weight: 500;
+}
+
+/* 选中项是深色底，删除按钮悬停时给个浅色底而不是黑色 */
+li.active:hover .del-btn:hover {
+  background: rgba(255, 255, 255, 0.25);
 }
 </style>

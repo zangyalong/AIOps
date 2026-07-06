@@ -29,3 +29,7 @@ async def get_conversation(db: AsyncSession, conversation_id: uuid.UUID) -> Conv
 async def touch_conversation(db: AsyncSession, conversation_id: uuid.UUID) -> None:
     """有新消息时刷新 updated_at，让活跃对话排在列表前面。"""
     await conversation_repository.touch(db, conversation_id)
+
+
+async def delete_conversation(db: AsyncSession, conversation: Conversation) -> None:
+    await conversation_repository.delete(db, conversation)

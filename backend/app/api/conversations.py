@@ -29,5 +29,16 @@ async def get_conversation(
 
     return ConversationDetail(
         conversation=ConversationSummary.model_validate(conversation),
-        messages=[ChatMessageOut(role=m.role, content=m.content) for m in messages],
+        messages=[
+            ChatMessageOut(role=m.role, content=m.content, steps=m.steps)
+            for m in messages
+        ],
     )
+
+
+@router.delete("/{conversation_id}", status_code=204)
+async def delete_conversation(conversation_id: uuid.UUID, db: DBSession) -> None:
+    conversation = await conversation_service.get_conversation(db, conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="conversation not found")
+    await conversation_service.delete_conversation(db, conversation)

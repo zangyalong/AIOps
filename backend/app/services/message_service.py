@@ -9,9 +9,18 @@ from app.repositories import message_repository
 
 
 async def create_message(
-    db: AsyncSession, conversation_id: uuid.UUID, role: str, content: str
+    db: AsyncSession,
+    conversation_id: uuid.UUID,
+    role: str,
+    content: str,
+    steps: list[dict] | None = None,
 ) -> Message:
-    message = Message(conversation_id=conversation_id, role=role, content=content)
+    message = Message(
+        conversation_id=conversation_id,
+        role=role,
+        content=content,
+        steps=steps,
+    )
     return await message_repository.create(db, message)
 
 

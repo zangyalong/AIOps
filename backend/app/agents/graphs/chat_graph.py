@@ -9,6 +9,7 @@ from langchain_core.messages import (
     AIMessage,
     BaseMessage,
     HumanMessage,
+    RemoveMessage,
     SystemMessage,
     ToolMessage,
 )
@@ -28,7 +29,7 @@ TOOLS = [query_servers, search_logs, query_alerts, run_whitelisted_command]
 TOOLS_BY_NAME = {t.name: t for t in TOOLS}
 
 # 单次尝试内 agent <-> tools 循环最多走几轮，防止模型死循环调工具；到上限后 agent_node
-# 会直接不给模型挂工具（bind_tools=False），从 API 层面逼它基于已有信息收尾。
+# 会直接不给模型挂工具（mode="none"），从 API 层面逼它基于已有信息收尾。
 MAX_TOOL_ITERATIONS = 5
 
 # Reflexion：evaluate 最多质检几次。到上限还没通过就把当前答案作为最终答案收尾，
@@ -58,6 +59,9 @@ class ReflexionVerdict(BaseModel):
 
 class ChatState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
+    # 此前对话历史压成的一段背景摘要（不是一条条真 AIMessage，避免"没调工具直接吐数据"的
+    # 坏样例污染上下文）；由 chat_service 传入，agent 每步注入系统提示。见 _build_history_summary。
+    history_summary: str
     # 单次尝试内 agent <-> tools 来回了几轮，用来卡 MAX_TOOL_ITERATIONS；每次重试会重置为 0
     tool_iterations: int
     # 累积的自我反思，evaluate 不通过时追加（add 归约器 = 往后拼），agent 每次带着它改进
@@ -66,10 +70,13 @@ class ChatState(TypedDict):
     review_attempts: int
     # 最近一次 evaluate 是否通过，给路由用
     passed: bool
+    # 质检打回时若发现"该调工具却没调"，置 True，逼重试的下一步必须调工具（agent 消费后复位）
+    force_tools: bool
 
 
 @lru_cache(maxsize=None)
-def _llm(bind_tools: bool) -> ChatOpenAI:
+def _llm(mode: str) -> ChatOpenAI:
+    """mode: "none"（不挂工具）| "auto"（挂工具，调不调自己定）| "required"（挂工具且必须至少调一个）。"""
     llm = ChatOpenAI(
         model=settings.deepseek_model,
         base_url=settings.deepseek_base_url,
@@ -78,7 +85,11 @@ def _llm(bind_tools: bool) -> ChatOpenAI:
         # 好几次 LLM 调用（每次调工具、每次质检、每次重试都要再调一次），思考模式明显拖慢响应。
         extra_body={"thinking": {"type": "disabled"}},
     )
-    return llm.bind_tools(TOOLS) if bind_tools else llm
+    if mode == "none":
+        return llm
+    if mode == "required":
+        return llm.bind_tools(TOOLS, tool_choice="required")
+    return llm.bind_tools(TOOLS)
 
 
 def _latest_human_content(messages: list[BaseMessage]) -> str:
@@ -103,10 +114,18 @@ async def agent_node(state: ChatState) -> dict:
     """ReAct 的核心节点：挂着工具的模型看当前对话，自己决定调工具还是直接给最终答案。
 
     如果上一轮质检打回并留了反思，会把反思注入 prompt，让模型带着教训重做。
-    到工具调用步数上限后，不再把工具挂给模型（bind_tools=False），从 API 层面逼它收尾。
+    到工具调用步数上限后，不再把工具挂给模型（mode="none"），从 API 层面逼它收尾。
     """
     t0 = time.monotonic()
     at_limit = state.get("tool_iterations", 0) >= MAX_TOOL_ITERATIONS
+    # 只在"质检点名该调工具却没调"的重试首步（tool_iterations 已被重置为 0）强制调工具；
+    # 到上限时不能强制（那时本就不该再挂工具）。force_tools 用完即在返回值里复位，只作用一步，
+    # 否则会强制→回 agent→仍强制→…死循环撞满 MAX_TOOL_ITERATIONS。
+    use_required = (
+        state.get("force_tools", False)
+        and not at_limit
+        and state.get("tool_iterations", 0) == 0
+    )
     if at_limit:
         guidance = "已达到工具调用次数上限，不能再调用任何工具，请直接基于目前已知的信息回答。"
     else:
@@ -118,13 +137,21 @@ async def agent_node(state: ChatState) -> dict:
     if reflections:
         joined = "\n".join(f"- {r}" for r in reflections)
         guidance += f"\n你之前回答本轮问题时的自我反思，这次务必据此改进：\n{joined}"
-    prompt = [SystemMessage(f"{PERSONA}\n{guidance}"), *state["messages"]]
-    response = await _llm(bind_tools=not at_limit).ainvoke(prompt)
+    # 历史压成的背景摘要放进同一条 SystemMessage（而不是当成一条条历史消息进 messages），
+    # 避免坏样例污染，也避免出现两条并排的 SystemMessage。
+    system_parts = [PERSONA]
+    history_summary = state.get("history_summary", "")
+    if history_summary:
+        system_parts.append(history_summary)
+    system_parts.append(guidance)
+    prompt = [SystemMessage("\n\n".join(system_parts)), *state["messages"]]
+    mode = "none" if at_limit else ("required" if use_required else "auto")
+    response = await _llm(mode).ainvoke(prompt)
     print(
-        f"[graph] agent_node 耗时 {time.monotonic() - t0:.1f}s，"
+        f"[graph] agent_node 耗时 {time.monotonic() - t0:.1f}s，mode={mode}，"
         f"tool_calls={response.tool_calls!r}"
     )
-    return {"messages": [response]}
+    return {"messages": [response], "force_tools": False}
 
 
 async def tools_node(state: ChatState) -> dict:
@@ -166,7 +193,7 @@ async def evaluate_node(state: ChatState) -> dict:
             f"助手回答：{answer}"
         ),
     ]
-    structured_llm = _llm(bind_tools=False).with_structured_output(
+    structured_llm = _llm("none").with_structured_output(
         ReflexionVerdict, method="function_calling"
     )
     verdict = await structured_llm.ainvoke(prompt)
@@ -177,11 +204,24 @@ async def evaluate_node(state: ChatState) -> dict:
     )
     if verdict.passed:
         return {"passed": True, "review_attempts": review_attempts}
+
+    # 打回重试：把本轮产生的草稿（含 tool_calls / ToolMessage）整批从 messages 里删掉，
+    # 只留"历史 + 本轮用户问题"，避免重试的 agent 被自己刚才的错误答案锚定越纠越偏；
+    # 唯一的纠偏信号是注入的 reflection。必须删"最近一条用户消息之后的全部"，把成对的
+    # tool_call+ToolMessage 一起带走，别留半截（否则 DeepSeek 工具校验可能 400）。
+    messages = state["messages"]
+    last_human_idx = max(
+        (i for i, m in enumerate(messages) if isinstance(m, HumanMessage)), default=-1
+    )
+    to_remove = [RemoveMessage(id=m.id) for m in messages[last_human_idx + 1 :]]
     return {
         "passed": False,
         "review_attempts": review_attempts,
         "reflections": [verdict.reflection],
         "tool_iterations": 0,  # 重试是一次全新尝试，重新给满工具预算
+        "messages": to_remove,
+        # 这轮"该给数据却没调工具"→逼重试首步必须调工具（详见 agent_node 的 use_required）
+        "force_tools": not tools_used,
     }
 
 

@@ -26,6 +26,12 @@ async def get_by_id(db: AsyncSession, conversation_id: uuid.UUID) -> Conversatio
     return await db.get(Conversation, conversation_id)
 
 
+async def delete(db: AsyncSession, conversation: Conversation) -> None:
+    # messages 对 conversations 是 ondelete CASCADE，删对话会连带把它的消息一起删掉
+    await db.delete(conversation)
+    await db.commit()
+
+
 async def touch(db: AsyncSession, conversation_id: uuid.UUID) -> None:
     """把 updated_at 刷新成当前时间，让活跃对话排到列表前面。"""
     await db.execute(

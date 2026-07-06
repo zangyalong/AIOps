@@ -25,6 +25,9 @@ class ConversationSummary(BaseModel):
 class ChatMessageOut(BaseModel):
     role: str
     content: str
+    # assistant 消息"最终答案之前"的有序过程（旁白文字段 + 工具），前端刷新后据此原样重建；
+    # 每个元素是 {"type":"text","content":...} 或 {"type":"tool","tool":...}。否则为 None。
+    steps: list[dict] | None = None
 
 
 class ConversationDetail(BaseModel):

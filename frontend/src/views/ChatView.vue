@@ -70,15 +70,18 @@ function appendToken(content: string) {
 }
 
 function discardDraft() {
-  // Reflexion 质检打回重试：把上一版被否决的助手回答（最后一条 assistant 消息）丢掉，
-  // 等重试的新回答重新流入。之前调过的工具卡片保留——那些工具确实执行过，留着当活动记录不算假。
+  // Reflexion 质检打回重试：被否决那一整次（旁白 + 工具行 + 答案）都作废——把最近一条 user
+  // 消息之后的全部删掉，等重试从头流入。跟后端"reset 时清空 current_text + steps"对齐，
+  // 保证实时稳定态 == 刷新态（都只留通过的那一次）。
+  let lastUserIdx = -1
   for (let i = timeline.value.length - 1; i >= 0; i--) {
     const item = timeline.value[i]
-    if (item.kind === 'message' && item.role === 'assistant') {
-      timeline.value.splice(i, 1)
+    if (item.kind === 'message' && item.role === 'user') {
+      lastUserIdx = i
       break
     }
   }
+  timeline.value.splice(lastUserIdx + 1)
   assistantOpen = false
 }
 
@@ -107,8 +110,10 @@ async function send() {
       } else if (event.type === 'reset') {
         discardDraft()
       } else if (event.type === 'tool_start') {
-        timeline.value.push({ kind: 'tool', key: uid(), id: event.id, tool: event.tool, done: false })
+        // 调工具前的旁白气泡保留下来（档位 B 会持久化它，刷新后也能重建）；这里只是关闭当前
+        // 气泡，让工具行、以及工具之后的最终答案各自成为独立的块。
         assistantOpen = false
+        timeline.value.push({ kind: 'tool', key: uid(), id: event.id, tool: event.tool, done: false })
       } else if (event.type === 'tool_end') {
         const item = timeline.value.find((t) => t.kind === 'tool' && t.id === event.id)
         if (item && item.kind === 'tool') item.done = true
@@ -134,18 +139,33 @@ function newConversation() {
   assistantOpen = false
 }
 
+function onConversationDeleted(id: string) {
+  // 删掉的正好是当前打开的这个对话 → 清空聊天区，回到"新对话"状态
+  if (id === conversationId.value) newConversation()
+}
+
 async function selectConversation(id: string) {
   if (sending.value) return
   error.value = null
   try {
     const detail = await fetchConversationDetail(id)
     conversationId.value = detail.conversation.id
-    timeline.value = detail.messages.map((m: ChatMessage) => ({
-      kind: 'message' as const,
-      key: uid(),
-      role: m.role,
-      content: m.content,
-    }))
+    // 每条消息按"最终答案之前的过程（steps）+ 最终答案（content）"原样展开，跟实时时一致：
+    // steps 里的 text 段重建成旁白气泡、tool 段重建成工具行（历史一律 done），最后放 content 气泡。
+    timeline.value = detail.messages.flatMap((m: ChatMessage): TimelineItem[] => {
+      const items: TimelineItem[] = []
+      for (const step of m.steps ?? []) {
+        if (step.type === 'text') {
+          items.push({ kind: 'message', key: uid(), role: 'assistant', content: step.content })
+        } else {
+          items.push({ kind: 'tool', key: uid(), id: uid(), tool: step.tool, done: true })
+        }
+      }
+      if (m.content) {
+        items.push({ kind: 'message', key: uid(), role: m.role, content: m.content })
+      }
+      return items
+    })
     assistantOpen = false
     nextTick(scrollToBottom)
   } catch (e) {
@@ -160,6 +180,7 @@ async function selectConversation(id: string) {
       ref="conversationListRef"
       :selected-conversation-id="conversationId"
       @select="selectConversation"
+      @deleted="onConversationDeleted"
     />
 
     <div class="chat-main">
@@ -177,11 +198,8 @@ async function selectConversation(id: string) {
             <strong>{{ item.role === 'user' ? '我' : '助手' }}：</strong>
             <span style="white-space: pre-wrap">{{ item.content }}</span>
           </div>
-          <div v-else class="tool-chip-wrap">
-            <span class="tool-chip" :class="{ done: item.done }">
-              <span class="tool-icon">{{ item.done ? '✓' : '⚙' }}</span>
-              {{ item.done ? '已' : '正在' }}{{ toolLabel(item.tool) }}
-            </span>
+          <div v-else class="tool-line" :class="{ done: item.done }">
+            {{ item.done ? '✓' : '›' }} {{ item.done ? '已' : '正在' }}{{ toolLabel(item.tool) }}{{ item.done ? '' : '…' }}
           </div>
         </template>
         <p v-if="showThinking" class="hint">思考中…</p>
@@ -262,39 +280,26 @@ h1 {
   border-color: var(--color-accent);
 }
 
-.tool-chip-wrap {
+/* 工具调用渲染成单行文本：运行时黑色，完成后变灰以区分。不是气泡/胶囊。 */
+.tool-line {
   align-self: flex-start;
+  font-size: 0.85rem;
+  padding: 0 0.15rem;
+  color: var(--color-text); /* 运行中：黑色 */
 }
 
-.tool-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 0.78rem;
-  padding: 0.25rem 0.6rem;
-  border-radius: 999px;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-muted);
+.tool-line:not(.done) {
+  animation: blink 1.4s ease-in-out infinite;
 }
 
-.tool-chip.done {
-  color: var(--color-status-active);
-  border-color: color-mix(in srgb, var(--color-status-active) 35%, var(--color-border));
+.tool-line.done {
+  color: var(--color-text-muted); /* 完成后：灰色 */
+  animation: none;
 }
 
-.tool-icon {
-  display: inline-block;
-  font-size: 0.8rem;
-}
-
-.tool-chip:not(.done) .tool-icon {
-  animation: spin 1.4s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
+@keyframes blink {
+  50% {
+    opacity: 0.5;
   }
 }
 

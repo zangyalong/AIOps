@@ -17,3 +17,10 @@ export async function fetchConversationDetail(
   }
   return res.json()
 }
+
+export async function deleteConversation(conversationId: string): Promise<void> {
+  const res = await fetch(`/api/conversations/${conversationId}`, { method: 'DELETE' })
+  if (!res.ok) {
+    throw new Error(`删除对话失败：${res.status}`)
+  }
+}
