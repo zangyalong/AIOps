@@ -6,9 +6,10 @@
 
 背景：现在的 chat 图（`plan → call_model ↔ call_tools → reflect`，见 `backend/app/agents/graphs/chat_graph.py`）只有 `query_servers` 一个工具、工具调用循环没有步数上限、前端看不到工具调用过程、也没有子 agent。这组任务把它往"能调多个运维工具、有专业子 agent"的方向推进。
 
-- [ ] **扩充运维工具 + 给工具调用循环加步数上限**
+- [x] **扩充运维工具 + 给工具调用循环加步数上限**
   - 照 `query_servers`（`backend/app/agents/tools/servers.py`）的样子，再写几个运维领域工具（日志检索、告警查询、白名单命令执行等）
   - `call_model ↔ call_tools` 这个循环现在没有步数上限——`reflect` 重试有 `MAX_ATTEMPTS` 兜底，但工具调用这一圈没有，模型如果一直坚持调工具会死循环，要补一个上限
+  - `run_whitelisted_command` 后来又从占位模拟升级成真实 asyncssh 执行，本地用 Docker 沙箱端到端验证过（对话触发、AI 正确执行命令并返回真实数据）
 - [ ] **前端展示工具调用过程**
   - 给 `chat_service.py` 的 SSE 事件流加 `tool_start`/`tool_end`（或类似）事件类型
   - 前端渲染成"正在调用 XXX 工具"这类过程提示，不再是纯黑盒等最终回答
