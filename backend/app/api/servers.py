@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import DBSession
 from app.models.server import Server
-from app.schemas.server import ServerCreate, ServerRead, ServerUpdate
+from app.schemas.server import ConnectionTestResult, ServerCreate, ServerRead, ServerUpdate
 from app.services import server_service
 
 router = APIRouter(prefix="/servers", tags=["servers"])
@@ -47,3 +47,9 @@ async def update_server(
 async def delete_server(server_id: uuid.UUID, db: DBSession) -> None:
     server = await _get_server_or_404(db, server_id)
     await server_service.delete_server(db, server)
+
+
+@router.post("/{server_id}/test-connection", response_model=ConnectionTestResult)
+async def test_server_connection(server_id: uuid.UUID, db: DBSession) -> ConnectionTestResult:
+    server = await _get_server_or_404(db, server_id)
+    return await server_service.test_connection(db, server)

@@ -20,3 +20,9 @@ class Server(Base, UUIDMixin, TimestampMixin):
     # 只存文件名，不存路径——实际私钥路径是 settings.ssh_key_dir / ssh_key_filename 拼出来的，
     # 密钥内容本身放仓库根目录 ssh/ 下，不进数据库、不进仓库。
     ssh_key_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # 最近一次"测试连接"的结果，持久化下来，刷新页面不丢：
+    # unknown（还没测过）/ active / unreachable / unconfigured
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="unknown", server_default="unknown"
+    )

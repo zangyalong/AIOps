@@ -1,8 +1,69 @@
 :root {
-  font: 16px/1.5 system-ui, 'Segoe UI', Roboto, sans-serif;
-  color-scheme: light dark;
+  font: 15px/1.6 system-ui, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  /* 锁死浅色：这个项目就是一套手写的浅色设计系统，不写 "light dark"——否则系统开深色模式时
+     浏览器会用深色原生样式画 input/button，跟我们的浅色变量打架（输入框发黑、文字看不见）。 */
+  color-scheme: light;
+
+  /* 简约配色：一个中性灰阶 + 一个强调色 + 状态色，全站就这一套，别再散着写死颜色 */
+  --color-bg: #f4f5f7;
+  --color-surface: #ffffff;
+  --color-border: #e3e5e9;
+  --color-text: #1c1d22;
+  --color-text-muted: #6b6f76;
+  --color-accent: #4f46e5;
+  --color-accent-hover: #4338ca;
+  --color-accent-contrast: #ffffff;
+
+  --color-status-active: #22c55e;
+  --color-status-unreachable: #ef4444;
+  --color-status-unconfigured: #f59e0b;
+  --color-status-untested: #b0b4bb;
+
+  --radius: 10px;
+  --radius-sm: 7px;
+  --shadow-sm: 0 1px 2px rgba(24, 24, 27, 0.04), 0 1px 3px rgba(24, 24, 27, 0.06);
+  --shadow-md: 0 4px 12px rgba(24, 24, 27, 0.08), 0 2px 4px rgba(24, 24, 27, 0.04);
+  --shadow-lg: 0 12px 32px rgba(24, 24, 27, 0.16);
+}
+
+* {
+  box-sizing: border-box;
 }
 
 body {
   margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+/* 全局表单控件样式：所有 input/select/textarea 都是浅色底、统一圆角，
+   从根上避免"某个组件忘了设背景色 → 深色模式下变黑框"的问题重演。 */
+input,
+select,
+textarea {
+  font: inherit;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0.55rem 0.7rem;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
+}
+
+input::placeholder {
+  color: var(--color-text-muted);
+  opacity: 0.7;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
 }

@@ -111,50 +111,74 @@ async function selectConversation(id: string) {
 .chat-view {
   display: flex;
   gap: 1.5rem;
-  max-width: 960px;
-  margin: 2rem auto 0;
-  padding: 0 2rem 2rem;
+  height: 100vh;
+  padding: 1.5rem 2rem;
 }
 
 .chat-main {
   flex: 1;
   min-width: 0;
+  max-width: 760px;
+  display: flex;
+  flex-direction: column;
 }
 
 .header-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+h1 {
+  font-size: 1.4rem;
+  margin: 0;
 }
 
 .new-chat {
-  padding: 0.4rem 0.75rem;
+  padding: 0.45rem 0.95rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 0.85rem;
+  transition: background 0.15s;
+}
+
+.new-chat:hover {
+  background: var(--color-bg);
 }
 
 .messages {
+  flex: 1;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-  min-height: 120px;
   margin-bottom: 1rem;
 }
 
 .message {
-  padding: 0.5rem 0.75rem;
-  border-radius: 6px;
-  background: #8882;
+  max-width: 80%;
+  padding: 0.55rem 0.85rem;
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
 }
 
 .message.user {
   align-self: flex-end;
+  background: var(--color-accent);
+  color: var(--color-accent-contrast);
+  border-color: var(--color-accent);
 }
 
 .hint {
-  color: #888;
+  color: var(--color-text-muted);
 }
 
 .error {
-  color: #e5484d;
+  color: var(--color-status-unreachable);
 }
 
 .input-row {
@@ -164,6 +188,21 @@ async function selectConversation(id: string) {
 
 .input-row input {
   flex: 1;
-  padding: 0.5rem 0.75rem;
+  padding: 0.55rem 0.85rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.input-row button {
+  padding: 0.55rem 1.1rem;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--color-accent);
+  color: var(--color-accent-contrast);
+}
+
+.input-row button:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 </style>

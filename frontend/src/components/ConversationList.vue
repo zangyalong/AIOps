@@ -48,19 +48,22 @@ onMounted(refresh)
 
 <style scoped>
 .conversation-list {
-  width: 220px;
+  width: 200px;
   flex-shrink: 0;
-  border-right: 1px solid #8884;
+  border-right: 1px solid var(--color-border);
   padding-right: 1rem;
+  overflow-y: auto;
 }
 
 h2 {
-  font-size: 1rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--color-text-muted);
   margin: 0 0 0.75rem;
 }
 
 .hint {
-  color: #888;
+  color: var(--color-text-muted);
   font-size: 0.9rem;
 }
 
@@ -70,12 +73,12 @@ ul {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 0.2rem;
 }
 
 li {
   padding: 0.5rem 0.6rem;
-  border-radius: 6px;
+  border-radius: var(--radius);
   cursor: pointer;
   font-size: 0.9rem;
   overflow: hidden;
@@ -84,11 +87,12 @@ li {
 }
 
 li:hover {
-  background: #8882;
+  background: var(--color-bg);
 }
 
 li.active {
-  background: #8884;
+  background: var(--color-accent);
+  color: var(--color-accent-contrast);
   font-weight: 500;
 }
 </style>

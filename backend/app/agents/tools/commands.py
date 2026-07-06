@@ -13,9 +13,9 @@ from __future__ import annotations
 import asyncssh
 from langchain_core.tools import tool
 
-from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.services import server_service
+from app.services.ssh_service import SSHKeyMissing, SSHNotConfigured, build_connect_params
 
 _ALLOWED_COMMANDS = frozenset({"uptime", "df -h", "free -m"})
 
@@ -37,19 +37,19 @@ async def run_whitelisted_command(server_name: str, command: str) -> str:
     if server is None:
         return f"没有找到名为 {server_name} 的服务器，请先确认服务器名称。"
 
-    if not (server.ssh_user and server.ssh_key_filename):
+    try:
+        params = build_connect_params(server)
+    except SSHNotConfigured:
         return f"{server_name} 没有配置 SSH 连接信息（ssh_user / ssh_key_filename），无法执行命令。"
-
-    key_path = settings.ssh_key_dir / server.ssh_key_filename
-    if not key_path.is_file():
-        return f"密钥文件不存在：{key_path}，请确认已经放到 {settings.ssh_key_dir} 目录下。"
+    except SSHKeyMissing as exc:
+        return f"{exc}，请确认已经放到 {exc.key_path.parent} 目录下。"
 
     try:
         async with asyncssh.connect(
-            server.ip_address,
-            port=server.ssh_port or 22,
-            username=server.ssh_user,
-            client_keys=[str(key_path)],
+            params.host,
+            port=params.port,
+            username=params.username,
+            client_keys=params.client_keys,
             # 本地一次性测试沙箱，不校验 known_hosts；连接真实/生产服务器不能这样，
             # 要么提前 known_hosts 里加好指纹，要么显式传 known_hosts=<真实路径>。
             known_hosts=None,
