@@ -33,7 +33,7 @@ async def chat(data: ChatRequest, request: Request, db: DBSession) -> StreamingR
 
     async def event_stream() -> AsyncIterator[str]:
         async for event in chat_service.stream_chat_turn(
-            graph, db, conversation.id, data.message, new_title=new_title
+            graph, conversation.id, data.message, new_title=new_title
         ):
             yield _sse(event)
 
