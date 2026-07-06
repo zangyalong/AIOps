@@ -1,6 +1,8 @@
 export type ChatStreamEvent =
   | { type: 'token'; content: string }
   | { type: 'reset' }
+  | { type: 'tool_start'; id: string; tool: string }
+  | { type: 'tool_end'; id: string }
   | { type: 'done'; conversation_id: string; title?: string }
   | { type: 'error'; message: string }
 
