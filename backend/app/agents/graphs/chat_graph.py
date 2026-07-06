@@ -25,7 +25,8 @@ from app.agents.tools.logs import search_logs
 from app.agents.tools.servers import query_servers
 from app.core.config import settings
 
-TOOLS = [query_servers, search_logs, query_alerts, run_whitelisted_command]
+# search_logs, query_alerts,
+TOOLS = [query_servers, run_whitelisted_command]
 TOOLS_BY_NAME = {t.name: t for t in TOOLS}
 
 # 单次尝试内 agent <-> tools 循环最多走几轮，防止模型死循环调工具；到上限后 agent_node
