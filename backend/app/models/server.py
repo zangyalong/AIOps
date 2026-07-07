@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from sqlalchemy import Integer, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDMixin
@@ -26,3 +27,9 @@ class Server(Base, UUIDMixin, TimestampMixin):
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="unknown", server_default="unknown"
     )
+
+    # 这台服务器在监控系统里对应的标签，供关联工具（correlate_incident）把业务名翻译成监控标签用，
+    # 形如 {"instance": "node-exporter:9100", "service": "aioms-fake-app"}：
+    # instance 用来查 Prometheus 指标 / Alertmanager 告警，service 用来查 Loki 日志。可空。
+    # 注：create_all 不会给已有表加列，新增这列要手动 ALTER（见 scripts/seed_monitor_labels.py）。
+    monitor_labels: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

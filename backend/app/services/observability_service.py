@@ -59,6 +59,32 @@ async def prom_query(promql: str) -> list[dict]:
     return data.get("result", [])
 
 
+async def prom_query_range(
+    promql: str, start: float, end: float, step: str = "30s"
+) -> list[dict]:
+    """打 Prometheus 范围查询 /api/v1/query_range，返回 matrix 结果列表（每项 metric 标签 + values 时序）。
+
+    - start / end 用 unix 秒（float）。step 是采样步长（如 "30s"），控制返回点数别太多。
+    - 校验信封同 prom_query；只处理 matrix（区间向量），其它 resultType 返回空列表。
+    """
+    resp = await get_client().post(
+        f"{settings.prometheus_base_url}/api/v1/query_range",
+        data={"query": promql, "start": str(start), "end": str(end), "step": step},
+    )
+    try:
+        body = resp.json()
+    except ValueError:
+        raise RuntimeError(f"Prometheus 返回了非 JSON 响应：HTTP {resp.status_code}") from None
+    if body.get("status") != "success":
+        raise RuntimeError(
+            f"Prometheus 范围查询失败：{body.get('errorType')} - {body.get('error')}"
+        )
+    data = body.get("data", {})
+    if data.get("resultType") != "matrix":
+        return []
+    return data.get("result", [])
+
+
 async def prom_label_values(label: str) -> list[str]:
     """查 Prometheus 某个标签的所有取值 /api/v1/label/<label>/values，返回字符串列表。
 

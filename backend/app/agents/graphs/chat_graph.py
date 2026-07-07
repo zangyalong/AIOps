@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from app.agents.tools.alerts import query_alerts
 from app.agents.tools.commands import run_whitelisted_command
+from app.agents.tools.correlate import correlate_incident
 from app.agents.tools.grafana import grafana_explore_link
 from app.agents.tools.logs import list_log_services, search_logs
 from app.agents.tools.metrics import list_metric_instances, query_metrics
@@ -35,6 +36,7 @@ TOOLS = [
     list_log_services,
     query_alerts,
     grafana_explore_link,
+    correlate_incident,
 ]
 TOOLS_BY_NAME = {t.name: t for t in TOOLS}
 
@@ -55,6 +57,7 @@ PERSONA = (
     "- list_log_services：列出 Loki 里有哪些服务的日志可查。不确定 service 名时，先调它看有哪些，再调 search_logs\n"
     "- query_alerts：查询当前正在触发（firing）的真实告警（可按 severity、instance 过滤），数据来自 Alertmanager\n"
     "- grafana_explore_link：用户想看图/走势/可视化、或想跳到 Grafana 排查时，生成一个 Grafana 图表链接（指标、日志或告警时间线）\n"
+    "- correlate_incident：排查某台服务器某个时刻的问题时，一次把它的指标+日志+告警在同一时间窗对齐成横切面报告（需该服务器配了 monitor_labels）\n"
     "- run_whitelisted_command：通过 SSH 在白名单内执行只读诊断命令（只对配置了 SSH 连接信息的服务器生效，是真实执行）\n"
     "\n"
     "【铁律】涉及服务器状态、命令输出、指标、日志、告警等任何具体数据，只能通过实际调用上面的"
