@@ -31,7 +31,8 @@
 
 把 mock 换成真实数据源，并建立"关联"能力——这是 AI SRE 和 chatbot 的分水岭。可对照调研过的 HolmesGPT 看它怎么组织关联。
 
-- [ ] **接 Prometheus**：新增 metrics 查询工具（PromQL 查 CPU/内存/延迟等时序）——当前 metrics 能力为零，最该补的洞
+- [x] **接 Prometheus**：新增 metrics 查询工具（PromQL 查 CPU/内存/延迟等时序）——当前 metrics 能力为零，最该补的洞
+  - `query_metrics` 工具（cpu/memory/disk/up 模板 + PromQL 逃生口），数据源用 docker-compose 起的 Prometheus + node_exporter；踩过一个坑：本地 Prometheus 请求被环境 `HTTP_PROXY` 劫持，共享 httpx client 设 `trust_env=False` 解决
 - [ ] **接 Loki**：把 `search_logs`（`backend/app/agents/tools/logs.py`）从 mock 换成真实日志查询（LogQL）
 - [ ] **接 Alertmanager**：`query_alerts`（`backend/app/agents/tools/alerts.py`）从种子数据换成查真实 firing 告警（先只读）
 - [ ] **Grafana 联动**（可选）：agent 能引用/生成 Grafana 面板链接，把结论落到统一仪表盘

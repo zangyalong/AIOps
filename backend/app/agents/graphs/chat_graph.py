@@ -20,13 +20,20 @@ from pydantic import BaseModel, Field
 
 from app.agents.tools.alerts import query_alerts
 from app.agents.tools.commands import run_whitelisted_command
-from app.agents.tools.logs import search_logs
-from app.agents.tools.metrics import query_metrics
+from app.agents.tools.logs import list_log_services, search_logs
+from app.agents.tools.metrics import list_metric_instances, query_metrics
 from app.agents.tools.servers import query_servers
 from app.core.config import settings
 
-# search_logs, query_alerts,
-TOOLS = [query_servers, run_whitelisted_command, query_metrics]
+# query_alerts 还没接（任务3 接 Alertmanager 时启用）
+TOOLS = [
+    query_servers,
+    run_whitelisted_command,
+    query_metrics,
+    list_metric_instances,
+    search_logs,
+    list_log_services,
+]
 TOOLS_BY_NAME = {t.name: t for t in TOOLS}
 
 # 单次尝试内 agent <-> tools 循环最多走几轮，防止模型死循环调工具；到上限后 agent_node
@@ -41,7 +48,9 @@ PERSONA = (
     "你是 AIOMS 的运维助手。可用工具：\n"
     "- query_servers：查询 servers 表里的服务器列表\n"
     "- query_metrics：查询服务器实时监控指标（CPU/内存/磁盘使用率、目标存活），数据来自 Prometheus\n"
-    "- search_logs：模拟日志检索（还没接入真实日志系统，结果是模拟数据）\n"
+    "- list_metric_instances：列出 Prometheus 里有哪些实例的指标可查。不确定 instance 名时，先调它看有哪些，再调 query_metrics\n"
+    "- search_logs：查真实日志，数据来自 Loki（可按服务名 service、关键词 keyword、级别 level、时间窗 minutes 过滤）\n"
+    "- list_log_services：列出 Loki 里有哪些服务的日志可查。不确定 service 名时，先调它看有哪些，再调 search_logs\n"
     "- query_alerts：查询 alert_events 表里未处理的告警（表里数据是手动模拟生成的，还没接真实监控系统）\n"
     "- run_whitelisted_command：通过 SSH 在白名单内执行只读诊断命令（只对配置了 SSH 连接信息的服务器生效，是真实执行）\n"
     "\n"

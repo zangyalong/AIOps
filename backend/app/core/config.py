@@ -30,9 +30,12 @@ class Settings(BaseSettings):
     deepseek_model: str = "deepseek-v4-flash"
 
     # ---- 可观测性数据源（PLG），本地默认地址，无认证 ----
-    # 方向一·任务1 先只用 Prometheus；Loki/Alertmanager 等做到任务2/3 再加对应字段。
-    # 地址非敏感，进不进 .env 都行；真接了带 token 的远端再加 *_token 字段。
+    # Alertmanager 等做到任务3 再加对应字段。地址非敏感，进不进 .env 都行；
+    # 真接了带 token 的远端再加 *_token 字段。
     prometheus_base_url: str = "http://localhost:9090"
+    loki_base_url: str = "http://localhost:3100"
+    # 多租户 Loki 才需要传 X-Scope-OrgID；本地单体留空即可
+    loki_org_id: str = ""
     # 打可观测性数据源 HTTP 请求的统一超时（秒）
     obs_http_timeout: float = 10.0
 

@@ -1,0 +1,27 @@
+# Promtail 配置：发现本机 Docker 容器 → 读它们的日志 → 推给 Loki。
+# 被 docker-compose 挂载到 promtail 容器的 /etc/promtail/config.yml。
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  # 记录每个日志源读到哪了，重启不重复读。容器内临时目录即可（本地开发，丢了大不了重读）。
+  filename: /tmp/positions.yaml
+
+clients:
+  # 推送目标：同一个 compose 网络里按服务名 loki 访问。
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: docker
+    docker_sd_configs:
+      # 通过 Docker socket 发现容器并读取其日志（socket 由 compose 挂进来）。
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      # Docker 容器名形如 "/aioms-loki"，去掉前导斜杠，作为 container 标签。
+      # search_logs 就靠这个标签按容器/服务查日志。
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/(.*)"
+        target_label: "container"

@@ -1,7 +1,7 @@
-# 方向一「真实数据接入」的本地数据源。
-# 现在是最小起步：只起 metrics 工具（任务1）需要的 Prometheus + node_exporter。
-# 后面做到任务2（Loki）、任务3（Alertmanager）时，再往这个文件里加对应 service，
-# 不用一开始就把全套 PLG 起起来。
+# 方向一「真实数据接入」的本地数据源，按任务逐步加进来（最小起步策略）。
+# - 任务1（Prometheus 指标）：prometheus + node-exporter
+# - 任务2（Loki 日志）：loki + promtail（采集容器日志）+ fake-app（造带级别的假应用日志）
+# - 任务3（Alertmanager 告警）：到时候再加 alertmanager + 告警规则
 #
 # 用法：
 #   docker compose up -d          # 后台起
@@ -44,4 +44,50 @@ services:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/rootfs:ro
+    restart: unless-stopped
+
+  # ---- 任务2：Loki 日志 ----
+
+  # 日志聚合库 + LogQL 查询引擎。后端的 search_logs 工具打它的 HTTP API。
+  # 用官方镜像自带的单体默认配置（filesystem 存储、无认证），开箱即用。
+  loki:
+    image: grafana/loki:latest
+    container_name: aioms-loki
+    ports:
+      - "3100:3100"                 # 对应 backend config 里的 loki_base_url
+    command: -config.file=/etc/loki/local-config.yaml
+    restart: unless-stopped
+
+  # 日志采集器：通过 Docker socket 发现本机所有容器、读它们的日志，打上 container 标签
+  # 推送给 Loki。这样 search_logs 就能按 {container="xxx"} 查某个容器的日志。
+  promtail:
+    image: grafana/promtail:latest
+    container_name: aioms-promtail
+    volumes:
+      - ./docker/promtail.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro   # 发现容器 + 读日志都走这个 socket
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+    restart: unless-stopped
+
+  # 造点带级别（INFO/WARN/ERROR）的假应用日志，让 search_logs 的关键词/级别过滤有真实内容
+  # 可查——它之于「日志」，就像 node-exporter 之于「指标」，是个纯为验证工具而起的数据源。
+  # 生产环境当然不需要它。容器名 aioms-fake-app，promtail 会把它的日志打上 container=aioms-fake-app。
+  fake-app:
+    image: busybox:latest
+    container_name: aioms-fake-app
+    # Loki 按摄入时刻给每行日志打时间戳，所以行里不用自己写时间。
+    command:
+      - sh
+      - -c
+      - |
+        while true; do
+          echo "INFO  handled request path=/api/orders latency=210ms"
+          sleep 3
+          echo "WARN  slow query 812ms on orders table"
+          sleep 3
+          echo "ERROR connect timeout to db-01:5432 after 3s"
+          sleep 4
+        done
     restart: unless-stopped

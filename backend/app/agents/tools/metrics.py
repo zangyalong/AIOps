@@ -11,7 +11,7 @@ import math
 
 from langchain_core.tools import tool
 
-from app.services.observability_service import prom_query
+from app.services.observability_service import prom_label_values, prom_query
 
 # 常用指标的 PromQL 模板。用 node_exporter 的标准查法：
 # - cpu：100 减去 idle 占比 = 使用率。avg by(instance) 会把 job 等其它标签聚合掉，
@@ -103,6 +103,25 @@ async def query_metrics(metric: str, instance: str = "") -> str:
     scope = f"（instance={instance}）" if instance else ""
     title = _TITLES.get(metric, f"PromQL 查询结果：{metric}")
     return f"{title}{scope}（实时，来自 Prometheus）：\n" + "\n".join(lines)
+
+
+@tool
+async def list_metric_instances() -> str:
+    """列出当前 Prometheus 有指标可查的实例名（给 query_metrics 的 instance 参数选用）。
+
+    不确定要看哪台实例、或用户报的名字拿不准时，先调这个看有哪些实例，再去 query_metrics 查。
+    """
+    try:
+        instances = await prom_label_values("instance")
+    except Exception as exc:  # noqa: BLE001 —— 转成给 LLM 读的文本
+        return (
+            f"查询 Prometheus 实例列表失败：{exc}。"
+            "请确认 Prometheus 在跑（默认 http://localhost:9090）。"
+        )
+    if not instances:
+        return "Prometheus 里当前没有任何实例的指标（可能采集还没上来）。"
+    lines = "\n".join(f"- {s}" for s in sorted(instances))
+    return "当前 Prometheus 有指标可查的实例（可作为 query_metrics 的 instance 参数）：\n" + lines
 
 
 def _label_of(labels: dict, metric: str) -> str:
