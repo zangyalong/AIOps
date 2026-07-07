@@ -25,7 +25,6 @@ from app.agents.tools.metrics import list_metric_instances, query_metrics
 from app.agents.tools.servers import query_servers
 from app.core.config import settings
 
-# query_alerts 还没接（任务3 接 Alertmanager 时启用）
 TOOLS = [
     query_servers,
     run_whitelisted_command,
@@ -33,6 +32,7 @@ TOOLS = [
     list_metric_instances,
     search_logs,
     list_log_services,
+    query_alerts,
 ]
 TOOLS_BY_NAME = {t.name: t for t in TOOLS}
 
@@ -51,7 +51,7 @@ PERSONA = (
     "- list_metric_instances：列出 Prometheus 里有哪些实例的指标可查。不确定 instance 名时，先调它看有哪些，再调 query_metrics\n"
     "- search_logs：查真实日志，数据来自 Loki（可按服务名 service、关键词 keyword、级别 level、时间窗 minutes 过滤）\n"
     "- list_log_services：列出 Loki 里有哪些服务的日志可查。不确定 service 名时，先调它看有哪些，再调 search_logs\n"
-    "- query_alerts：查询 alert_events 表里未处理的告警（表里数据是手动模拟生成的，还没接真实监控系统）\n"
+    "- query_alerts：查询当前正在触发（firing）的真实告警（可按 severity、instance 过滤），数据来自 Alertmanager\n"
     "- run_whitelisted_command：通过 SSH 在白名单内执行只读诊断命令（只对配置了 SSH 连接信息的服务器生效，是真实执行）\n"
     "\n"
     "【铁律】涉及服务器状态、命令输出、指标、日志、告警等任何具体数据，只能通过实际调用上面的"

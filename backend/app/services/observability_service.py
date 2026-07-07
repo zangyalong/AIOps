@@ -139,3 +139,35 @@ async def loki_label_values(label: str) -> list[str]:
     if body.get("status") != "success":
         raise RuntimeError(f"Loki 查询失败：{body.get('error') or body}")
     return body.get("data") or []
+
+
+async def am_get_alerts(
+    active: bool = True,
+    silenced: bool = False,
+    inhibited: bool = False,
+) -> list[dict]:
+    """打 Alertmanager v2 API GET /api/v2/alerts，返回告警对象列表。
+
+    注意：Alertmanager v2 跟 Prometheus/Loki 不同——**顶层直接是数组**，没有
+    {"status": "success", "data": ...} 信封。所以这里靠 HTTP 状态码 + 是不是 list 判断成败。
+    默认只取 active（正在触发）、未被 silence/inhibit 抑制的告警。
+    """
+    resp = await get_client().get(
+        f"{settings.alertmanager_base_url}/api/v2/alerts",
+        params={
+            "active": str(active).lower(),
+            "silenced": str(silenced).lower(),
+            "inhibited": str(inhibited).lower(),
+        },
+    )
+    try:
+        body = resp.json()
+    except ValueError:
+        raise RuntimeError(
+            f"Alertmanager 返回非 JSON（HTTP {resp.status_code}）：{resp.text[:200]}"
+        ) from None
+    if resp.status_code != 200:
+        raise RuntimeError(f"Alertmanager 查询失败：HTTP {resp.status_code} - {body}")
+    if not isinstance(body, list):
+        raise RuntimeError(f"Alertmanager 返回了意外结构（期望数组）：{body}")
+    return body

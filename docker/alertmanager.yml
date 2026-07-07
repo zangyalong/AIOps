@@ -1,0 +1,16 @@
+# Alertmanager 配置（任务3）。被 docker-compose 挂到 alertmanager 容器的
+# /etc/alertmanager/alertmanager.yml。
+#
+# 我们这一步只「读」告警（query_alerts 查 /api/v2/alerts），不需要真把告警发到
+# Slack/邮件/钉钉，所以 receiver 用一个 null 空接收器——告警照样会进 Alertmanager 并处于
+# active 状态、能被查到，只是不往外发。真要接通知渠道是方向二的事。
+
+route:
+  receiver: "null"
+  # 同类告警攒一攒再处理的窗口，本地演示给小一点，让告警尽快可见。
+  group_wait: 5s
+  group_interval: 10s
+  repeat_interval: 1h
+
+receivers:
+  - name: "null"

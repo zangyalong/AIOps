@@ -1,7 +1,7 @@
 # 方向一「真实数据接入」的本地数据源，按任务逐步加进来（最小起步策略）。
 # - 任务1（Prometheus 指标）：prometheus + node-exporter
 # - 任务2（Loki 日志）：loki + promtail（采集容器日志）+ fake-app（造带级别的假应用日志）
-# - 任务3（Alertmanager 告警）：到时候再加 alertmanager + 告警规则
+# - 任务3（Alertmanager 告警）：alertmanager + Prometheus 告警规则（docker/alert_rules.yml）
 #
 # 用法：
 #   docker compose up -d          # 后台起
@@ -19,6 +19,8 @@ services:
     volumes:
       # 抓取配置：告诉 Prometheus 去哪些 target 拉指标。只读挂载。
       - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # 告警规则（任务3）：prometheus.yml 里 rule_files 指向的就是这个。
+      - ./docker/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
     restart: unless-stopped
 
   # 主机指标导出器：把 CPU/内存/磁盘/网络等暴露成 Prometheus 能抓的 /metrics。
@@ -90,4 +92,17 @@ services:
           echo "ERROR connect timeout to db-01:5432 after 3s"
           sleep 4
         done
+    restart: unless-stopped
+
+  # ---- 任务3：Alertmanager 告警 ----
+
+  # 告警分发器：接收 Prometheus 推来的 firing 告警。后端的 query_alerts 工具查它的
+  # /api/v2/alerts 拿当前正在触发的告警。receiver 配的是 null（只读演示，不往外发）。
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: aioms-alertmanager
+    ports:
+      - "9093:9093"                 # 对应 backend config 里的 alertmanager_base_url
+    volumes:
+      - ./docker/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
     restart: unless-stopped

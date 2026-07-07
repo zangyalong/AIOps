@@ -1,41 +1,76 @@
-"""告警查询工具，查的是 alert_events 真实表。
+"""告警查询工具（方向一·任务3）：查 Alertmanager 里当前正在触发（firing）的真实告警。
 
-表里的数据现在靠 scripts/seed_alerts.py 手动模拟生成，还没接真实监控系统（Prometheus
-Alertmanager 之类）产生实时数据——查询本身是真的，只是数据来源是种子脚本而不是活的监控系统。
+从原来查 alert_events 种子表，改成查 Alertmanager v2 API 的实时 firing 告警（只读）。
+alert_events 表和 scripts/seed_alerts.py 先留着不动——方向二做「告警生命周期状态机
+（FIRING/ACK/RESOLVED）」时，正好用它把 Alertmanager 拉来的告警落库、加 fingerprint 去重。
 """
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from langchain_core.tools import tool
 
-from app.db.session import AsyncSessionLocal
-from app.services import alert_event_service, server_service
+from app.services.observability_service import am_get_alerts
+
+# critical 在前，方便按严重程度阅读
+_SEVERITY_ORDER = {"critical": 0, "warning": 1, "info": 2}
 
 
 @tool
-async def query_alerts(server_name: str = "") -> str:
-    """查询当前未处理（status=open）的告警，不传 server_name 则返回所有服务器的告警。
+async def query_alerts(severity: str = "", instance: str = "") -> str:
+    """查询当前正在触发（firing）的告警，数据来自 Alertmanager。
 
-    注意：alert_events 表里的数据是手动模拟生成的（见 scripts/seed_alerts.py），
-    还没接入真实监控系统产生的实时告警，回答用户时要说明这一点。
+    - severity：按级别过滤（如 critical / warning / info）。不传则各级别都返回。
+    - instance：按实例过滤（如 "node-exporter:9100"）。不传则所有实例。
+    只返回 active（正在烧）、未被静默/抑制的告警。
     """
-    async with AsyncSessionLocal() as db:
-        servers = await server_service.list_servers(db)
-        server_by_name = {s.name: s for s in servers}
+    try:
+        alerts = await am_get_alerts()
+    except Exception as exc:  # noqa: BLE001 —— 网络/超时等都转成给 LLM 读的文本
+        return (
+            f"查询 Alertmanager 失败：{exc}。"
+            "请确认 Alertmanager 在跑（默认 http://localhost:9093）。"
+        )
 
-        if server_name and server_name not in server_by_name:
-            return f"没有找到名为 {server_name} 的服务器，请先确认服务器名称。"
-
-        target_id = server_by_name[server_name].id if server_name else None
-        alerts = await alert_event_service.list_open_alerts(db, target_id)
+    # 二次保险：只留 state=active（am_get_alerts 已用 active=true 请求，这里再兜一层）
+    alerts = [a for a in alerts if a.get("status", {}).get("state") == "active"]
+    if severity:
+        alerts = [a for a in alerts if a.get("labels", {}).get("severity") == severity]
+    if instance:
+        alerts = [a for a in alerts if a.get("labels", {}).get("instance") == instance]
 
     if not alerts:
-        scope = f"{server_name} 当前" if server_name else "当前"
-        return f"（数据来自模拟生成，未接入真实监控系统）{scope}没有未处理的告警。"
+        cond = []
+        if severity:
+            cond.append(f"级别 {severity}")
+        if instance:
+            cond.append(f"实例 {instance}")
+        scope = f"匹配（{('、'.join(cond))}）的" if cond else ""
+        return f"当前没有{scope}正在触发的告警。"
 
-    id_to_name = {s.id: s.name for s in servers}
-    lines = [
-        f"- [{a.severity}] {id_to_name.get(a.server_id, '（无关联服务器）')}：{a.message}"
-        for a in alerts
-    ]
-    return "（数据来自模拟生成，未接入真实监控系统）当前未处理告警：\n" + "\n".join(lines)
+    alerts.sort(key=lambda a: _SEVERITY_ORDER.get(a.get("labels", {}).get("severity"), 9))
+
+    lines: list[str] = []
+    for a in alerts:
+        labels = a.get("labels", {})
+        name = labels.get("alertname", "（无名告警）")
+        sev = labels.get("severity", "?")
+        inst = labels.get("instance")
+        summary = a.get("annotations", {}).get("summary", "")
+        started = _fmt_time(a.get("startsAt"))
+        where = f" @ {inst}" if inst else ""
+        lines.append(f"- [{sev}] {name}{where}（起始 {started}）：{summary}")
+
+    return f"当前正在触发的告警（{len(alerts)} 条，来自 Alertmanager）：\n" + "\n".join(lines)
+
+
+def _fmt_time(ts: str | None) -> str:
+    """Alertmanager 的 startsAt 是 RFC3339 UTC（末尾 Z），转成本地时区的「月-日 时:分」便于阅读。"""
+    if not ts:
+        return "未知"
+    try:
+        dt = datetime.fromisoformat(ts)  # Python 3.11+ 支持末尾 Z 和小数秒
+    except ValueError:
+        return ts
+    return dt.astimezone().strftime("%m-%d %H:%M")

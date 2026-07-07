@@ -3,7 +3,18 @@
 
 global:
   scrape_interval: 15s      # 每 15s 抓一次所有 target
-  evaluation_interval: 15s  # 每 15s 评估一次告警规则（现在还没规则，任务3 接 Alertmanager 时再加）
+  evaluation_interval: 15s  # 每 15s 评估一次告警规则
+
+# 告警规则文件（任务3）。Prometheus 按 evaluation_interval 评估这些规则，命中就把告警置为
+# firing 并推给下面 alerting 里配的 Alertmanager。
+rule_files:
+  - /etc/prometheus/alert_rules.yml
+
+# 把 firing 告警推给谁（任务3）。同一个 compose 网络里按服务名 alertmanager 访问。
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
 
 scrape_configs:
   # Prometheus 抓自己，用来验证它活着（会产生 up{job="prometheus"} 指标）
