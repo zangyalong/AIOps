@@ -47,7 +47,8 @@
 
 CLAUDE.md 项目定位里"值班/告警诊断"的核心闭环。
 
-- [ ] **告警 ingestion 层**：webhook 端点接收 Alertmanager 推送 → 落 `alert_events` 表
+- [x] **告警 ingestion 层**：webhook 端点接收 Alertmanager 推送 → 落 `alert_events` 表
+  - `POST /alerts/webhook` 接收 Alertmanager 推送，按 fingerprint upsert 落库（firing/resolved 更新同一行，天然去重）；`GET /alerts` 列出。`alert_events` 表重塑成真实告警结构（fingerprint/alertname/severity/status/summary/labels/instance/starts_at/ends_at）。alertmanager.yml 的 receiver 从 null 改成 webhook（host.docker.internal:8010）。旧 mock 结构 + seed_alerts.py 废弃
 - [ ] **后台任务 runner**：当前是纯请求-响应，需要 background/scheduled 能力（告警触发的诊断、定时值班报告都要它）
 - [ ] **告警自动 triage**：告警落库后自动触发 agent 调查（拉 metrics/logs）→ 诊断结果推 Slack/IM
 - [ ] **去重/关联层用规则引擎**（CEL 或等价），不用 LLM——survey 启发 #1，Keep 最成熟的实现就是纯规则，快/可解释/好测；这是 agent 之前的确定性预处理

@@ -1,16 +1,20 @@
-# Alertmanager 配置（任务3）。被 docker-compose 挂到 alertmanager 容器的
-# /etc/alertmanager/alertmanager.yml。
+# Alertmanager 配置。被 docker-compose 挂到 alertmanager 容器的 /etc/alertmanager/alertmanager.yml。
 #
-# 我们这一步只「读」告警（query_alerts 查 /api/v2/alerts），不需要真把告警发到
-# Slack/邮件/钉钉，所以 receiver 用一个 null 空接收器——告警照样会进 Alertmanager 并处于
-# active 状态、能被查到，只是不往外发。真要接通知渠道是方向二的事。
+# 方向二：从"只读告警"升级成"把告警推给后端"。receiver 改成 webhook，指向后端的 /alerts/webhook，
+# 后端收到后落 alert_events 表——这是事件驱动的入口。
+#
+# 地址用 host.docker.internal：Alertmanager 跑在 Docker 里，后端跑在宿主机 :8010，容器要用这个
+# 特殊域名才能访问到宿主机（Docker Desktop 上可用）。send_resolved: true 表示告警恢复时也推一条。
 
 route:
-  receiver: "null"
-  # 同类告警攒一攒再处理的窗口，本地演示给小一点，让告警尽快可见。
+  receiver: "aioms-backend"
+  # 同类告警攒一攒再处理的窗口，本地演示给小一点，让告警尽快推过来。
   group_wait: 5s
   group_interval: 10s
   repeat_interval: 1h
 
 receivers:
-  - name: "null"
+  - name: "aioms-backend"
+    webhook_configs:
+      - url: "http://host.docker.internal:8010/alerts/webhook"
+        send_resolved: true
