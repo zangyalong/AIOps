@@ -1,0 +1,47 @@
+# 方向一「真实数据接入」的本地数据源。
+# 现在是最小起步：只起 metrics 工具（任务1）需要的 Prometheus + node_exporter。
+# 后面做到任务2（Loki）、任务3（Alertmanager）时，再往这个文件里加对应 service，
+# 不用一开始就把全套 PLG 起起来。
+#
+# 用法：
+#   docker compose up -d          # 后台起
+#   docker compose ps             # 看状态
+#   docker compose logs -f        # 看日志
+#   docker compose down           # 停并删容器（数据在容器里，删了重来即可，纯本地开发无所谓）
+
+services:
+  # 时序指标数据库 + PromQL 查询引擎。后端的 query_metrics 工具就是打它的 HTTP API。
+  prometheus:
+    image: prom/prometheus:latest   # 先用 latest 保证能拉到；稳定后可以 pin 成具体版本
+    container_name: aioms-prometheus
+    ports:
+      - "9090:9090"                 # 对应 backend config 里的 prometheus_base_url
+    volumes:
+      # 抓取配置：告诉 Prometheus 去哪些 target 拉指标。只读挂载。
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    restart: unless-stopped
+
+  # 主机指标导出器：把 CPU/内存/磁盘/网络等暴露成 Prometheus 能抓的 /metrics。
+  # 它是 query_metrics 工具里 cpu/memory/disk 那几个 PromQL 模板的数据来源。
+  #
+  # ⚠️ macOS 说明：Docker Desktop 跑在一个 Linux 虚拟机里，所以这里的 node_exporter
+  # 报的是「那台 Linux VM」的指标，不是你 macOS 宿主机的真实指标。对学这个工具怎么写、
+  # 怎么解析 PromQL 完全够用（数据是真的、会实时变化），只是别把数字当成你 Mac 的真实负载。
+  # 在真正的 Linux 服务器上跑，报的就是宿主机真实指标。
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: aioms-node-exporter
+    ports:
+      - "9100:9100"
+    # 下面这组是 node_exporter 采集宿主机（Linux 上）真实指标的标准姿势：
+    # 把宿主机的 /proc、/sys、/ 只读挂进容器，并用 --path.rootfs 指过去。
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    restart: unless-stopped

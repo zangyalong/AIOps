@@ -1,0 +1,18 @@
+# Prometheus 抓取配置。被 docker-compose 挂载到容器的 /etc/prometheus/prometheus.yml。
+# 改了这个文件后：docker compose restart prometheus（或在 :9090 页面 reload）。
+
+global:
+  scrape_interval: 15s      # 每 15s 抓一次所有 target
+  evaluation_interval: 15s  # 每 15s 评估一次告警规则（现在还没规则，任务3 接 Alertmanager 时再加）
+
+scrape_configs:
+  # Prometheus 抓自己，用来验证它活着（会产生 up{job="prometheus"} 指标）
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # 抓 node_exporter 的主机指标。target 用 compose 的 service 名 node-exporter，
+  # 同一个 docker 网络里能直接按服务名互访。抓到的指标 instance 标签就是 "node-exporter:9100"。
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]
