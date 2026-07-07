@@ -21,7 +21,7 @@ from app.services.observability_service import prom_label_values, prom_query
 #   Docker Desktop 会冒出来的 virtiofs/fuse/fakeowner 这类桥接挂载（真 Linux 上没有这些
 #   fstype，排掉无副作用），避免结果里混进一堆无意义的挂载点。
 # - up：target 是否存活（1=存活，0=抓取失败），排查"指标为空是不是 exporter 挂了"用。
-_PROMQL_TEMPLATES = {
+PROMQL_TEMPLATES = {
     "cpu": '100 - (avg by(instance)(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)',
     "memory": "(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100",
     "disk": (
@@ -53,8 +53,8 @@ async def query_metrics(metric: str, instance: str = "") -> str:
     instance 可选，传了就只看该实例（如 "node-exporter:9100"），不传返回所有实例。
     """
     metric = metric.strip()
-    is_template = metric in _PROMQL_TEMPLATES
-    promql = _PROMQL_TEMPLATES.get(metric, metric)  # 命中模板用模板，否则当原始 PromQL
+    is_template = metric in PROMQL_TEMPLATES
+    promql = PROMQL_TEMPLATES.get(metric, metric)  # 命中模板用模板，否则当原始 PromQL
 
     try:
         results = await prom_query(promql)

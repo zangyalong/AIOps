@@ -2,6 +2,7 @@
 # - 任务1（Prometheus 指标）：prometheus + node-exporter
 # - 任务2（Loki 日志）：loki + promtail（采集容器日志）+ fake-app（造带级别的假应用日志）
 # - 任务3（Alertmanager 告警）：alertmanager + Prometheus 告警规则（docker/alert_rules.yml）
+# - 任务4（Grafana 可视化）：grafana（接 Prometheus/Loki，agent 生成 Explore 图表链接给用户点）
 #
 # 用法：
 #   docker compose up -d          # 后台起
@@ -105,4 +106,28 @@ services:
       - "9093:9093"                 # 对应 backend config 里的 alertmanager_base_url
     volumes:
       - ./docker/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    restart: unless-stopped
+
+  # ---- 任务4：Grafana 可视化 ----
+
+  # 指标/日志的图形前端。它自己不存数据，接到 Prometheus + Loki 上把数据画成图表。
+  # 我们不在这盯着看，而是让 agent 生成"打开某个查询的 Explore 图表"链接给用户点开看走势。
+  grafana:
+    image: grafana/grafana:latest
+    container_name: aioms-grafana
+    ports:
+      - "3000:3000"                 # 对应 backend config 里的 grafana_base_url
+    environment:
+      # 本地开发图省事：开匿名访问，点链接不用登录就能看图。
+      # 角色给 Editor 而不是 Viewer——Grafana 的 Explore 页默认只对 Editor/Admin 开放，
+      # Viewer 点 Explore 链接会被重定向回首页（看不到图）。生产绝不能这样，那要接真实登录/权限。
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Editor
+    volumes:
+      # provisioning：容器一起来就自动把 Prometheus/Loki 配成数据源（固定 uid），
+      # 省得人工去 UI 加，也让 agent 拼链接能用确定的数据源 uid。
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+      - loki
     restart: unless-stopped
