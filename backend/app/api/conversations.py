@@ -30,7 +30,12 @@ async def get_conversation(
     return ConversationDetail(
         conversation=ConversationSummary.model_validate(conversation),
         messages=[
-            ChatMessageOut(role=m.role, content=m.content, steps=m.steps)
+            ChatMessageOut(
+                role=m.role,
+                content=m.content,
+                tool_calls=m.tool_calls,
+                tool_call_id=m.tool_call_id,
+            )
             for m in messages
         ],
     )

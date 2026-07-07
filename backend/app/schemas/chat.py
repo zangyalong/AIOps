@@ -23,11 +23,12 @@ class ConversationSummary(BaseModel):
 
 
 class ChatMessageOut(BaseModel):
-    role: str
+    role: str  # "user" | "assistant" | "tool"
     content: str
-    # assistant 消息"最终答案之前"的有序过程（旁白文字段 + 工具），前端刷新后据此原样重建；
-    # 每个元素是 {"type":"text","content":...} 或 {"type":"tool","tool":...}。否则为 None。
-    steps: list[dict] | None = None
+    # assistant 调工具时带上它的 tool_calls（[{name,args,id,type}]）；tool 消息带 tool_call_id。
+    # 前端刷新后据此原样重建"旁白 → 工具行 → 答案"。
+    tool_calls: list[dict] | None = None
+    tool_call_id: str | None = None
 
 
 class ConversationDetail(BaseModel):

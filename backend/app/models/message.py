@@ -22,12 +22,13 @@ class Message(Base, UUIDMixin):
     conversation_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
     )
-    role: Mapped[str] = mapped_column(String(20), nullable=False)  # "user" | "assistant"
-    content: Mapped[str] = mapped_column(Text, nullable=False)  # assistant 存最终答案
-    # assistant 消息"最终答案之前"的有序过程（档位 B 完整回放）：一串
-    # {"type":"text","content":旁白} / {"type":"tool","tool":工具名}，供刷新后原样重建。
-    # user 消息、以及没有中间过程的直接回答都是 NULL。
-    steps: Mapped[list[dict] | None] = mapped_column(JSONB, nullable=True)
+    # "user" | "assistant" | "tool"——忠实对应 LangChain 的 HumanMessage/AIMessage/ToolMessage
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    # assistant 决定调工具时，这里存它的 tool_calls（[{name,args,id,type}, ...]）；否则 NULL
+    tool_calls: Mapped[list[dict] | None] = mapped_column(JSONB, nullable=True)
+    # tool 消息回应的是哪个 tool_call（对应某条 assistant 的 tool_calls[i].id）；其它角色 NULL
+    tool_call_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

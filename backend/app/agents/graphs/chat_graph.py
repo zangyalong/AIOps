@@ -11,7 +11,6 @@ from langchain_core.messages import (
     HumanMessage,
     RemoveMessage,
     SystemMessage,
-    ToolMessage,
 )
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
@@ -45,9 +44,18 @@ PERSONA = (
     "- run_whitelisted_command：通过 SSH 在白名单内执行只读诊断命令（只对配置了 SSH 连接信息的服务器生效，是真实执行）\n"
     "\n"
     "【铁律】涉及服务器状态、命令输出、指标、日志、告警等任何具体数据，只能通过实际调用上面的"
-    "工具获取，绝对禁止编造、猜测，或拿历史对话里出现过的数据当成本轮的真实结果。需要数据就去"
-    "调用对应工具；工具没返回、或服务器没配置无法执行的，就如实说“拿不到/需要调用工具才能知道”，"
-    "不要自己编一份看起来真实的数据。工具返回的模拟数据也要如实说明是模拟的，不要当真实结果陈述。"
+    "工具获取，绝对禁止编造或猜测。**上文历史消息里那些工具返回的结果，都是过去某个时刻的旧快照，"
+    "不代表现在。**\n"
+    "调用工具前先用一句话说明调用的目的和理由，调用后再用一句话说明结果所代表的含义。\n"
+    "只要用户问的是某台服务器“此刻”的属性或状态——IP、名称、运行时间、负载、磁盘、是否在线等——"
+    "哪怕上文历史里已经出现过这个值、哪怕它看起来“一般不会变”（比如 IP 地址），也必须在本轮先重新"
+    "调用对应工具拿到最新值再回答，绝对不能直接拿历史里的旧值抢答。不要用“这个值通常不变”给自己"
+    "找借口——你无从判断它有没有变，唯一可靠的做法就是现在调工具重新查。判断很简单：用户想知道某台"
+    "服务器现在真实是什么样 → 先调工具。\n"
+    "唯一例外：用户明确是在“回顾历史本身”（如“刚才那个命令返回了什么”“我最开始问的是什么”“上面"
+    "第一次查的结果是啥”），这是在问对话记录、不是问服务器现状，可以直接引用上文、不必重新调工具。\n"
+    "工具没返回、或服务器没配置 SSH 无法执行的，就如实说“拿不到/需要调用工具才能知道”，不要自己编"
+    "一份看起来真实的数据。工具返回的模拟数据也要如实说明是模拟的，不要当真实结果陈述。"
 )
 
 
@@ -59,10 +67,9 @@ class ReflexionVerdict(BaseModel):
 
 
 class ChatState(TypedDict):
+    # 历史以完整真轨迹的形式直接在 messages 里（chat_service 加载后 prepend 在本轮问题前），
+    # 不再单独走一个背景摘要字段。
     messages: Annotated[list[BaseMessage], add_messages]
-    # 此前对话历史压成的一段背景摘要（不是一条条真 AIMessage，避免"没调工具直接吐数据"的
-    # 坏样例污染上下文）；由 chat_service 传入，agent 每步注入系统提示。见 _build_history_summary。
-    history_summary: str
     # 单次尝试内 agent <-> tools 来回了几轮，用来卡 MAX_TOOL_ITERATIONS；每次重试会重置为 0
     tool_iterations: int
     # 累积的自我反思，evaluate 不通过时追加（add 归约器 = 往后拼），agent 每次带着它改进
@@ -138,14 +145,8 @@ async def agent_node(state: ChatState) -> dict:
     if reflections:
         joined = "\n".join(f"- {r}" for r in reflections)
         guidance += f"\n你之前回答本轮问题时的自我反思，这次务必据此改进：\n{joined}"
-    # 历史压成的背景摘要放进同一条 SystemMessage（而不是当成一条条历史消息进 messages），
-    # 避免坏样例污染，也避免出现两条并排的 SystemMessage。
-    system_parts = [PERSONA]
-    history_summary = state.get("history_summary", "")
-    if history_summary:
-        system_parts.append(history_summary)
-    system_parts.append(guidance)
-    prompt = [SystemMessage("\n\n".join(system_parts)), *state["messages"]]
+    # 历史已经以真消息形式在 state["messages"] 里了，这里 SystemMessage 只放 PERSONA + guidance。
+    prompt = [SystemMessage(f"{PERSONA}\n{guidance}"), *state["messages"]]
     mode = "none" if at_limit else ("required" if use_required else "auto")
     response = await _llm(mode).ainvoke(prompt)
     print(
@@ -156,15 +157,14 @@ async def agent_node(state: ChatState) -> dict:
 
 
 async def tools_node(state: ChatState) -> dict:
-    """执行上一条 AI 消息里的所有 tool_calls，把结果作为 ToolMessage 追加回消息列表。"""
+    """执行上一条 AI 消息里的所有 tool_calls。传完整 tool_call 给工具（而不是只传 args），
+    工具直接返回带 tool_call_id 的 ToolMessage——这样 tool_call_id 自动对上，落库/回放都干净。"""
     t0 = time.monotonic()
     last = state["messages"][-1]
     assert isinstance(last, AIMessage)
-    results = []
-    for tool_call in last.tool_calls:
-        selected_tool = TOOLS_BY_NAME[tool_call["name"]]
-        result = await selected_tool.ainvoke(tool_call["args"])
-        results.append(ToolMessage(content=result, tool_call_id=tool_call["id"]))
+    results = [
+        await TOOLS_BY_NAME[tc["name"]].ainvoke(tc) for tc in last.tool_calls
+    ]
     print(f"[graph] tools_node 耗时 {time.monotonic() - t0:.1f}s")
     return {"messages": results, "tool_iterations": state.get("tool_iterations", 0) + 1}
 
@@ -183,8 +183,16 @@ async def evaluate_node(state: ChatState) -> dict:
         SystemMessage(
             "你是质检员，判断助手的回答是否正确、完整地回应了用户这一轮的问题。评判要点：\n"
             "1. 是否回应了用户问的所有点，没有遗漏；\n"
-            "2. 回答里若陈述了服务器状态/命令输出/指标/日志/告警等具体数据，本轮必须实际调用过"
-            "对应工具才可信——没调相应工具却给出这类数据，判为不通过（很可能是编造的）；\n"
+            "2. 关于回答里的“具体数据”（服务器状态/命令输出/指标/日志/告警等），先分清用户这轮想要哪种：\n"
+            "   (a) 想要【当前/最新的真实值，或某集合此刻有没有变化】——如“现在磁盘占用多少”“服务器还在线吗”"
+            "“现在负载是升是降”“还是原来那几台吗/有没有新增”——这类必须本轮实际调用过对应工具拿最新值才可信；"
+            "给了这类数据却没调相应工具，判为不通过（很可能是编造的）。\n"
+            "   (b) 只是问【上文对话里已经出现过的信息】——如“第一个命令的结果是啥”“刚才那个工具返回了什么”"
+            "“我最开始问的是什么”——这是在问历史，助手照上文如实复述、不重新调工具是正确的，"
+            "不能因为“本轮没调工具”就判不通过。\n"
+            "   关键判据：只要问句里有“现在/还剩/最新/是升是降/变没变/有没有新增”这类指向此刻真实值的成分，"
+            "哪怕它同时引用了历史数据，也按 (a) 处理——不能拿历史旧值顶替、也不能用旧快照算一算就当本轮结果。\n"
+            "   一句话里夹了多个小问时，逐个套 (a)/(b)：只要有任一点属于 (a) 却没在本轮调对应工具，就判不通过。\n"
             "3. 明显答非所问、空泛或自相矛盾，判为不通过。\n"
             "不通过时给出一句可操作的改进建议（reflection），告诉助手下次具体该怎么做；通过时 reflection 留空。"
         ),
@@ -206,7 +214,14 @@ async def evaluate_node(state: ChatState) -> dict:
     if verdict.passed:
         return {"passed": True, "review_attempts": review_attempts}
 
-    # 打回重试：把本轮产生的草稿（含 tool_calls / ToolMessage）整批从 messages 里删掉，
+    # 已到质检上限，route_after_evaluate 会直接 END、不会再回 agent 重做——这时候绝对不能删草稿。
+    # 删了的话本轮这段回答既不在最终状态里（chat_service 落库时 turn_messages 会切成空、一条不存），
+    # 前端又因为不会再收到 reset/token 而把它留在屏幕上，就成了"页面有、库里没有、刷新即消失"。
+    # 所以到上限就把当前这版草稿（哪怕没通过质检）当作最终答案留下，让它照常落库。
+    if review_attempts >= MAX_REVIEW_ATTEMPTS:
+        return {"passed": False, "review_attempts": review_attempts}
+
+    # 还能重试：把本轮产生的草稿（含 tool_calls / ToolMessage）整批从 messages 里删掉，
     # 只留"历史 + 本轮用户问题"，避免重试的 agent 被自己刚才的错误答案锚定越纠越偏；
     # 唯一的纠偏信号是注入的 reflection。必须删"最近一条用户消息之后的全部"，把成对的
     # tool_call+ToolMessage 一起带走，别留半截（否则 DeepSeek 工具校验可能 400）。

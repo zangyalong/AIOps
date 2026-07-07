@@ -1,13 +1,16 @@
-// assistant 消息"最终答案之前"的有序过程步骤：一段旁白文字，或一次工具调用
-export type ChatStep =
-  | { type: 'text'; content: string }
-  | { type: 'tool'; tool: string }
+export interface ToolCall {
+  name: string
+  args?: Record<string, unknown>
+  id?: string
+  type?: string
+}
 
 export interface ChatMessage {
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'tool'
   content: string
-  // 最终答案之前的有序过程，刷新后据此原样重建；user 消息/无中间过程的回答为 null
-  steps?: ChatStep[] | null
+  // assistant 调工具时带上它的 tool_calls；tool 消息带它回应的 tool_call_id。刷新后据此重建过程。
+  tool_calls?: ToolCall[] | null
+  tool_call_id?: string | null
 }
 
 export interface ConversationSummary {

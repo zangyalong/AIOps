@@ -71,8 +71,8 @@ function appendToken(content: string) {
 
 function discardDraft() {
   // Reflexion 质检打回重试：被否决那一整次（旁白 + 工具行 + 答案）都作废——把最近一条 user
-  // 消息之后的全部删掉，等重试从头流入。跟后端"reset 时清空 current_text + steps"对齐，
-  // 保证实时稳定态 == 刷新态（都只留通过的那一次）。
+  // 消息之后的全部删掉，等重试从头流入。后端那边被否决的尝试也被图内 RemoveMessage 从状态里
+  // 剪掉、不会落库，所以实时稳定态 == 刷新态（都只留通过的那一次）。
   let lastUserIdx = -1
   for (let i = timeline.value.length - 1; i >= 0; i--) {
     const item = timeline.value[i]
@@ -150,16 +150,21 @@ async function selectConversation(id: string) {
   try {
     const detail = await fetchConversationDetail(id)
     conversationId.value = detail.conversation.id
-    // 每条消息按"最终答案之前的过程（steps）+ 最终答案（content）"原样展开，跟实时时一致：
-    // steps 里的 text 段重建成旁白气泡、tool 段重建成工具行（历史一律 done），最后放 content 气泡。
+    // 从 canonical 消息行重建时间线，跟实时时一致：
+    // - tool 行（工具结果）不单独显示——工具行由它前面 assistant 的 tool_calls 渲染
+    // - 带 tool_calls 的 assistant：先旁白气泡（如果有文字），再每个 tool_call 一条工具行（历史一律 done）
+    // - 普通 user 提问 / assistant 最终答案 → 气泡
     timeline.value = detail.messages.flatMap((m: ChatMessage): TimelineItem[] => {
+      if (m.role === 'tool') return []
       const items: TimelineItem[] = []
-      for (const step of m.steps ?? []) {
-        if (step.type === 'text') {
-          items.push({ kind: 'message', key: uid(), role: 'assistant', content: step.content })
-        } else {
-          items.push({ kind: 'tool', key: uid(), id: uid(), tool: step.tool, done: true })
+      if (m.role === 'assistant' && m.tool_calls?.length) {
+        if (m.content) {
+          items.push({ kind: 'message', key: uid(), role: 'assistant', content: m.content })
         }
+        for (const tc of m.tool_calls) {
+          items.push({ kind: 'tool', key: uid(), id: uid(), tool: tc.name, done: true })
+        }
+        return items
       }
       if (m.content) {
         items.push({ kind: 'message', key: uid(), role: m.role, content: m.content })

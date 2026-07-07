@@ -13,13 +13,15 @@ async def create_message(
     conversation_id: uuid.UUID,
     role: str,
     content: str,
-    steps: list[dict] | None = None,
+    tool_calls: list[dict] | None = None,
+    tool_call_id: str | None = None,
 ) -> Message:
     message = Message(
         conversation_id=conversation_id,
         role=role,
         content=content,
-        steps=steps,
+        tool_calls=tool_calls,
+        tool_call_id=tool_call_id,
     )
     return await message_repository.create(db, message)
 

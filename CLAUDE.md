@@ -105,6 +105,7 @@ AIOMS/
 - 主键统一 `id UUID`（`gen_random_uuid()` 默认值）；时间字段 `created_at` / `updated_at` 带时区
 - 所有 ORM 模型继承 `app/models/base.py` 里唯一的 `Base`，主键用 `UUIDMixin`、需要 `updated_at` 的表再加 `TimestampMixin`——**全项目只能有这一个 `DeclarativeBase`**，不要在别处再定义一个，否则新模型会注册到不同的 metadata 上，启动建表时会看不到那些表
 - schema 由 `app/models/` 里的 SQLAlchemy 模型直接定义，后端启动时自动跑 `Base.metadata.create_all()` 建出缺的表（不会改动/删除已有表）。项目早期不引入迁移工具——改已有表的列（加字段、改类型）需要手动 `ALTER` 或本地删表重建；等 schema 稳定、需要多环境同步时再考虑引入迁移工具
+- **开发阶段：该改表就大胆改。** 现在是本地单库开发，没有生产数据要保护，改 schema 的代价就是一条 `ALTER`（或删表重建）。所以**不要为了"避免动数据库"把一个本来简单的需求绕成复杂方案**——需要多存一列/一个字段就直接加，别用"当前没存所以做不到"当借口。真正要谨慎的是「安全红线」那类不可逆操作，不是加个列。
 
 ### Git
 
