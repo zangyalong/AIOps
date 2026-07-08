@@ -53,7 +53,8 @@ CLAUDE.md 项目定位里"值班/告警诊断"的核心闭环。
   - 用 arq + Redis 搭任务队列：webhook 落库时把「新触发」的告警入队，独立的 arq worker 进程（`app.worker.WorkerSettings`）消费。以后定时值班报告也挂这个 runner
 - [x] **告警自动 triage**：告警落库后自动触发 agent 调查（拉 metrics/logs）→ 诊断结果推 Slack/IM
   - worker 的 `triage_alert` 复用 ReAct+Reflexion agent 图：按 fingerprint 载入告警 → 反查实体（instance→server via monitor_labels）→ agent 调 correlate_incident 等工具调查 → 诊断回填到 `alert_events.diagnosis`。**推 Slack/IM 这步先缓**（诊断已落库、`GET /alerts` 可查，通知渠道以后单接）。顺带修了 evaluate 质检 bug（改看工具实际返回，不再误判 correlate 编造）
-- [ ] **去重/关联层用规则引擎**（CEL 或等价），不用 LLM——survey 启发 #1，Keep 最成熟的实现就是纯规则，快/可解释/好测；这是 agent 之前的确定性预处理
+- [x] **去重/关联层用规则引擎**（CEL 或等价），不用 LLM——survey 启发 #1，Keep 最成熟的实现就是纯规则，快/可解释/好测；这是 agent 之前的确定性预处理
+  - `app/services/correlation.py`：用 CEL（celpy）写匹配条件 + group_by 归组，算出 `group_key`（同 key = 同一事件）。当前规则 by-instance：带 instance 的 critical/warning 告警按 `[instance, alertname]` 归组（同机同种告警去重、不同种各成事件）。ingest 时算 group_key 落库，**只有事件的第一条 firing 才入队诊断**，同事件其余静默归入——治好「同台机多条告警重复诊断」。dedup（按 fingerprint）本就有
 - [ ] **事件生命周期状态机**：`alert_events` 从平铺一条记录升级成 `FIRING/ACK/RESOLVED` 状态机（谁认领、后续如何）——survey 模块 6 / 启发 #6
 
 ### 方向三：生产红线（审计 / 鉴权 / 真审批）

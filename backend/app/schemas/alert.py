@@ -46,6 +46,7 @@ class AlertRead(BaseModel):
     summary: str | None
     instance: str | None
     labels: dict | None
+    group_key: str | None
     starts_at: datetime | None
     ends_at: datetime | None
     diagnosis: str | None

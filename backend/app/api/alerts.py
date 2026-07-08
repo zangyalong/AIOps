@@ -46,7 +46,7 @@ async def receive_webhook(payload: AlertmanagerWebhook, db: DBSession, request: 
 
     return {
         "received": len(payload.alerts),
-        "newly_firing": len(to_triage),
+        "to_triage": len(to_triage),  # 新触发且是所属事件的第一条（经关联去重后要诊断的数量）
         "triage_enqueued": enqueued,
     }
 

@@ -44,3 +44,7 @@ class AlertEvent(Base, UUIDMixin, TimestampMixin):
     # 自动诊断（方向二 triage 回填）：agent 后台调查后写回的诊断结论 + 诊断时刻。
     diagnosis: Mapped[str | None] = mapped_column(Text, nullable=True)
     triaged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # 关联/归组键（方向二·任务①）：按 correlation 规则算出来，同 key 的告警属于同一个「事件」，
+    # 只触发一次自动诊断。规则都不命中则为 None（独立成组）。
+    group_key: Mapped[str | None] = mapped_column(String(255), nullable=True)

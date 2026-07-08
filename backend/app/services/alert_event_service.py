@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.alert_event import AlertEvent
 from app.repositories import alert_event_repository
 from app.schemas.alert import AlertmanagerAlert
+from app.services import correlation
 
 
 async def ingest_alerts(db: AsyncSession, alerts: list[AlertmanagerAlert]) -> list[str]:
@@ -19,6 +20,8 @@ async def ingest_alerts(db: AsyncSession, alerts: list[AlertmanagerAlert]) -> li
     to_triage: list[str] = []
     for a in alerts:
         labels = a.labels or {}
+        # 关联/归组：按规则算 group_key（同 key 属同一事件）。纯确定性，不用 LLM。
+        group_key = correlation.compute_group_key(labels)
         _, newly_firing = await alert_event_repository.upsert_by_fingerprint(
             db,
             fingerprint=a.fingerprint,
@@ -30,9 +33,23 @@ async def ingest_alerts(db: AsyncSession, alerts: list[AlertmanagerAlert]) -> li
             instance=labels.get("instance"),
             starts_at=a.starts_at,
             ends_at=a.ends_at if a.status == "resolved" else None,
+            group_key=group_key,
         )
-        if newly_firing:
+        # session 是 autoflush=False，这里显式 flush 让这条落到 DB（未提交），
+        # 好让同一批次后面告警的 group 计数能查到它（否则同批同组会各触发一次诊断）。
+        await db.flush()
+        if not newly_firing:
+            continue
+        # 决定要不要触发诊断：不参与关联（group_key=None）就独立诊断；参与关联的，只有当这个事件
+        # 还没有别的 firing 告警（即它是事件的第一条）才诊断——已激活的事件不重复诊断。
+        if group_key is None:
             to_triage.append(a.fingerprint)
+        else:
+            others = await alert_event_repository.count_firing_in_group(
+                db, group_key, a.fingerprint
+            )
+            if others == 0:
+                to_triage.append(a.fingerprint)
     await db.commit()  # 整个 webhook 的告警一次性提交
     return to_triage
 
