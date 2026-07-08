@@ -11,6 +11,7 @@ from langchain_core.messages import (
     HumanMessage,
     RemoveMessage,
     SystemMessage,
+    ToolMessage,
 )
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
@@ -124,15 +125,23 @@ def _latest_human_content(messages: list[BaseMessage]) -> str:
     return ""
 
 
-def _tools_used_since_last_human(messages: list[BaseMessage]) -> list[str]:
-    """本轮（最近一条用户消息之后）实际发起过哪些工具调用，给 evaluate 判断有没有编造用。"""
-    used: list[str] = []
+def _tool_results_since_last_human(messages: list[BaseMessage]) -> list[tuple[str, str]]:
+    """本轮（最近一条用户消息之后）调用过的工具及其返回，给 evaluate 核对答案有没有编造。
+
+    给的是工具的**实际返回内容**（不只是工具名）——这样质检能拿答案里的具体数据跟真实返回对照，
+    而不是靠"有没有调某个工具"去猜。尤其像 correlate_incident 这种一次返回指标+日志+告警的复合工具，
+    只看工具名会误判成"没查日志"。返回内容按需截断，避免把质检 prompt 撑太大。
+    """
+    results: list[tuple[str, str]] = []
     for message in reversed(messages):
         if isinstance(message, HumanMessage):
             break
-        if isinstance(message, AIMessage) and message.tool_calls:
-            used.extend(tc["name"] for tc in message.tool_calls)
-    return list(reversed(used))
+        if isinstance(message, ToolMessage):
+            content = str(message.content)
+            if len(content) > 700:
+                content = content[:700] + "…（已截断）"
+            results.append((message.name or "（工具）", content))
+    return list(reversed(results))
 
 
 async def agent_node(state: ChatState) -> dict:
@@ -195,27 +204,34 @@ async def evaluate_node(state: ChatState) -> dict:
     t0 = time.monotonic()
     question = _latest_human_content(state["messages"])
     answer = str(state["messages"][-1].content)
-    tools_used = _tools_used_since_last_human(state["messages"])
+    tool_results = _tool_results_since_last_human(state["messages"])
+    if tool_results:
+        evidence = "\n".join(f"【{name}】返回：\n{content}" for name, content in tool_results)
+    else:
+        evidence = "（本轮没有调用任何工具）"
     prompt = [
         SystemMessage(
             "你是质检员，判断助手的回答是否正确、完整地回应了用户这一轮的问题。评判要点：\n"
             "1. 是否回应了用户问的所有点，没有遗漏；\n"
             "2. 关于回答里的“具体数据”（服务器状态/命令输出/指标/日志/告警等），先分清用户这轮想要哪种：\n"
             "   (a) 想要【当前/最新的真实值，或某集合此刻有没有变化】——如“现在磁盘占用多少”“服务器还在线吗”"
-            "“现在负载是升是降”“还是原来那几台吗/有没有新增”——这类必须本轮实际调用过对应工具拿最新值才可信；"
-            "给了这类数据却没调相应工具，判为不通过（很可能是编造的）。\n"
+            "“现在负载是升是降”“还是原来那几台吗/有没有新增”——这类数据必须能在下面【本轮工具返回】里找到"
+            "依据才可信；答案里给了这类数据、但工具返回里查无此数据，判为不通过（很可能是编造的）。\n"
+            "   **注意：核对依据看的是“工具实际返回的内容”，不是“调了哪个工具”。有的工具（如"
+            " correlate_incident）一次就返回指标+日志+告警多种数据，只要它的返回里有相应内容，答案就有真实来源，"
+            "别因为没单独调 query_metrics/search_logs/query_alerts 就判编造。**\n"
             "   (b) 只是问【上文对话里已经出现过的信息】——如“第一个命令的结果是啥”“刚才那个工具返回了什么”"
             "“我最开始问的是什么”——这是在问历史，助手照上文如实复述、不重新调工具是正确的，"
             "不能因为“本轮没调工具”就判不通过。\n"
             "   关键判据：只要问句里有“现在/还剩/最新/是升是降/变没变/有没有新增”这类指向此刻真实值的成分，"
             "哪怕它同时引用了历史数据，也按 (a) 处理——不能拿历史旧值顶替、也不能用旧快照算一算就当本轮结果。\n"
-            "   一句话里夹了多个小问时，逐个套 (a)/(b)：只要有任一点属于 (a) 却没在本轮调对应工具，就判不通过。\n"
+            "   一句话里夹了多个小问时，逐个套 (a)/(b)：只要有任一点属于 (a) 却在工具返回里找不到依据，就判不通过。\n"
             "3. 明显答非所问、空泛或自相矛盾，判为不通过。\n"
             "不通过时给出一句可操作的改进建议（reflection），告诉助手下次具体该怎么做；通过时 reflection 留空。"
         ),
         HumanMessage(
-            f"用户问题：{question}\n"
-            f"本轮实际调用过的工具：{tools_used or '（没有调用任何工具）'}\n"
+            f"用户问题：{question}\n\n"
+            f"本轮工具返回（核对答案里的具体数据是否有依据，就看这里）：\n{evidence}\n\n"
             f"助手回答：{answer}"
         ),
     ]
@@ -254,7 +270,7 @@ async def evaluate_node(state: ChatState) -> dict:
         "tool_iterations": 0,  # 重试是一次全新尝试，重新给满工具预算
         "messages": to_remove,
         # 这轮"该给数据却没调工具"→逼重试首步必须调工具（详见 agent_node 的 use_required）
-        "force_tools": not tools_used,
+        "force_tools": not tool_results,
     }
 
 
