@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.alert_event import AlertEvent
@@ -57,25 +57,6 @@ async def upsert_by_fingerprint(
     )
     db.add(alert)
     return alert, status == "firing"
-
-
-async def count_firing_in_group(
-    db: AsyncSession, group_key: str, exclude_fingerprint: str
-) -> int:
-    """数一数某个 group 里当前还有几条 firing 告警（不含指定的那条）。
-
-    用来判断"这条新触发的告警所在的事件是不是已经激活了"——已激活就不再重复触发诊断。
-    """
-    stmt = (
-        select(func.count())
-        .select_from(AlertEvent)
-        .where(
-            AlertEvent.group_key == group_key,
-            AlertEvent.status == "firing",
-            AlertEvent.fingerprint != exclude_fingerprint,
-        )
-    )
-    return await db.scalar(stmt) or 0
 
 
 async def get_by_fingerprint(db: AsyncSession, fingerprint: str) -> AlertEvent | None:

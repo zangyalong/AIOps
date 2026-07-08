@@ -47,9 +47,8 @@ class AlertRead(BaseModel):
     instance: str | None
     labels: dict | None
     group_key: str | None
+    incident_id: uuid.UUID | None
     starts_at: datetime | None
     ends_at: datetime | None
-    diagnosis: str | None
-    triaged_at: datetime | None
     created_at: datetime
     updated_at: datetime

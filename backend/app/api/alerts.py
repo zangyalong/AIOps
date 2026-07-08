@@ -34,19 +34,20 @@ async def _get_arq_pool(request: Request):
 @router.post("/webhook")
 async def receive_webhook(payload: AlertmanagerWebhook, db: DBSession, request: Request) -> dict:
     """Alertmanager 的 webhook 目标：收下告警 upsert 落库，并把「新触发」的告警塞进队列做自动诊断。"""
-    to_triage = await alert_event_service.ingest_alerts(db, payload.alerts)
+    new_incidents = await alert_event_service.ingest_alerts(db, payload.alerts)
 
-    # 新触发的告警入队，交给 arq worker 后台诊断。webhook 本身不等诊断跑完，立刻返回。
+    # 每个「新事件」入队一次，交给 arq worker 后台诊断（同事件的重复/后续告警不再触发）。
+    # webhook 本身不等诊断跑完，立刻返回。incident_id 是 UUID，转字符串入队更稳。
     pool = await _get_arq_pool(request)
     enqueued = 0
     if pool is not None:
-        for fingerprint in to_triage:
-            await pool.enqueue_job("triage_alert", fingerprint)
+        for incident_id in new_incidents:
+            await pool.enqueue_job("triage_incident", str(incident_id))
             enqueued += 1
 
     return {
         "received": len(payload.alerts),
-        "to_triage": len(to_triage),  # 新触发且是所属事件的第一条（经关联去重后要诊断的数量）
+        "new_incidents": len(new_incidents),  # 经关联去重后本次新建的事件数
         "triage_enqueued": enqueued,
     }
 

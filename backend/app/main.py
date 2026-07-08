@@ -7,10 +7,16 @@ from arq.connections import RedisSettings
 from fastapi import FastAPI
 
 from app.agents.graphs.chat_graph import build_chat_graph
-from app.api import alerts, chat, conversations, health, servers
+from app.api import alerts, chat, conversations, health, incidents, servers
 from app.core.config import settings
 from app.db.session import engine
-from app.models import alert_event, conversation, message, server  # noqa: F401  # 注册模型到 Base.metadata
+from app.models import (  # noqa: F401  # 注册模型到 Base.metadata
+    alert_event,
+    conversation,
+    incident,
+    message,
+    server,
+)
 from app.models.base import Base
 
 
@@ -42,3 +48,4 @@ app.include_router(servers.router)
 app.include_router(chat.router)
 app.include_router(conversations.router)
 app.include_router(alerts.router)
+app.include_router(incidents.router)

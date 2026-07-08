@@ -1,28 +1,29 @@
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.alert_event import AlertEvent
-from app.repositories import alert_event_repository
+from app.models.incident import RESOLVED
+from app.repositories import alert_event_repository, incident_repository
 from app.schemas.alert import AlertmanagerAlert
 from app.services import correlation
 
 
-async def ingest_alerts(db: AsyncSession, alerts: list[AlertmanagerAlert]) -> list[str]:
-    """把 Alertmanager webhook 里的告警逐条 upsert 进 alert_events 表。
+async def ingest_alerts(db: AsyncSession, alerts: list[AlertmanagerAlert]) -> list[uuid.UUID]:
+    """upsert 告警并把它们挂到「事件（incidents）」上。返回本次**新建**、需要自动诊断的 incident_id 列表。
 
-    返回「本次新触发、需要自动诊断」的 fingerprint 列表（webhook 据此往队列里塞诊断作业）。
-    从 labels 里取 alertname / severity / instance（Alertmanager 把这些都放在 labels 里）。
-    ends_at 只在 resolved 时有意义——firing 时 Alertmanager 给的是个占位的未来/零时间，置空避免误导。
+    - firing 告警：算 group_key（规则没命中就用 fingerprint 兜底、独立成事件）→ 找该 group 的活跃事件；
+      没有就新建一个事件（并入队诊断），有就挂上去（不重复诊断）。
+    - resolved 告警：把状态落库；若它所属事件下的告警全 resolved 了，事件自动置 resolved。
     """
-    to_triage: list[str] = []
+    to_triage: list[uuid.UUID] = []
     for a in alerts:
         labels = a.labels or {}
-        # 关联/归组：按规则算 group_key（同 key 属同一事件）。纯确定性，不用 LLM。
-        group_key = correlation.compute_group_key(labels)
-        _, newly_firing = await alert_event_repository.upsert_by_fingerprint(
+        group_key = correlation.compute_group_key(labels) or f"fp:{a.fingerprint}"
+        alert, _ = await alert_event_repository.upsert_by_fingerprint(
             db,
             fingerprint=a.fingerprint,
             alertname=labels.get("alertname", "（未知告警）"),
@@ -35,22 +36,38 @@ async def ingest_alerts(db: AsyncSession, alerts: list[AlertmanagerAlert]) -> li
             ends_at=a.ends_at if a.status == "resolved" else None,
             group_key=group_key,
         )
-        # session 是 autoflush=False，这里显式 flush 让这条落到 DB（未提交），
-        # 好让同一批次后面告警的 group 计数能查到它（否则同批同组会各触发一次诊断）。
+        # session 是 autoflush=False，flush 让这条落到 DB（未提交），好让后续查询 / 同批告警看得到它。
         await db.flush()
-        if not newly_firing:
-            continue
-        # 决定要不要触发诊断：不参与关联（group_key=None）就独立诊断；参与关联的，只有当这个事件
-        # 还没有别的 firing 告警（即它是事件的第一条）才诊断——已激活的事件不重复诊断。
-        if group_key is None:
-            to_triage.append(a.fingerprint)
-        else:
-            others = await alert_event_repository.count_firing_in_group(
-                db, group_key, a.fingerprint
-            )
-            if others == 0:
-                to_triage.append(a.fingerprint)
-    await db.commit()  # 整个 webhook 的告警一次性提交
+
+        if a.status == "firing":
+            # 并发提醒（TODO，非当前必须）：两个 webhook 几乎同时带同一新 group_key 的首条 firing 时，
+            # 可能各自查到 None、各建一个事件，破坏「每个 group_key 至多一个活跃事件」。本项目单 uvicorn +
+            # 单 worker，且 Alertmanager 把一批告警合成一个 webhook 顺序处理，实际几乎碰不到。真要扛并发：
+            # 给 incidents 加 (group_key) WHERE status!='resolved' 的部分唯一索引 + 撞了重查，或对 group_key
+            # 上事务级 advisory lock。
+            incident = await incident_repository.get_active_by_group_key(db, group_key)
+            if incident is None:
+                # 这个 group 当前没有活跃事件 → 新事件（新建 + 入队诊断）
+                incident = await incident_repository.create(
+                    db,
+                    group_key=group_key,
+                    alertname=labels.get("alertname", "（未知告警）"),
+                    severity=labels.get("severity", "none"),
+                    instance=labels.get("instance"),
+                    summary=a.annotations.get("summary") if a.annotations else None,
+                )
+                await db.flush()
+                to_triage.append(incident.id)
+            alert.incident_id = incident.id
+        elif alert.incident_id is not None:
+            # resolved：若所属事件下的告警都不再 firing，事件自动 resolve
+            if await incident_repository.count_firing_alerts(db, alert.incident_id) == 0:
+                incident = await incident_repository.get(db, alert.incident_id)
+                if incident is not None and incident.status != RESOLVED:
+                    incident.status = RESOLVED
+                    incident.resolved_at = datetime.now(timezone.utc)
+
+    await db.commit()
     return to_triage
 
 
@@ -58,18 +75,3 @@ async def list_alerts(
     db: AsyncSession, limit: int = 100, status: str | None = None
 ) -> list[AlertEvent]:
     return await alert_event_repository.list_recent(db, limit=limit, status=status)
-
-
-async def get_alert(db: AsyncSession, fingerprint: str) -> AlertEvent | None:
-    return await alert_event_repository.get_by_fingerprint(db, fingerprint)
-
-
-async def save_diagnosis(db: AsyncSession, fingerprint: str, diagnosis: str) -> bool:
-    """把 triage 跑出来的诊断结论回填到告警上。找不到该告警返回 False。"""
-    alert = await alert_event_repository.get_by_fingerprint(db, fingerprint)
-    if alert is None:
-        return False
-    alert.diagnosis = diagnosis
-    alert.triaged_at = datetime.now(timezone.utc)
-    await db.commit()
-    return True
