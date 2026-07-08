@@ -6,8 +6,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from arq import create_pool
+from arq.connections import RedisSettings
+from fastapi import APIRouter, Request
 
+from app.core.config import settings
 from app.dependencies import DBSession
 from app.models.alert_event import AlertEvent
 from app.schemas.alert import AlertmanagerWebhook, AlertRead
@@ -16,11 +19,36 @@ from app.services import alert_event_service
 router = APIRouter(prefix="/alerts", tags=["alerts"])
 
 
+async def _get_arq_pool(request: Request):
+    """拿 arq 连接池；启动时 Redis 没起导致 pool 为 None 的话，这里惰性补建一次。"""
+    pool = getattr(request.app.state, "arq_pool", None)
+    if pool is None:
+        try:
+            pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+            request.app.state.arq_pool = pool
+        except Exception:  # noqa: BLE001 —— Redis 仍连不上就返回 None，跳过入队
+            pool = None
+    return pool
+
+
 @router.post("/webhook")
-async def receive_webhook(payload: AlertmanagerWebhook, db: DBSession) -> dict:
-    """Alertmanager 的 webhook 目标。收下告警、upsert 落库。"""
-    ingested = await alert_event_service.ingest_alerts(db, payload.alerts)
-    return {"received": len(payload.alerts), "ingested": ingested}
+async def receive_webhook(payload: AlertmanagerWebhook, db: DBSession, request: Request) -> dict:
+    """Alertmanager 的 webhook 目标：收下告警 upsert 落库，并把「新触发」的告警塞进队列做自动诊断。"""
+    to_triage = await alert_event_service.ingest_alerts(db, payload.alerts)
+
+    # 新触发的告警入队，交给 arq worker 后台诊断。webhook 本身不等诊断跑完，立刻返回。
+    pool = await _get_arq_pool(request)
+    enqueued = 0
+    if pool is not None:
+        for fingerprint in to_triage:
+            await pool.enqueue_job("triage_alert", fingerprint)
+            enqueued += 1
+
+    return {
+        "received": len(payload.alerts),
+        "newly_firing": len(to_triage),
+        "triage_enqueued": enqueued,
+    }
 
 
 @router.get("", response_model=list[AlertRead])

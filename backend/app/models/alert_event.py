@@ -40,3 +40,7 @@ class AlertEvent(Base, UUIDMixin, TimestampMixin):
     server_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("servers.id", ondelete="SET NULL"), nullable=True
     )
+
+    # 自动诊断（方向二 triage 回填）：agent 后台调查后写回的诊断结论 + 诊断时刻。
+    diagnosis: Mapped[str | None] = mapped_column(Text, nullable=True)
+    triaged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -3,6 +3,8 @@
 # - 任务2（Loki 日志）：loki + promtail（采集容器日志）+ fake-app（造带级别的假应用日志）
 # - 任务3（Alertmanager 告警）：alertmanager + Prometheus 告警规则（docker/alert_rules.yml）
 # - 任务4（Grafana 可视化）：grafana（接 Prometheus/Loki，agent 生成 Explore 图表链接给用户点）
+# 方向二（事件驱动）：
+# - 后台任务队列：redis（arq 的 broker，告警自动诊断这类后台作业存这里）
 #
 # 用法：
 #   docker compose up -d          # 后台起
@@ -130,4 +132,14 @@ services:
     depends_on:
       - prometheus
       - loki
+    restart: unless-stopped
+
+  # ---- 方向二：后台任务队列 ----
+
+  # arq（异步任务队列）的 broker。告警自动诊断这类后台作业存在这里，worker 从这里取来跑。
+  redis:
+    image: redis:7-alpine
+    container_name: aioms-redis
+    ports:
+      - "6379:6379"                 # 对应 backend config 里的 redis_url
     restart: unless-stopped

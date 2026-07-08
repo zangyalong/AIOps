@@ -48,5 +48,7 @@ class AlertRead(BaseModel):
     labels: dict | None
     starts_at: datetime | None
     ends_at: datetime | None
+    diagnosis: str | None
+    triaged_at: datetime | None
     created_at: datetime
     updated_at: datetime

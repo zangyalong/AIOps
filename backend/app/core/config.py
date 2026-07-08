@@ -41,5 +41,8 @@ class Settings(BaseSettings):
     # 打可观测性数据源 HTTP 请求的统一超时（秒）
     obs_http_timeout: float = 10.0
 
+    # ---- 方向二：后台任务队列（arq + Redis）----
+    redis_url: str = "redis://localhost:6379"
+
 
 settings = Settings()
