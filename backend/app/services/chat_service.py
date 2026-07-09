@@ -6,21 +6,26 @@ from typing import TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.graphs.chat_graph import TOOLS_BY_NAME
+from app.agents.graphs.chat_graph import TOOLS_BY_NAME, WRITE_TOOLS
 from app.db.session import AsyncSessionLocal
 from app.services import conversation_service, message_service
 
 
 class ChatStreamEvent(TypedDict, total=False):
-    type: str  # "token" | "reset" | "tool_start" | "tool_end" | "done" | "error"
+    type: str  # "token" | "reset" | "tool_start" | "tool_end" | "approval_required" | "done" | "error"
     content: str
     conversation_id: str  # 要经 json.dumps 发给前端，uuid.UUID 必须转成字符串
     title: str
     message: str
     tool: str  # tool_start 时带上工具名，前端渲染成"正在调用 XXX"
     id: str  # tool_start / tool_end 用同一个 run_id 配对，前端据此把某个工具标记成已完成
+    thread_id: str  # approval_required：恢复请求要带回来的挂起线程标识
+    actions: list[
+        dict
+    ]  # approval_required：待批的写操作（每项带 kind，前端按 kind 渲染）
 
 
 async def _load_history_messages(
@@ -41,10 +46,141 @@ async def _load_history_messages(
         if m.role == "user":
             messages.append(HumanMessage(m.content))
         elif m.role == "assistant":
-            messages.append(AIMessage(content=m.content, tool_calls=(m.tool_calls or [])))
+            messages.append(
+                AIMessage(content=m.content, tool_calls=(m.tool_calls or []))
+            )
         elif m.role == "tool":
-            messages.append(ToolMessage(content=m.content, tool_call_id=m.tool_call_id or ""))
+            messages.append(
+                ToolMessage(content=m.content, tool_call_id=m.tool_call_id or "")
+            )
     return messages
+
+
+async def _persist_turn(
+    conversation_id: uuid.UUID, turn_messages: list[BaseMessage]
+) -> None:
+    """把本轮那段轨迹（最后一条 HumanMessage 之后的 assistant/tool 消息）逐条落库。
+
+    turn_messages 已切在最后一条 HumanMessage 之后，只会是 assistant / tool——它之前都是历史、
+    库里已有，不能重复存。每条单独 commit，靠各自不同的 created_at 保证顺序（顺序 await、事务
+    开始时间递增）。Reflexion 打回的重试已被图内 RemoveMessage 从状态里剪掉，所以这里天然就是
+    「通过的那一次」，不用自己筛。
+    """
+    async with AsyncSessionLocal() as db:
+        for msg in turn_messages:
+            if isinstance(msg, AIMessage):
+                await message_service.create_message(
+                    db,
+                    conversation_id,
+                    role="assistant",
+                    content=str(msg.content),
+                    tool_calls=(msg.tool_calls or None),
+                )
+            elif isinstance(msg, ToolMessage):
+                await message_service.create_message(
+                    db,
+                    conversation_id,
+                    role="tool",
+                    content=str(msg.content),
+                    tool_call_id=msg.tool_call_id,
+                )
+            # turn_messages 已切在最后一条 HumanMessage 之后，只会是 assistant / tool
+        await conversation_service.touch_conversation(db, conversation_id)
+
+
+async def _drive_graph(
+    graph: CompiledStateGraph,
+    conversation_id: uuid.UUID,
+    graph_input: object,
+    thread_id: str,
+    new_title: str | None = None,
+) -> AsyncIterator[ChatStreamEvent]:
+    """驱动图跑一段（初次输入或 Command 恢复都走这里），流式转发文字/工具卡片，收尾分两种：
+
+    - 停在审批门（interrupt 挂起）：发 approval_required，带上 thread_id 和待批动作，本段到此为止、
+      不落库（这一轮还没走完，恢复请求会接着把它跑完）。agent 调工具前那句旁白此前已流式发出、
+      前端已展示，落库要等整轮走完后才做。
+    - 正常跑完：把本轮轨迹落库、发 done。
+
+    thread_id 决定用哪个 checkpoint 线程；初次和它的恢复共用同一个 thread_id 才能接上同一次挂起。
+    这段不持有任何 db 连接（落库另开短事务），流式期间不占着连接。
+    """
+    config = {"configurable": {"thread_id": thread_id}}
+    evaluate_just_ran = False
+    try:
+        async for event in graph.astream_events(
+            graph_input, config=config, version="v2"
+        ):
+            kind = event["event"]
+            node = event.get("metadata", {}).get("langgraph_node")
+
+            # 工具调用的开始/结束：只转发只读工具的 start/end 让前端画工具行（TOOLS_BY_NAME 兜底
+            # 过滤，顺带挡掉 evaluate 结构化输出那个内部 tool_call）。写工具（WRITE_TOOLS）不发——它
+            # 由前端那条带按钮的审批行代表自己（approval_required + 裁决后翻成"已执行/已拒绝"），
+            # 再发工具行会和审批行重复成两条。start/end 带同一个 run_id，前端据此标记"进行中→完成"。
+            is_visible_tool = (
+                event["name"] in TOOLS_BY_NAME and event["name"] not in WRITE_TOOLS
+            )
+            if kind == "on_tool_start" and is_visible_tool:
+                if evaluate_just_ran:
+                    # 重试的第一个动作可能是"调工具"，这条 tool_start 会比 agent 第一个 token 先到。
+                    # reset 必须赶在它之前发，否则前端会先画出这次重试的工具卡片、紧接着又被 reset
+                    # 连着旧草稿一起清掉。
+                    yield {"type": "reset"}
+                    evaluate_just_ran = False
+                yield {
+                    "type": "tool_start",
+                    "id": event["run_id"],
+                    "tool": event["name"],
+                }
+            elif kind == "on_tool_end" and is_visible_tool:
+                yield {"type": "tool_end", "id": event["run_id"]}
+            elif kind == "on_chain_end" and node == "evaluate":
+                # 质检跑完。若它打回重试，接下来会有新一轮 agent/工具活动——用这个标记，等重试第一个
+                # "可见动作"（tool_start 或 agent 第一个 token，谁先到算谁）到了再发 reset。
+                evaluate_just_ran = True
+            elif kind == "on_chat_model_stream" and node == "agent":
+                content = event["data"]["chunk"].content
+                if content:
+                    if evaluate_just_ran:
+                        yield {"type": "reset"}
+                        evaluate_just_ran = False
+                    yield {"type": "token", "content": content}
+
+        # 图停下来了：先看是不是停在审批门。带了 checkpointer，挂起状态能被 aget_state 读出来；
+        # snapshot.interrupts 非空即为挂起，其 value 就是 approval_node 里 interrupt(...) 的入参。
+        snapshot = await graph.aget_state(config)
+        if snapshot.interrupts:
+            pending = snapshot.interrupts[0].value
+            approval_event: ChatStreamEvent = {
+                "type": "approval_required",
+                "thread_id": thread_id,
+                "conversation_id": str(conversation_id),
+                "actions": pending.get("actions", []),
+            }
+            if new_title is not None:
+                approval_event["title"] = new_title
+            yield approval_event
+            return
+
+        # 正常跑完：从最终快照取干净轨迹落库（snapshot.values 就是终态通道值）。只取最后一条
+        # HumanMessage 之后的本轮部分——它之前都是历史、库里已有，不能重复存。
+        all_messages = snapshot.values.get("messages", [])
+        last_human = max(
+            (i for i, m in enumerate(all_messages) if isinstance(m, HumanMessage)),
+            default=-1,
+        )
+        await _persist_turn(conversation_id, all_messages[last_human + 1 :])
+
+        done_event: ChatStreamEvent = {
+            "type": "done",
+            "conversation_id": str(conversation_id),
+        }
+        if new_title is not None:
+            done_event["title"] = new_title
+        yield done_event
+    except Exception as exc:  # noqa: BLE001 - 流式响应里要把错误也发给前端，不能直接 500
+        yield {"type": "error", "message": str(exc)}
 
 
 async def stream_chat_turn(
@@ -53,112 +189,49 @@ async def stream_chat_turn(
     user_message: str,
     new_title: str | None = None,
 ) -> AsyncIterator[ChatStreamEvent]:
-    """跑一轮对话：加载历史喂给图、流式吐出最终答案、结束后落库。
+    """跑一轮新的对话输入：存用户消息 + 加载历史喂给图，之后交给 _drive_graph 流式吐结果、落库。
 
-    不接收外部 db session：读历史+存用户消息、以及最后存回答，各自开一个短生命周期的
-    session（开→用→关），中间真正流式的那段不持有任何 db 连接。这样 session 生命周期
-    不会被 StreamingResponse 拖到整个流结束，比复用请求级 session 干净。
-
-    历史以「完整真轨迹」喂回图（Human/AI带tool_calls/Tool/AI 一条条真消息），不再压成摘要。
-    只转发 agent 节点产出的文字给前端做流式展示；真正落库的是本轮走完后的「最终图状态」里
-    本轮那段轨迹（最后一条 HumanMessage 之后的消息——它之前都是历史、已经在库里，别重复存），
-    按 LangChain 消息类型逐条存成 assistant / tool 行。Reflexion 打回的重试已被图内 RemoveMessage
-    从状态里剪掉，所以最终状态里本轮那段天然就是「通过的那次」，落库不用自己去筛。
-    如果质检打回重试，会先发一个 reset 事件，让前端把被否决的草稿整段清掉。
-    new_title 只在这是一次新对话时传入，会附带在 done 事件里，让前端更新侧栏标题。
+    每轮用一个全新 thread_id：图带了 checkpointer 后，fresh thread 保证 checkpointer 每轮从空
+    开始，和"照旧把完整历史喂进来"不冲突（否则会和上一轮残留状态叠加成重复消息）。命中审批门时，
+    这个 thread_id 随 approval_required 发给前端，恢复请求带着它回来才能接上同一次挂起。
+    new_title 只在这是一次新对话时传入，会附带在终结事件（done 或 approval_required）里。
     """
-    # 第一段短事务：加载历史（还原成真消息序列）+ 用户消息落库。用户这句先落库——即使后面
-    # LLM 调用失败，至少用户发过什么是有记录的。开完就关，不占着连接跑后面的流式。
+    thread_id = uuid.uuid4().hex
+    # 短事务：加载历史（还原成真消息序列）+ 用户消息落库。用户这句先落库——即使后面 LLM 调用失败，
+    # 至少用户发过什么是有记录的。开完就关，不占着连接跑后面的流式。
     async with AsyncSessionLocal() as db:
         history_messages = await _load_history_messages(db, conversation_id)
         await message_service.create_message(
             db, conversation_id, role="user", content=user_message
         )
 
-    evaluate_just_ran = False
-    final_state: dict | None = None
-    try:
-        # 真正的流式：这段不持有任何 db 连接
-        async for event in graph.astream_events(
-            {
-                "messages": [*history_messages, HumanMessage(user_message)],
-                "tool_iterations": 0,
-                "reflections": [],
-                "review_attempts": 0,
-                "force_tools": False,
-            },
-            version="v2",
-        ):
-            kind = event["event"]
-            node = event.get("metadata", {}).get("langgraph_node")
+    graph_input = {
+        "messages": [*history_messages, HumanMessage(user_message)],
+        "tool_iterations": 0,
+        "reflections": [],
+        "review_attempts": 0,
+        "force_tools": False,
+        "approval": None,
+    }
+    async for event in _drive_graph(
+        graph, conversation_id, graph_input, thread_id, new_title=new_title
+    ):
+        yield event
 
-            # 顶层图跑完的 on_chain_end（parent_ids 为空）带着最终状态，里面 messages 就是要落库的
-            # 干净轨迹。放最后取，覆盖式更新即可。
-            if kind == "on_chain_end" and event.get("parent_ids") == []:
-                final_state = event["data"].get("output")
-                continue
 
-            # 工具调用的开始/结束：只转发我们自己那几个运维工具（TOOLS_BY_NAME 兜底过滤，
-            # 顺带挡掉 evaluate 结构化输出那个内部 tool_call），让前端看到 agent 在查/执行什么。
-            # start 和 end 带同一个 run_id，前端据此把对应工具从"进行中"标记成"完成"。
-            if kind == "on_tool_start" and event["name"] in TOOLS_BY_NAME:
-                if evaluate_just_ran:
-                    # 重试的第一个动作可能是"调工具"（比如 IP/状态类被旧值答错、打回后强制调工具的场景），
-                    # 这条 tool_start 会比 agent 的第一个 token 先到。reset 必须赶在它之前发，否则前端会
-                    # 先画出这次重试的工具卡片、紧接着又被 reset 连着旧草稿一起清掉——于是实时看不到工具
-                    # 调用、只看到结果，可刷新后（从落库的 tool_calls 重建）工具卡片又冒出来，两边对不上。
-                    yield {"type": "reset"}
-                    evaluate_just_ran = False
-                yield {"type": "tool_start", "id": event["run_id"], "tool": event["name"]}
-            elif kind == "on_tool_end" and event["name"] in TOOLS_BY_NAME:
-                yield {"type": "tool_end", "id": event["run_id"]}
-            elif kind == "on_chain_end" and node == "evaluate":
-                # 质检跑完了。如果它打回重试，接下来会有新一轮 agent/工具活动——用这个标记，等重试的
-                # 第一个"可见动作"（工具调用 tool_start，或 agent 的第一个 token，谁先到算谁）到了再发
-                # reset（质检通过时不会再有这些活动，就不会发，通过的答案不会被误清）。
-                evaluate_just_ran = True
-            elif kind == "on_chat_model_stream" and node == "agent":
-                content = event["data"]["chunk"].content
-                if content:
-                    if evaluate_just_ran:
-                        # 重试开始且第一个可见动作是文字（这次重试没先调工具）：被否决那一整次
-                        # （旁白+工具+答案）都作废，前端整段清掉重来
-                        yield {"type": "reset"}
-                        evaluate_just_ran = False
-                    yield {"type": "token", "content": content}
-
-        # 第二段短事务：把最终状态里「本轮」那段轨迹按消息类型逐条落库。历史现在也在 messages 里，
-        # 只取最后一条 HumanMessage（当前问题，已在开头存过）之后的部分——它之前都是历史、库里已有，
-        # 不能重复存。每条单独 commit，靠各自不同的 created_at 保证顺序（顺序 await、事务开始时间递增）。
-        all_messages = (final_state or {}).get("messages", [])
-        last_human = max(
-            (i for i, m in enumerate(all_messages) if isinstance(m, HumanMessage)), default=-1
-        )
-        turn_messages = all_messages[last_human + 1 :]
-        async with AsyncSessionLocal() as db:
-            for msg in turn_messages:
-                if isinstance(msg, AIMessage):
-                    await message_service.create_message(
-                        db,
-                        conversation_id,
-                        role="assistant",
-                        content=str(msg.content),
-                        tool_calls=(msg.tool_calls or None),
-                    )
-                elif isinstance(msg, ToolMessage):
-                    await message_service.create_message(
-                        db,
-                        conversation_id,
-                        role="tool",
-                        content=str(msg.content),
-                        tool_call_id=msg.tool_call_id,
-                    )
-                # turn_messages 已切在最后一条 HumanMessage 之后，只会是 assistant / tool
-            await conversation_service.touch_conversation(db, conversation_id)
-
-        done_event: ChatStreamEvent = {"type": "done", "conversation_id": str(conversation_id)}
-        if new_title is not None:
-            done_event["title"] = new_title
-        yield done_event
-    except Exception as exc:  # noqa: BLE001 - 流式响应里要把错误也发给前端，不能直接 500
-        yield {"type": "error", "message": str(exc)}
+async def resume_chat_turn(
+    graph: CompiledStateGraph,
+    conversation_id: uuid.UUID,
+    thread_id: str,
+    approved: bool,
+    reason: str | None = None,
+) -> AsyncIterator[ChatStreamEvent]:
+    """恢复一次挂在审批门上的对话：把用户裁决用 Command(resume=) 传回图，从挂起点接着往下跑
+    （批准→执行写工具 / 拒绝→回喂已拒绝消息 → agent 收尾 → 落库）。不新增用户消息——它只是上一段的
+    延续。thread_id 必须和当初 approval_required 里发出去的那个一致，才能接上同一次挂起。
+    """
+    decision = {"approved": approved, "reason": reason or ""}
+    async for event in _drive_graph(
+        graph, conversation_id, Command(resume=decision), thread_id, new_title=None
+    ):
+        yield event

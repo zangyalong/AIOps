@@ -14,9 +14,11 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langchain_openai import ChatOpenAI
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import interrupt
 from pydantic import BaseModel, Field
 
 from app.agents.tools.alerts import query_alerts
@@ -40,6 +42,44 @@ TOOLS = [
     correlate_incident,
 ]
 TOOLS_BY_NAME = {t.name: t for t in TOOLS}
+
+# 需要人工审批才能执行的「写/有副作用」工具名。agent 一旦提议其中之一，图会在执行前
+# 挂起（approval_node 的 interrupt），等前端把用户裁决传回来。只读工具（查指标/日志/告警等）
+# 不在此列，照常直接执行——就像 Claude Code 里读操作自动放行、写操作才弹确认。
+# v1 先硬编码成一个名字集合，将来工具多了再考虑抽成工具自带的元数据。
+WRITE_TOOLS: frozenset[str] = frozenset({"run_whitelisted_command"})
+
+
+def _describe_pending_action(tool_call: dict) -> dict:
+    """把一个待审批的写工具调用，转成给前端展示的结构化描述。
+
+    带 `kind` 字段——审批机制是通用的（"agent 提议了个副作用动作，长这样，批不批？"），
+    不是只认命令字符串：shell 命令渲染成命令块，将来的结构化入库（例：写告警入表）渲染成
+    表名+列值。前端按 kind 选不同卡片样式。
+    """
+    name = tool_call["name"]
+    args = tool_call.get("args", {}) or {}
+    tool_call_id = tool_call.get("id", "")
+    if name == "run_whitelisted_command":
+        server = str(args.get("server_name", "?"))
+        command = str(args.get("command", ""))
+        return {
+            "tool_call_id": tool_call_id,
+            "tool": name,
+            "kind": "shell_command",
+            "title": f"在 {server} 上执行命令",
+            "server_name": server,
+            "command": command,
+        }
+    # 兜底：还没专门适配的写工具，直接把 args 摊开让人看清楚要执行什么
+    return {
+        "tool_call_id": tool_call_id,
+        "tool": name,
+        "kind": "generic",
+        "title": f"执行 {name}",
+        "args": args,
+    }
+
 
 # 单次尝试内 agent <-> tools 循环最多走几轮，防止模型死循环调工具；到上限后 agent_node
 # 会直接不给模型挂工具（mode="none"），从 API 层面逼它基于已有信息收尾。
@@ -98,6 +138,9 @@ class ChatState(TypedDict):
     passed: bool
     # 质检打回时若发现"该调工具却没调"，置 True，逼重试的下一步必须调工具（agent 消费后复位）
     force_tools: bool
+    # 写操作审批门的裁决：approval_node 挂起后等到的用户决定（{"approved": bool, "reason": str}），
+    # 供紧随其后的 tools_node 判断执行还是拒绝。用完即由 tools_node 清回 None；没经过审批门时为 None。
+    approval: dict | None
 
 
 @lru_cache(maxsize=None)
@@ -125,7 +168,9 @@ def _latest_human_content(messages: list[BaseMessage]) -> str:
     return ""
 
 
-def _tool_results_since_last_human(messages: list[BaseMessage]) -> list[tuple[str, str]]:
+def _tool_results_since_last_human(
+    messages: list[BaseMessage],
+) -> list[tuple[str, str]]:
     """本轮（最近一条用户消息之后）调用过的工具及其返回，给 evaluate 核对答案有没有编造。
 
     给的是工具的**实际返回内容**（不只是工具名）——这样质检能拿答案里的具体数据跟真实返回对照，
@@ -161,7 +206,9 @@ async def agent_node(state: ChatState) -> dict:
         and state.get("tool_iterations", 0) == 0
     )
     if at_limit:
-        guidance = "已达到工具调用次数上限，不能再调用任何工具，请直接基于目前已知的信息回答。"
+        guidance = (
+            "已达到工具调用次数上限，不能再调用任何工具，请直接基于目前已知的信息回答。"
+        )
     else:
         guidance = (
             "需要真实数据（服务器状态、命令结果、日志、告警）就现在调用对应工具去拿，"
@@ -184,15 +231,59 @@ async def agent_node(state: ChatState) -> dict:
 
 async def tools_node(state: ChatState) -> dict:
     """执行上一条 AI 消息里的所有 tool_calls。传完整 tool_call 给工具（而不是只传 args），
-    工具直接返回带 tool_call_id 的 ToolMessage——这样 tool_call_id 自动对上，落库/回放都干净。"""
+    工具直接返回带 tool_call_id 的 ToolMessage——这样 tool_call_id 自动对上，落库/回放都干净。
+
+    若这批工具经过了审批门且被用户拒绝（state["approval"].approved 为 False），一个都不执行，
+    改为给每个 tool_call 回一条"已拒绝"的 ToolMessage——每个 tool_call 都必须有配对的 ToolMessage，
+    否则 DeepSeek 工具校验会 400；同时提示 agent 别重试、改为向用户说明或给替代建议。
+    """
     t0 = time.monotonic()
     last = state["messages"][-1]
     assert isinstance(last, AIMessage)
-    results = [
-        await TOOLS_BY_NAME[tc["name"]].ainvoke(tc) for tc in last.tool_calls
-    ]
+    decision = state.get("approval")
+    if decision is not None and not decision.get("approved", False):
+        reason = (decision.get("reason") or "").strip() or "用户拒绝了本次操作"
+        results: list[BaseMessage] = [
+            ToolMessage(
+                content=(
+                    f"用户拒绝执行该操作（{reason}）。请不要重试该操作，"
+                    "改为向用户说明情况或给出替代建议。"
+                ),
+                tool_call_id=tc["id"],
+                name=tc["name"],
+            )
+            for tc in last.tool_calls
+        ]
+    else:
+        results = [
+            await TOOLS_BY_NAME[tc["name"]].ainvoke(tc) for tc in last.tool_calls
+        ]
     print(f"[graph] tools_node 耗时 {time.monotonic() - t0:.1f}s")
-    return {"messages": results, "tool_iterations": state.get("tool_iterations", 0) + 1}
+    return {
+        "messages": results,
+        "tool_iterations": state.get("tool_iterations", 0) + 1,
+        # 裁决用完即清，避免同一轮里后续别的工具批次误用这个旧决定
+        "approval": None,
+    }
+
+
+async def approval_node(state: ChatState) -> dict:
+    """写操作审批门：把本条 AI 消息里待批的写工具调用交给人，interrupt 挂起整张图，
+    等前端把用户裁决用 Command(resume=...) 传回来才继续，裁决写进 state["approval"]。
+
+    interrupt 是本节点唯一的副作用——恢复时 LangGraph 会整体重跑本节点，interrupt 直接返回
+    resume 值、不会重复挂起，所以放心把它当节点里唯一的动作，前面不做任何有副作用的事。
+    interrupt 的入参就是暴露给前端的"待批内容"；返回值是前端点按钮后回传的裁决 dict。
+    """
+    last = state["messages"][-1]
+    assert isinstance(last, AIMessage)
+    pending = [
+        _describe_pending_action(tc)
+        for tc in last.tool_calls
+        if tc["name"] in WRITE_TOOLS
+    ]
+    decision = interrupt({"actions": pending})
+    return {"approval": decision}
 
 
 async def evaluate_node(state: ChatState) -> dict:
@@ -206,7 +297,9 @@ async def evaluate_node(state: ChatState) -> dict:
     answer = str(state["messages"][-1].content)
     tool_results = _tool_results_since_last_human(state["messages"])
     if tool_results:
-        evidence = "\n".join(f"【{name}】返回：\n{content}" for name, content in tool_results)
+        evidence = "\n".join(
+            f"【{name}】返回：\n{content}" for name, content in tool_results
+        )
     else:
         evidence = "（本轮没有调用任何工具）"
     prompt = [
@@ -275,9 +368,15 @@ async def evaluate_node(state: ChatState) -> dict:
 
 
 def route_after_agent(state: ChatState) -> str:
-    """agent 吐的消息带 tool_calls 就去执行工具，否则这条是候选答案，交给 evaluate 质检。"""
+    """agent 吐的消息带 tool_calls 就去执行工具，否则这条是候选答案，交给 evaluate 质检。
+
+    带的 tool_calls 里若有写工具（WRITE_TOOLS），先绕去 approval 审批门挂起等人工裁决，
+    批准后再由 approval→tools 执行；纯只读工具则照旧直接进 tools。
+    """
     last = state["messages"][-1]
     if isinstance(last, AIMessage) and last.tool_calls:
+        if any(tc["name"] in WRITE_TOOLS for tc in last.tool_calls):
+            return "approval"
         return "tools"
     return "evaluate"
 
@@ -291,17 +390,25 @@ def route_after_evaluate(state: ChatState) -> str:
 
 def build_chat_graph() -> CompiledStateGraph:
     # ReAct + Reflexion：agent ⇄ tools 跑出候选答案，evaluate 质检；不通过就带着自我反思
-    # 回 agent 重做，直到通过或到质检上限。
-    # 不传 checkpointer：多轮对话的持久化自己用 messages 表管（每轮把完整历史当输入喂进来），
-    # 图只在一次 astream_events 调用内部跑，这些环不需要 checkpointer。
+    # 回 agent 重做，直到通过或到质检上限。写工具在执行前先经 approval 审批门（interrupt 挂起）。
     builder = StateGraph(ChatState)
     builder.add_node("agent", agent_node)
+    builder.add_node("approval", approval_node)
     builder.add_node("tools", tools_node)
     builder.add_node("evaluate", evaluate_node)
 
     builder.add_edge(START, "agent")
     builder.add_conditional_edges("agent", route_after_agent)
+    builder.add_edge(
+        "approval", "tools"
+    )  # 批准/拒绝都往 tools 走，由 tools_node 据裁决执行或回绝
     builder.add_edge("tools", "agent")
     builder.add_conditional_edges("evaluate", route_after_evaluate)
 
-    return builder.compile()
+    # 审批门用 interrupt 挂起图、等人工裁决后 Command(resume=) 恢复，这要求编译时带 checkpointer
+    # 来持久化"挂在半路"的状态。v1 先用进程内 MemorySaver：图是 app.state 上的单例、同一进程内
+    # 存活，够撑起"暂停请求 → 恢复请求"两次调用；代价是后端重启会丢掉尚未裁决的待批项。要跨重启/
+    # 多进程时再换 Postgres/Redis 版 saver（换这一行、其余不动）。
+    # 关键前提：chat_service 每轮用全新 thread_id，且照旧把完整历史喂进来——fresh thread 让
+    # checkpointer 每轮从空开始，不会和"重新喂历史"叠加成重复消息。
+    return builder.compile(checkpointer=MemorySaver())

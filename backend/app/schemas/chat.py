@@ -13,6 +13,16 @@ class ChatRequest(BaseModel):
     conversation_id: uuid.UUID | None = None
 
 
+class ResumeApprovalRequest(BaseModel):
+    """恢复一次挂在写操作审批门上的对话：带回 approval_required 里发出的 thread_id + 用户裁决。"""
+
+    conversation_id: uuid.UUID
+    thread_id: str
+    approved: bool
+    # 拒绝时可选带一句理由，会回喂给 agent 让它据此向用户说明
+    reason: str | None = None
+
+
 class ConversationSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

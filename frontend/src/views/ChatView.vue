@@ -1,16 +1,25 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { streamChatMessage } from '../api/chat'
+import { resumeApproval, streamChatMessage, type ChatStreamEvent } from '../api/chat'
 import { fetchConversationDetail } from '../api/conversations'
 import ConversationList from '../components/ConversationList.vue'
 import type { ChatMessage } from '../types/chat'
 
-// 会话时间线：消息和工具调用按发生顺序混在一个数组里，这样工具卡片能显示在它实际被
-// 调用的那个位置（夹在文本流中间），而不是全部堆在回答下面。工具项是纯实时展示——
-// 不落库、不随历史加载，切换对话就没了。
+// 会话时间线：消息、工具行、写操作审批行按发生顺序混在一个数组里，这样它们能显示在实际
+// 发生的那个位置（夹在文本流中间）。工具行和审批行都会随历史重建：工具行来自 assistant 的
+// tool_calls；审批行来自写工具的 tool_call + 它配对的返回（据此还原当初是执行了还是被拒）。
 type TimelineItem =
   | { kind: 'message'; key: string; role: 'user' | 'assistant'; content: string }
   | { kind: 'tool'; key: string; id: string; tool: string; done: boolean }
+  | {
+      // 写操作审批行：pending 时右侧带执行/不执行按钮；裁决后翻成 approved（已执行）/rejected（已拒绝）
+      kind: 'approval'
+      key: string
+      threadId: string // 挂起恢复用；历史重建的已决定项为 '' （无需也无法再恢复）
+      command: string // 展示的命令 / 动作摘要
+      label: string // 副标题（在哪台执行等），可空
+      status: 'pending' | 'approved' | 'rejected'
+    }
 
 const timeline = ref<TimelineItem[]>([])
 const input = ref('')
@@ -21,6 +30,9 @@ const error = ref<string | null>(null)
 const conversationId = ref<string | null>(null)
 const conversationListRef = ref<InstanceType<typeof ConversationList> | null>(null)
 const messagesEl = ref<HTMLElement | null>(null)
+// 当前是否有一个写操作挂在审批门上等裁决。非空时输入框禁用（先处理确认再继续对话），
+// 记住要恢复哪条挂起（threadId）——裁决时按 threadId 把这次挂起的所有待批行一起翻状态。
+const pendingApproval = ref<{ threadId: string } | null>(null)
 
 let uidCounter = 0
 function uid(): string {
@@ -36,6 +48,10 @@ const TOOL_LABELS: Record<string, string> = {
 function toolLabel(name: string): string {
   return TOOL_LABELS[name] ?? name
 }
+
+// 与后端 chat_graph.py 的 WRITE_TOOLS 对应：这些工具的调用要走审批、渲染成带按钮的审批行
+// （而非普通工具行），历史重建时也据此还原成审批行。加新写工具时两边都要更新。
+const WRITE_TOOLS = new Set(['run_whitelisted_command'])
 
 function scrollToBottom() {
   const el = messagesEl.value
@@ -92,9 +108,50 @@ const showThinking = computed(() => {
   return !last || (last.kind === 'message' && last.role === 'user')
 })
 
+// 消费一段 SSE 事件流（初次发消息、以及审批后恢复，都走这里）。approval_required 会画出一张
+// 待批卡片并门控输入框，等 decide() 续跑。
+async function consume(stream: AsyncGenerator<ChatStreamEvent>) {
+  for await (const event of stream) {
+    if (event.type === 'token') {
+      appendToken(event.content)
+    } else if (event.type === 'reset') {
+      discardDraft()
+    } else if (event.type === 'tool_start') {
+      // 调工具前的旁白气泡保留下来（会持久化，刷新后也能重建）；这里只是关闭当前气泡，
+      // 让工具行、以及工具之后的最终答案各自成为独立的块。
+      assistantOpen = false
+      timeline.value.push({ kind: 'tool', key: uid(), id: event.id, tool: event.tool, done: false })
+    } else if (event.type === 'tool_end') {
+      const item = timeline.value.find((t) => t.kind === 'tool' && t.id === event.id)
+      if (item && item.kind === 'tool') item.done = true
+    } else if (event.type === 'approval_required') {
+      // 图挂在写操作审批门上：每个待批动作画一条紧凑审批行（浅底 + 右侧执行/不执行按钮），门控
+      // 输入框，等用户点按钮由 decide() 续跑。记下 conversation（可能这轮新建的）+ thread_id。
+      if (event.conversation_id) conversationId.value = event.conversation_id
+      assistantOpen = false
+      for (const a of event.actions) {
+        timeline.value.push({
+          kind: 'approval',
+          key: uid(),
+          threadId: event.thread_id,
+          command: a.command ?? (a.args ? JSON.stringify(a.args) : a.title),
+          label: a.server_name ?? '',
+          status: 'pending',
+        })
+      }
+      pendingApproval.value = { threadId: event.thread_id }
+    } else if (event.type === 'done') {
+      conversationId.value = event.conversation_id
+    } else if (event.type === 'error') {
+      error.value = event.message
+    }
+  }
+}
+
 async function send() {
   const text = input.value.trim()
-  if (!text || sending.value) return
+  // 有待批操作时先不让发新消息——另起一轮会换新 thread、把这次挂起丢在一边
+  if (!text || sending.value || pendingApproval.value) return
 
   timeline.value.push({ kind: 'message', key: uid(), role: 'user', content: text })
   input.value = ''
@@ -104,30 +161,46 @@ async function send() {
   nextTick(scrollToBottom)
 
   try {
-    for await (const event of streamChatMessage(text, conversationId.value)) {
-      if (event.type === 'token') {
-        appendToken(event.content)
-      } else if (event.type === 'reset') {
-        discardDraft()
-      } else if (event.type === 'tool_start') {
-        // 调工具前的旁白气泡保留下来（档位 B 会持久化它，刷新后也能重建）；这里只是关闭当前
-        // 气泡，让工具行、以及工具之后的最终答案各自成为独立的块。
-        assistantOpen = false
-        timeline.value.push({ kind: 'tool', key: uid(), id: event.id, tool: event.tool, done: false })
-      } else if (event.type === 'tool_end') {
-        const item = timeline.value.find((t) => t.kind === 'tool' && t.id === event.id)
-        if (item && item.kind === 'tool') item.done = true
-      } else if (event.type === 'done') {
-        conversationId.value = event.conversation_id
-      } else if (event.type === 'error') {
-        error.value = event.message
-      }
-    }
+    await consume(streamChatMessage(text, conversationId.value))
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
     sending.value = false
     // 新对话产生了标题、或者已有对话的 updated_at 刷新了排序，都需要重新拉一下列表
+    conversationListRef.value?.refresh()
+  }
+}
+
+// 对当前挂起的写操作作出裁决：批准就真去执行，拒绝就回喂"已拒绝"让 agent 改口。两种都从挂起点
+// 续跑同一轮对话（可能又冒出下一张待批卡片，consume 里会照样处理）。
+async function decide(approved: boolean) {
+  const pending = pendingApproval.value
+  if (!pending || sending.value) return
+
+  // 乐观翻转这次挂起的所有待批行（批准→已执行 / 拒绝→已拒绝），按钮随之消失
+  const next = approved ? 'approved' : 'rejected'
+  for (const t of timeline.value) {
+    if (t.kind === 'approval' && t.threadId === pending.threadId && t.status === 'pending') {
+      t.status = next
+    }
+  }
+  pendingApproval.value = null
+  sending.value = true
+  error.value = null
+  assistantOpen = false
+
+  try {
+    await consume(
+      resumeApproval({
+        conversationId: conversationId.value as string,
+        threadId: pending.threadId,
+        approved,
+      }),
+    )
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    sending.value = false
     conversationListRef.value?.refresh()
   }
 }
@@ -150,9 +223,15 @@ async function selectConversation(id: string) {
   try {
     const detail = await fetchConversationDetail(id)
     conversationId.value = detail.conversation.id
+    // 先建 tool_call_id → 该工具返回内容 的映射：写工具的审批行要据此还原当初是执行了还是被拒。
+    const toolResultById = new Map<string, string>()
+    for (const m of detail.messages) {
+      if (m.role === 'tool' && m.tool_call_id) toolResultById.set(m.tool_call_id, m.content)
+    }
     // 从 canonical 消息行重建时间线，跟实时时一致：
-    // - tool 行（工具结果）不单独显示——工具行由它前面 assistant 的 tool_calls 渲染
-    // - 带 tool_calls 的 assistant：先旁白气泡（如果有文字），再每个 tool_call 一条工具行（历史一律 done）
+    // - tool 行（工具结果）不单独显示——由它前面 assistant 的 tool_calls 渲染
+    // - 带 tool_calls 的 assistant：先旁白气泡（如有文字），再每个 tool_call 一行：写工具→审批行
+    //   （据配对返回还原已执行/已拒绝），只读工具→普通工具行（历史一律 done）
     // - 普通 user 提问 / assistant 最终答案 → 气泡
     timeline.value = detail.messages.flatMap((m: ChatMessage): TimelineItem[] => {
       if (m.role === 'tool') return []
@@ -162,7 +241,21 @@ async function selectConversation(id: string) {
           items.push({ kind: 'message', key: uid(), role: 'assistant', content: m.content })
         }
         for (const tc of m.tool_calls) {
-          items.push({ kind: 'tool', key: uid(), id: uid(), tool: tc.name, done: true })
+          if (WRITE_TOOLS.has(tc.name)) {
+            // 写工具重建成审批行，持久显示当初的裁决：返回以"用户拒绝执行"开头 = 被拒，否则已执行。
+            const result = (tc.id && toolResultById.get(tc.id)) || ''
+            const args = (tc.args ?? {}) as Record<string, unknown>
+            items.push({
+              kind: 'approval',
+              key: uid(),
+              threadId: '',
+              command: String(args.command ?? tc.name),
+              label: String(args.server_name ?? ''),
+              status: result.startsWith('用户拒绝执行') ? 'rejected' : 'approved',
+            })
+          } else {
+            items.push({ kind: 'tool', key: uid(), id: uid(), tool: tc.name, done: true })
+          }
         }
         return items
       }
@@ -203,8 +296,24 @@ async function selectConversation(id: string) {
             <strong>{{ item.role === 'user' ? '我' : '助手' }}：</strong>
             <span style="white-space: pre-wrap">{{ item.content }}</span>
           </div>
-          <div v-else class="tool-line" :class="{ done: item.done }">
+          <div v-else-if="item.kind === 'tool'" class="tool-line" :class="{ done: item.done }">
             {{ item.done ? '✓' : '›' }} {{ item.done ? '已' : '正在' }}{{ toolLabel(item.tool) }}{{ item.done ? '' : '…' }}
+          </div>
+          <div v-else-if="item.kind === 'approval'" class="approval-line" :class="item.status">
+            <span class="approval-icon">{{
+              item.status === 'pending' ? '›' : item.status === 'approved' ? '✓' : '✕'
+            }}</span>
+            <span class="approval-text">
+              <span class="approval-verb">{{
+                item.status === 'pending' ? '待确认' : item.status === 'approved' ? '已执行' : '已拒绝'
+              }}</span>
+              <code class="approval-cmd">{{ item.command }}</code>
+              <span v-if="item.label" class="approval-loc">· {{ item.label }}</span>
+            </span>
+            <span v-if="item.status === 'pending'" class="approval-btns">
+              <button type="button" class="approve" :disabled="sending" @click="decide(true)">执行</button>
+              <button type="button" class="reject" :disabled="sending" @click="decide(false)">不执行</button>
+            </span>
           </div>
         </template>
         <p v-if="showThinking" class="hint">思考中…</p>
@@ -212,8 +321,12 @@ async function selectConversation(id: string) {
       </div>
 
       <form class="input-row" @submit.prevent="send">
-        <input v-model="input" placeholder="输入消息…" :disabled="sending" />
-        <button type="submit" :disabled="sending">发送</button>
+        <input
+          v-model="input"
+          :placeholder="pendingApproval ? '请先处理上面的确认…' : '输入消息…'"
+          :disabled="sending || !!pendingApproval"
+        />
+        <button type="submit" :disabled="sending || !!pendingApproval">发送</button>
       </form>
     </div>
   </section>
@@ -306,6 +419,87 @@ h1 {
   50% {
     opacity: 0.5;
   }
+}
+
+/* 写操作审批行：一整行浅色底，左侧图标+动作文字（命令用等宽），右侧执行/不执行按钮。
+   pending 时带按钮；裁决后（approved/rejected）按钮消失、图标与措辞随状态变，且随历史持久重建。 */
+.approval-line {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  font-size: 0.85rem;
+}
+
+.approval-icon {
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.approval-line.approved .approval-icon {
+  color: var(--color-accent);
+}
+
+.approval-line.rejected .approval-icon {
+  color: var(--color-status-unreachable);
+}
+
+.approval-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--color-text);
+}
+
+.approval-verb {
+  margin-right: 0.35rem;
+}
+
+.approval-cmd {
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82rem;
+  word-break: break-all;
+}
+
+.approval-loc {
+  margin-left: 0.35rem;
+  color: var(--color-text-muted);
+}
+
+.approval-btns {
+  display: flex;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.approval-btns button {
+  padding: 0.25rem 0.7rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+}
+
+.approval-btns .approve {
+  background: var(--color-accent);
+  color: var(--color-accent-contrast);
+  border-color: var(--color-accent);
+}
+
+.approval-btns .reject {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.approval-btns button:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .hint {
