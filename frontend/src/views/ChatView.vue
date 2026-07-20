@@ -86,18 +86,16 @@ function appendToken(content: string) {
 }
 
 function discardDraft() {
-  // Reflexion 质检打回重试：被否决那一整次（旁白 + 工具行 + 答案）都作废——把最近一条 user
-  // 消息之后的全部删掉，等重试从头流入。后端那边被否决的尝试也被图内 RemoveMessage 从状态里
-  // 剪掉、不会落库，所以实时稳定态 == 刷新态（都只留通过的那一次）。
-  let lastUserIdx = -1
+  // Supervisor 版 Reflexion 会保留已经取得的专家工具证据，只用 RemoveMessage 删除被打回的最终
+  // 综合回答。因此前端也只删最后一个助手草稿，保留工具/审批卡片；否则实时页会丢证据、刷新后又出现。
   for (let i = timeline.value.length - 1; i >= 0; i--) {
     const item = timeline.value[i]
-    if (item.kind === 'message' && item.role === 'user') {
-      lastUserIdx = i
+    if (item.kind === 'message' && item.role === 'assistant') {
+      timeline.value.splice(i, 1)
       break
     }
+    if (item.kind === 'message' && item.role === 'user') break
   }
-  timeline.value.splice(lastUserIdx + 1)
   assistantOpen = false
 }
 

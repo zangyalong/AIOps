@@ -3,9 +3,8 @@
 跟后端 FastAPI 是**两个独立进程**：后端只负责往 Redis 队列里塞作业，这个 worker 从队列取作业来跑
 （告警自动诊断、以后的定时值班报告等重活都在这里，不占后端请求线程）。
 
-triage_incident 的做法（选型 A）：直接复用聊天用的那套 ReAct+Reflexion agent 图，把事件上下文投给它，
-让它自己调 correlate_incident / query_metrics / search_logs 去调查、出诊断——同一个 agent，既能答用户
-提问，也能自动诊断事件。诊断回填到「事件（incident）」级，不是单条告警。
+triage_incident 复用聊天用的 Supervisor 图，由事件、指标、日志专家协作调查；worker 是无人值守场景，
+会显式关闭 SSH 写工具，不能绕过聊天里的人工审批门。诊断回填到「事件（incident）」级，不是单条告警。
 
 启动（从 backend/ 目录，跟后端分开的另一个终端）：
     uv run arq app.worker.WorkerSettings
@@ -39,7 +38,11 @@ async def triage_incident(ctx: dict, incident_id: str) -> dict:
         # 反查实体：找 monitor_labels.instance 跟事件 instance 对上的服务器，好让 agent 用业务名关联
         servers = await server_service.list_servers(db)
         srv = next(
-            (s for s in servers if (s.monitor_labels or {}).get("instance") == incident.instance),
+            (
+                s
+                for s in servers
+                if (s.monitor_labels or {}).get("instance") == incident.instance
+            ),
             None,
         )
         prompt = _build_prompt(incident, srv)
@@ -50,14 +53,29 @@ async def triage_incident(ctx: dict, incident_id: str) -> dict:
         state = await graph.ainvoke(
             {
                 "messages": [HumanMessage(prompt)],
+                "work_messages": [],
+                "reports": {},
+                "specialist_instruction": "",
                 "tool_iterations": 0,
+                "supervisor_rounds": 0,
                 "reflections": [],
                 "review_attempts": 0,
-                "force_tools": False,
-            }
+                "passed": False,
+                "retry_target": "synthesize",
+                "allow_write_tools": False,
+                "approval": None,
+            },
+            # 同一事件的作业重试也要用新线程；否则 MemorySaver 会把上一次已完成状态叠进来。
+            config={
+                "configurable": {
+                    "thread_id": f"triage-{incident_id}-{uuid.uuid4().hex}"
+                }
+            },
         )
         final = state["messages"][-1]
-        diagnosis = (getattr(final, "content", "") or "").strip() or "（agent 未产出诊断文本）"
+        diagnosis = (
+            getattr(final, "content", "") or ""
+        ).strip() or "（agent 未产出诊断文本）"
     except Exception as exc:  # noqa: BLE001 —— 诊断失败也回填，方便排查，且不让 worker 崩
         diagnosis = f"自动诊断失败：{exc}"
         print(f"[triage] 事件 {incident_id} 诊断出错：{exc}")
@@ -97,7 +115,7 @@ def _build_prompt(incident: Incident, srv: Server | None) -> str:
 async def on_startup(ctx: dict) -> None:
     # 编译一次 agent 图，整个 worker 生命周期复用（每个事件都重新编译太浪费）。
     ctx["chat_graph"] = build_chat_graph()
-    print("[worker] agent 图已就绪")
+    print("[worker] Supervisor 图已就绪")
 
 
 class WorkerSettings:

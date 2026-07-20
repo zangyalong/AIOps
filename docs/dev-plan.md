@@ -16,6 +16,7 @@
 - [ ] **运维领域子 agent —— 用 LangGraph 原生多 agent supervisor 模式实现**
   - 不做"子 agent 包成一个 tool"的简化版，用 supervisor / 多图 handoff 的标准写法——这是本项目的学习重点之一，不能图省事绕过去
   - 具体设计（几个子 agent、supervisor 怎么路由、状态怎么在子图间传递）留到真正开始做这一步时再展开
+  - 已采用父级 Supervisor + metrics/logs/incident/infrastructure 四个独立子图；代码与静态检查完成后仍保持未勾选，等用户运行时验收再勾选
 
 ---
 

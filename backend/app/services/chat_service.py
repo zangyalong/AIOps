@@ -139,7 +139,8 @@ async def _drive_graph(
                 # 质检跑完。若它打回重试，接下来会有新一轮 agent/工具活动——用这个标记，等重试第一个
                 # "可见动作"（tool_start 或 agent 第一个 token，谁先到算谁）到了再发 reset。
                 evaluate_just_ran = True
-            elif kind == "on_chat_model_stream" and node == "agent":
+            # specialist 子图的模型输出是内部调查报告，不直接流给用户；只有 synthesize 是最终回答。
+            elif kind == "on_chat_model_stream" and node == "synthesize":
                 content = event["data"]["chunk"].content
                 if content:
                     if evaluate_just_ran:
@@ -207,10 +208,16 @@ async def stream_chat_turn(
 
     graph_input = {
         "messages": [*history_messages, HumanMessage(user_message)],
+        "work_messages": [],
+        "reports": {},
+        "specialist_instruction": "",
         "tool_iterations": 0,
+        "supervisor_rounds": 0,
         "reflections": [],
         "review_attempts": 0,
-        "force_tools": False,
+        "passed": False,
+        "retry_target": "synthesize",
+        "allow_write_tools": True,
         "approval": None,
     }
     async for event in _drive_graph(
