@@ -57,6 +57,8 @@ CLAUDE.md 项目定位里"值班/告警诊断"的核心闭环。
   - `app/services/correlation.py`：用 CEL（celpy）写匹配条件 + group_by 归组，算出 `group_key`（同 key = 同一事件）。当前规则 by-instance：带 instance 的 critical/warning 告警按 `[instance, alertname]` 归组（同机同种告警去重、不同种各成事件）。ingest 时算 group_key 落库，**只有事件的第一条 firing 才入队诊断**，同事件其余静默归入——治好「同台机多条告警重复诊断」。dedup（按 fingerprint）本就有
 - [x] **事件生命周期状态机**：`alert_events` 从平铺一条记录升级成 `FIRING/ACK/RESOLVED` 状态机（谁认领、后续如何）——survey 模块 6 / 启发 #6
   - 新建 `incidents` 一等实体（status firing/acknowledged/resolved、acked_by/acked_at、resolved_at、代表信息、diagnosis），`alert_events` 挂 `incident_id`（诊断从告警搬到事件级）。ingest 按 group_key 创建/关联活跃事件，告警全 resolved 时事件**自动 resolve**；triage 改成诊断事件（`triage_incident`）。API：`GET /incidents`、`POST /{id}/ack`、`POST /{id}/resolve`。经对抗式审查（并发建重复事件的低概率竞态已加 TODO 注释标注）
+- [ ] **事件中心前端**：列表展示事件、状态筛选、诊断详情、认领与人工解决
+  - 前端代码与静态检查完成后仍保持未勾选，等用户用运行中的前后端和真实事件完成验收再勾选
 
 ### 方向三：生产红线（审计 / 鉴权 / 真审批）
 

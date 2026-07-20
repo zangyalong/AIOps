@@ -1,5 +1,5 @@
 <script setup lang="ts">
-export type NavTab = 'chat' | 'servers'
+export type NavTab = 'chat' | 'incidents' | 'servers'
 
 defineProps<{
   modelValue: NavTab
@@ -11,6 +11,7 @@ const emit = defineEmits<{
 
 const items: { key: NavTab; label: string; icon: string }[] = [
   { key: 'chat', label: '对话', icon: '💬' },
+  { key: 'incidents', label: '事件中心', icon: '🚨' },
   { key: 'servers', label: '服务器', icon: '🖥️' },
 ]
 </script>

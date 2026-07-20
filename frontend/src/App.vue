@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import NavSidebar, { type NavTab } from './components/NavSidebar.vue'
 import ChatView from './views/ChatView.vue'
+import IncidentsView from './views/IncidentsView.vue'
 import ServersView from './views/ServersView.vue'
 
 const activeTab = ref<NavTab>('chat')
@@ -12,7 +13,8 @@ const activeTab = ref<NavTab>('chat')
     <NavSidebar v-model="activeTab" />
     <main class="app-content">
       <ChatView v-if="activeTab === 'chat'" />
-      <ServersView v-else />
+      <IncidentsView v-else-if="activeTab === 'incidents'" />
+      <ServersView v-else-if="activeTab === 'servers'" />
     </main>
   </div>
 </template>
