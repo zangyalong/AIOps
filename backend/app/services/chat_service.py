@@ -28,6 +28,21 @@ class ChatStreamEvent(TypedDict, total=False):
     ]  # approval_required：待批的写操作（每项带 kind，前端按 kind 渲染）
 
 
+def _business_tool_names(message_or_chunk: object) -> set[str]:
+    """提取模型消息/流式块里的业务工具名，排除 Supervisor 的结构化输出等内部 tool call。"""
+    calls = [
+        *getattr(message_or_chunk, "tool_calls", []),
+        *getattr(message_or_chunk, "tool_call_chunks", []),
+    ]
+    return {
+        name
+        for call in calls
+        if isinstance(call, dict)
+        and (name := call.get("name"))
+        and name in TOOLS_BY_NAME
+    }
+
+
 async def _load_history_messages(
     db: AsyncSession, conversation_id: uuid.UUID
 ) -> list[BaseMessage]:
@@ -94,16 +109,22 @@ async def _drive_graph(
     thread_id: str,
     new_title: str | None = None,
 ) -> AsyncIterator[ChatStreamEvent]:
-    """驱动图跑一段（初次输入或 Command 恢复都走这里），流式转发最终回答和工具卡片：
+    """驱动图跑一段，流式转发工具旁白、工具卡片和最终回答：
 
     - 停在审批门（interrupt 挂起）：发 approval_required，带上 thread_id 和待批动作，本段到此为止、
       不落库（这一轮还没走完，恢复请求会接着把它跑完）。
-    - 正常跑完：synthesize 只生成一次，生成的 token 直接发给前端；图结束后把本轮轨迹落库并发 done。
+    - 正常跑完：带业务工具调用的专家旁白会在工具卡片前显示；synthesize 生成的最终回答直接流给
+      前端。图结束后把完整轨迹落库并发 done，因此刷新前后的展示顺序一致。
 
     thread_id 决定用哪个 checkpoint 线程；初次和它的恢复共用同一个 thread_id 才能接上同一次挂起。
     这段不持有任何 db 连接（落库另开短事务），流式期间不占着连接。
     """
     config = {"configurable": {"thread_id": thread_id}}
+    # 专家最终内部报告和“准备调用工具”的旁白都来自模型文本流，开始时无法区分。先按模型 run_id
+    # 缓冲；一旦同一响应出现真实业务 tool_call，才把旁白发给前端。没有 tool_call 的内部报告在
+    # on_chat_model_end 时直接丢弃，避免把它和最终 synthesize 回答重复展示。
+    pending_narration: dict[str, list[str]] = {}
+    visible_narration_runs: set[str] = set()
     try:
         async for event in graph.astream_events(
             graph_input, config=config, version="v2"
@@ -127,11 +148,38 @@ async def _drive_graph(
                 }
             elif kind == "on_tool_end" and is_visible_tool:
                 yield {"type": "tool_end", "id": event["run_id"]}
-            # specialist 子图的模型输出是内部调查报告；只把唯一一次 synthesize 输出流给用户。
-            elif kind == "on_chat_model_stream" and node == "synthesize":
-                content = event["data"]["chunk"].content
+            elif kind == "on_chat_model_stream":
+                chunk = event["data"]["chunk"]
+                content = chunk.content if isinstance(chunk.content, str) else ""
+                if node == "synthesize":
+                    if content:
+                        yield {"type": "token", "content": content}
+                    continue
+
+                run_id = event["run_id"]
                 if content:
+                    pending_narration.setdefault(run_id, []).append(content)
+                if _business_tool_names(chunk):
+                    visible_narration_runs.add(run_id)
+                    buffered = "".join(pending_narration.pop(run_id, []))
+                    if buffered:
+                        yield {"type": "token", "content": buffered}
+                elif run_id in visible_narration_runs and content:
+                    # 极少数模型会在 tool_call chunk 后继续输出文字；确认可见后可以直接续流。
                     yield {"type": "token", "content": content}
+            elif kind == "on_chat_model_end" and node != "synthesize":
+                run_id = event["run_id"]
+                output = event.get("data", {}).get("output")
+                # 某些 OpenAI 兼容服务不在 stream chunk 里给完整工具名，只在最终 AIMessage 给；
+                # 在模型结束事件再兜底识别一次，此时仍早于真正的 on_tool_start。
+                if run_id not in visible_narration_runs and _business_tool_names(
+                    output
+                ):
+                    buffered = "".join(pending_narration.pop(run_id, []))
+                    if buffered:
+                        yield {"type": "token", "content": buffered}
+                pending_narration.pop(run_id, None)
+                visible_narration_runs.discard(run_id)
 
         # 图停下来了：先看是不是停在审批门。带了 checkpointer，挂起状态能被 aget_state 读出来；
         # snapshot.interrupts 非空即为挂起，其 value 就是 approval_node 里 interrupt(...) 的入参。

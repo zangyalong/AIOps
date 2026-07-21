@@ -8,6 +8,7 @@ AIOMS 的 FastAPI 后端，负责业务 API、LangGraph 多 Agent 工作流、�
 
 - 服务器管理与 SSH 连通性测试
 - 多轮流式对话和会话历史
+- 工具调用旁白、工具状态与最终回答实时展示，刷新后按同一轨迹重建
 - Supervisor 调度四个专业 Agent
 - Prometheus 指标、Loki 日志、Alertmanager 告警查询；指标工具可按服务器名/IP 自动解析 instance
 - 指标、日志、告警的同实体时间窗关联

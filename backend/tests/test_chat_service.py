@@ -16,6 +16,38 @@ class _FakeGraph:
     def __init__(self) -> None:
         self.events = [
             {
+                "event": "on_chat_model_stream",
+                "name": "specialist-model",
+                "run_id": "specialist-tool-call",
+                "metadata": {"langgraph_node": "metrics_agent"},
+                "data": {
+                    "chunk": SimpleNamespace(
+                        content="我先查询服务器的实时指标。",
+                        tool_calls=[],
+                        tool_call_chunks=[],
+                    )
+                },
+            },
+            {
+                "event": "on_chat_model_end",
+                "name": "specialist-model",
+                "run_id": "specialist-tool-call",
+                "metadata": {"langgraph_node": "metrics_agent"},
+                "data": {
+                    "output": AIMessage(
+                        "",
+                        tool_calls=[
+                            {
+                                "name": "query_metrics",
+                                "args": {"metric": "cpu"},
+                                "id": "tool-run",
+                                "type": "tool_call",
+                            }
+                        ],
+                    )
+                },
+            },
+            {
                 "event": "on_tool_start",
                 "name": "query_metrics",
                 "run_id": "tool-run",
@@ -31,6 +63,13 @@ class _FakeGraph:
                 "run_id": "specialist-1",
                 "metadata": {"langgraph_node": "metrics_agent"},
                 "data": {"chunk": AIMessage("不应展示的专家内部报告")},
+            },
+            {
+                "event": "on_chat_model_end",
+                "name": "specialist-model",
+                "run_id": "specialist-1",
+                "metadata": {"langgraph_node": "metrics_agent"},
+                "data": {"output": AIMessage("不应展示的专家内部报告")},
             },
             {
                 "event": "on_chat_model_stream",
@@ -61,8 +100,8 @@ class _FakeGraph:
 
 
 class ChatStreamTest(unittest.IsolatedAsyncioTestCase):
-    async def test_streams_single_synthesis_and_hides_specialist_report(self) -> None:
-        """工具事件和唯一最终回答实时发送，专家内部报告不发送。"""
+    async def test_streams_tool_narration_and_hides_specialist_report(self) -> None:
+        """工具旁白、工具卡片和最终回答实时发送，专家内部报告仍不发送。"""
         graph = _FakeGraph()
         conversation_id = uuid.uuid4()
         persist = AsyncMock()
@@ -80,8 +119,9 @@ class ChatStreamTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             [event["type"] for event in events],
-            ["tool_start", "tool_end", "token", "done"],
+            ["token", "tool_start", "tool_end", "token", "done"],
         )
-        self.assertEqual(events[2]["content"], "一次生成的最终回答")
+        self.assertEqual(events[0]["content"], "我先查询服务器的实时指标。")
+        self.assertEqual(events[3]["content"], "一次生成的最终回答")
         self.assertNotIn("专家内部报告", str(events))
         persist.assert_awaited_once()
