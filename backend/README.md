@@ -31,7 +31,7 @@ LangGraph Supervisor
 Alertmanager webhook → PostgreSQL → Redis/arq → Supervisor 自动诊断 → incidents.diagnosis
 ```
 
-四个专家是共享状态的独立 LangGraph 子图，不是包装成普通工具的函数。Supervisor 可以连续委派多个专家，最后由综合节点生成用户回答，再经过 Reflexion 质检。
+四个专家是共享状态的独立 LangGraph 子图，不是包装成普通工具的函数。Supervisor 可以连续委派多个专家，最后由综合节点基于本轮真实工具证据生成一次用户回答并直接返回。
 
 ## 环境要求
 
@@ -78,19 +78,19 @@ psql -d aioms -c "select current_database();"
 
 配置由 `app/core/config.py` 中的 Pydantic Settings 加载，环境变量名使用大写形式。
 
-| 变量 | 默认值 | 用途 |
-| --- | --- | --- |
-| `DATABASE_URL` | 本机 `aioms` 库 | PostgreSQL 异步连接 |
-| `DEEPSEEK_API_KEY` | 空 | DeepSeek API 密钥 |
-| `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | OpenAI 兼容接口地址 |
-| `DEEPSEEK_MODEL` | `deepseek-v4-flash` | 对话、路由和质检模型 |
-| `PROMETHEUS_BASE_URL` | `http://localhost:9090` | 指标查询 |
-| `LOKI_BASE_URL` | `http://localhost:3100` | 日志查询 |
-| `LOKI_ORG_ID` | 空 | 多租户 Loki 的组织 ID |
-| `ALERTMANAGER_BASE_URL` | `http://localhost:9093` | 当前告警查询 |
-| `GRAFANA_BASE_URL` | `http://localhost:3000` | 生成 Explore 链接 |
-| `REDIS_URL` | `redis://localhost:6379` | arq broker |
-| `OBS_HTTP_TIMEOUT` | `10` | 可观测性 HTTP 请求超时秒数 |
+| 变量                      | 默认值                       | 用途                       |
+| ------------------------- | ---------------------------- | -------------------------- |
+| `DATABASE_URL`          | 本机`aioms` 库             | PostgreSQL 异步连接        |
+| `DEEPSEEK_API_KEY`      | 空                           | DeepSeek API 密钥          |
+| `DEEPSEEK_BASE_URL`     | `https://api.deepseek.com` | OpenAI 兼容接口地址        |
+| `DEEPSEEK_MODEL`        | `deepseek-v4-flash`        | 对话、路由和回答模型       |
+| `PROMETHEUS_BASE_URL`   | `http://localhost:9090`    | 指标查询                   |
+| `LOKI_BASE_URL`         | `http://localhost:3100`    | 日志查询                   |
+| `LOKI_ORG_ID`           | 空                           | 多租户 Loki 的组织 ID      |
+| `ALERTMANAGER_BASE_URL` | `http://localhost:9093`    | 当前告警查询               |
+| `GRAFANA_BASE_URL`      | `http://localhost:3000`    | 生成 Explore 链接          |
+| `REDIS_URL`             | `redis://localhost:6379`   | arq broker                 |
+| `OBS_HTTP_TIMEOUT`      | `10`                       | 可观测性 HTTP 请求超时秒数 |
 
 SSH 私钥目录固定为仓库根目录的 `ssh/`，数据库只保存私钥文件名。具体测试方法见 [`docs/local-ssh-sandbox.md`](../docs/local-ssh-sandbox.md)。
 
@@ -134,26 +134,26 @@ uv run arq app.worker.WorkerSettings
 
 常用地址：
 
-- 健康检查：<http://127.0.0.1:8010/health>
-- Swagger UI：<http://127.0.0.1:8010/docs>
-- OpenAPI JSON：<http://127.0.0.1:8010/openapi.json>
+- 健康检查：[http://127.0.0.1:8010/health](http://127.0.0.1:8010/health)
+- Swagger UI：[http://127.0.0.1:8010/docs](http://127.0.0.1:8010/docs)
+- OpenAPI JSON：[http://127.0.0.1:8010/openapi.json](http://127.0.0.1:8010/openapi.json)
 
 ## 主要 API
 
-| API | 作用 |
-| --- | --- |
-| `POST /chat` | 发起一轮 SSE 流式对话 |
-| `POST /chat/resume` | 恢复被人工审批门挂起的对话 |
-| `GET/POST /servers` | 查询、新增服务器 |
-| `PATCH/DELETE /servers/{id}` | 修改、删除服务器 |
-| `POST /servers/{id}/test-connection` | 测试 SSH 连接 |
-| `GET /conversations` | 会话列表 |
-| `GET/DELETE /conversations/{id}` | 会话详情、删除会话 |
-| `POST /alerts/webhook` | 接收 Alertmanager webhook |
-| `GET /alerts` | 查询已落库告警 |
-| `GET /incidents` | 查询关联后的事件 |
-| `POST /incidents/{id}/ack` | 认领事件 |
-| `POST /incidents/{id}/resolve` | 人工解决事件 |
+| API                                    | 作用                       |
+| -------------------------------------- | -------------------------- |
+| `POST /chat`                         | 发起一轮 SSE 流式对话      |
+| `POST /chat/resume`                  | 恢复被人工审批门挂起的对话 |
+| `GET/POST /servers`                  | 查询、新增服务器           |
+| `PATCH/DELETE /servers/{id}`         | 修改、删除服务器           |
+| `POST /servers/{id}/test-connection` | 测试 SSH 连接              |
+| `GET /conversations`                 | 会话列表                   |
+| `GET/DELETE /conversations/{id}`     | 会话详情、删除会话         |
+| `POST /alerts/webhook`               | 接收 Alertmanager webhook  |
+| `GET /alerts`                        | 查询已落库告警             |
+| `GET /incidents`                     | 查询关联后的事件           |
+| `POST /incidents/{id}/ack`           | 认领事件                   |
+| `POST /incidents/{id}/resolve`       | 人工解决事件               |
 
 前端开发环境请求 `/api/...`，由 Vite 代理去掉 `/api` 前缀后转发到这里。
 
@@ -180,7 +180,7 @@ uvx ruff check app tests
 app/
 ├── api/           # FastAPI 路由，只做协议转换和依赖注入
 ├── agents/
-│   ├── graphs/    # Supervisor、专业子图、审批与质检
+│   ├── graphs/    # Supervisor、专业子图、审批与最终综合
 │   └── tools/     # 指标、日志、告警、关联、SSH 等工具
 ├── core/          # 配置
 ├── db/            # SQLAlchemy 引擎和 Session

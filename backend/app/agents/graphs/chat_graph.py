@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import time
 from functools import lru_cache, partial
-from operator import add
 from typing import Annotated, Literal, TypedDict
 
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
     HumanMessage,
-    RemoveMessage,
     SystemMessage,
     ToolMessage,
 )
@@ -45,7 +43,6 @@ SupervisorRoute = Literal[
     "infrastructure_agent",
     "finish",
 ]
-RetryTarget = Literal["supervisor", "synthesize"]
 
 SPECIALIST_TOOLS: dict[AgentName, list[BaseTool]] = {
     "metrics_agent": [query_metrics, list_metric_instances, grafana_explore_link],
@@ -74,7 +71,6 @@ WRITE_TOOLS: frozenset[str] = frozenset({"run_whitelisted_command"})
 
 MAX_TOOL_ITERATIONS = 5
 MAX_SUPERVISOR_ROUNDS = 4
-MAX_REVIEW_ATTEMPTS = 2
 
 SPECIALIST_PROMPTS: dict[AgentName, str] = {
     "metrics_agent": (
@@ -137,10 +133,6 @@ class ChatState(TypedDict):
     specialist_instruction: str
     tool_iterations: int
     supervisor_rounds: int
-    reflections: Annotated[list[str], add]
-    review_attempts: int
-    passed: bool
-    retry_target: RetryTarget
     # 聊天请求允许写工具进入审批门；无人值守 worker 必须传 False，从源头不把写工具挂给模型。
     allow_write_tools: bool
     approval: dict | None
@@ -162,16 +154,6 @@ class SupervisorDecision(BaseModel):
     next_agent: SupervisorRoute = Field(description="下一位专家；证据足够时选择 finish")
     instruction: str = Field(
         description="给下一位专家的具体调查任务；选择 finish 时说明为什么可以结束"
-    )
-
-
-class ReflexionVerdict(BaseModel):
-    passed: bool = Field(description="最终回答是否正确、完整地回应了用户这一轮的问题")
-    reflection: str = Field(
-        description="不通过时给出一句可操作的改进建议；通过时留空字符串"
-    )
-    needs_more_investigation: bool = Field(
-        description="不通过是否因为缺少必须由专家工具重新获取的真实数据"
     )
 
 
@@ -223,7 +205,7 @@ def _reports_text(reports: dict[str, str]) -> str:
 
 
 def _tool_results(work_messages: list[BaseMessage]) -> list[tuple[str, str]]:
-    """提取当前轮所有专家拿到的真实工具结果，供综合与质检核对。"""
+    """提取当前轮所有专家拿到的真实工具结果，供最终综合引用。"""
     results: list[tuple[str, str]] = []
     for message in work_messages:
         if not isinstance(message, ToolMessage):
@@ -282,15 +264,10 @@ async def supervisor_node(
     if rounds >= MAX_SUPERVISOR_ROUNDS:
         return Command(goto="synthesize")
 
-    reflections = state.get("reflections", [])
     context = (
         f"对话上下文：\n{_conversation_transcript(state['messages'])}\n\n"
         f"本轮已有专家报告：\n{_reports_text(state.get('reports', {}))}"
     )
-    if reflections:
-        context += "\n\n质检要求补救的问题：\n" + "\n".join(
-            f"- {item}" for item in reflections
-        )
 
     t0 = time.monotonic()
     structured_llm = _base_llm().with_structured_output(
@@ -447,17 +424,12 @@ def build_specialist_subgraph(agent_name: AgentName) -> CompiledStateGraph:
 
 
 async def synthesize_node(state: ChatState) -> dict:
-    """收束节点：只用专家报告和真实工具证据生成一条面向用户的最终回答。"""
-    reflections = state.get("reflections", [])
+    """收束节点：只调用一次模型，用真实证据生成面向用户的最终回答。"""
     context = (
         f"对话上下文：\n{_conversation_transcript(state['messages'])}\n\n"
         f"专家报告：\n{_reports_text(state.get('reports', {}))}\n\n"
         f"本轮真实工具结果：\n{_evidence_text(state.get('work_messages', []))}"
     )
-    if reflections:
-        context += "\n\n上一次回答的质检反馈：\n" + "\n".join(
-            f"- {item}" for item in reflections
-        )
 
     t0 = time.monotonic()
     response = await _base_llm().ainvoke(
@@ -465,59 +437,6 @@ async def synthesize_node(state: ChatState) -> dict:
     )
     print(f"[graph] synthesize 耗时 {time.monotonic() - t0:.1f}s")
     return {"messages": [response]}
-
-
-async def evaluate_node(state: ChatState) -> dict:
-    """质检最终综合回答；缺数据时回 Supervisor，表述问题则只重做综合。"""
-    t0 = time.monotonic()
-    answer_message = state["messages"][-1]
-    assert isinstance(answer_message, AIMessage)
-    question = _latest_human_content(state["messages"])
-    evidence = _evidence_text(state.get("work_messages", []))
-    prompt = [
-        SystemMessage(
-            "你是 AIOMS 的质检员。判断最终回答是否完整回应问题，且其中所有当前服务器状态、"
-            "命令输出、指标、日志和告警数据都能在本轮工具结果中找到依据。用户只是回顾历史时不要求"
-            "重新调用工具。若缺少回答问题所必需的当前真实数据，needs_more_investigation=true；"
-            "若只是表达、结构或遗漏已有证据，设为 false。通过时 reflection 留空。"
-        ),
-        HumanMessage(
-            f"用户问题：{question}\n\n本轮工具结果：\n{evidence}\n\n"
-            f"最终回答：{answer_message.content}"
-        ),
-    ]
-    structured_llm = _base_llm().with_structured_output(
-        ReflexionVerdict, method="function_calling"
-    )
-    verdict = await structured_llm.ainvoke(prompt)
-    attempts = state.get("review_attempts", 0) + 1
-    print(
-        f"[graph] evaluate 耗时 {time.monotonic() - t0:.1f}s，"
-        f"passed={verdict.passed}，more_data={verdict.needs_more_investigation}，"
-        f"reflection={verdict.reflection!r}"
-    )
-    if verdict.passed:
-        return {"passed": True, "review_attempts": attempts}
-    if attempts >= MAX_REVIEW_ATTEMPTS:
-        # 达到上限时保留当前回答，保证前端显示内容与数据库最终落库内容一致。
-        return {"passed": False, "review_attempts": attempts}
-
-    retry_target: RetryTarget = (
-        "supervisor" if verdict.needs_more_investigation else "synthesize"
-    )
-    return {
-        "messages": [RemoveMessage(id=answer_message.id)],
-        "reflections": [verdict.reflection],
-        "review_attempts": attempts,
-        "passed": False,
-        "retry_target": retry_target,
-    }
-
-
-def route_after_evaluate(state: ChatState) -> str:
-    if state.get("passed") or state.get("review_attempts", 0) >= MAX_REVIEW_ATTEMPTS:
-        return END
-    return state.get("retry_target", "synthesize")
 
 
 def build_chat_graph() -> CompiledStateGraph:
@@ -528,11 +447,9 @@ def build_chat_graph() -> CompiledStateGraph:
         builder.add_node(agent_name, build_specialist_subgraph(agent_name))
         builder.add_edge(agent_name, "supervisor")
     builder.add_node("synthesize", synthesize_node)
-    builder.add_node("evaluate", evaluate_node)
 
     builder.add_edge(START, "supervisor")
-    builder.add_edge("synthesize", "evaluate")
-    builder.add_conditional_edges("evaluate", route_after_evaluate)
+    builder.add_edge("synthesize", END)
 
     # 父图 checkpointer 同时承接聊天审批 interrupt；每轮仍由 chat_service 使用独立 thread_id。
     return builder.compile(checkpointer=MemorySaver())

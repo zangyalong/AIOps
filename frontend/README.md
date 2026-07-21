@@ -9,7 +9,7 @@ AIOMS 的 Vue 3 前端，用于多 Agent 运维对话、事件处理和服务器
 ### 对话
 
 - 新建、切换和删除历史会话
-- SSE 流式显示最终回答
+- SSE 实时显示工具过程，并流式展示一次生成的最终回答
 - 展示指标、日志、告警等工具调用状态
 - SSH 写操作显示人工审批卡片
 - 批准或拒绝后通过 `/chat/resume` 恢复同一条 LangGraph 线程
@@ -109,7 +109,7 @@ src/
 ### 普通对话
 
 ```text
-ChatView → POST /api/chat → SSE token/tool/done 事件 → 时间线渲染
+ChatView → POST /api/chat → SSE 工具事件实时展示 → 一次生成并流式展示最终回答 → done
 ```
 
 ### 写操作审批

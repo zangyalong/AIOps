@@ -72,8 +72,8 @@ watch(
   { deep: true },
 )
 
-// 当前是否有一个"打开的"助手气泡可以继续追加 token。调用工具后会关闭它，下一段文字会
-// 另起一个新气泡，从而让工具卡片自然地夹在两段文字之间。
+// 当前是否有一个"打开的"助手气泡可以继续追加 token。最终综合只执行一次，输出 token 持续
+// 追加到同一个气泡；工具卡片仍与最终回答分开显示。
 let assistantOpen = false
 
 function appendToken(content: string) {
@@ -85,25 +85,13 @@ function appendToken(content: string) {
   if (last.kind === 'message') last.content += content
 }
 
-function discardDraft() {
-  // Supervisor 版 Reflexion 会保留已经取得的专家工具证据，只用 RemoveMessage 删除被打回的最终
-  // 综合回答。因此前端也只删最后一个助手草稿，保留工具/审批卡片；否则实时页会丢证据、刷新后又出现。
-  for (let i = timeline.value.length - 1; i >= 0; i--) {
-    const item = timeline.value[i]
-    if (item.kind === 'message' && item.role === 'assistant') {
-      timeline.value.splice(i, 1)
-      break
-    }
-    if (item.kind === 'message' && item.role === 'user') break
-  }
-  assistantOpen = false
-}
-
-// 还在"思考中"（agent 首次调用还没吐出工具或文字）：最后一项还是用户那条消息
+// 最终综合开始输出前显示等待状态。工具正在执行时已有动态工具行，不重复显示。
 const showThinking = computed(() => {
-  if (!sending.value) return false
+  if (!sending.value || pendingApproval.value) return false
   const last = timeline.value[timeline.value.length - 1]
-  return !last || (last.kind === 'message' && last.role === 'user')
+  if (!last) return true
+  if (last.kind === 'message' && last.role === 'assistant') return false
+  return last.kind !== 'tool' || last.done
 })
 
 // 消费一段 SSE 事件流（初次发消息、以及审批后恢复，都走这里）。approval_required 会画出一张
@@ -112,11 +100,8 @@ async function consume(stream: AsyncGenerator<ChatStreamEvent>) {
   for await (const event of stream) {
     if (event.type === 'token') {
       appendToken(event.content)
-    } else if (event.type === 'reset') {
-      discardDraft()
     } else if (event.type === 'tool_start') {
-      // 调工具前的旁白气泡保留下来（会持久化，刷新后也能重建）；这里只是关闭当前气泡，
-      // 让工具行、以及工具之后的最终答案各自成为独立的块。
+      // 工具过程与最终回答分块展示；正常情况下最终回答尚未出现，这里关闭气泡是防御性处理。
       assistantOpen = false
       timeline.value.push({ kind: 'tool', key: uid(), id: event.id, tool: event.tool, done: false })
     } else if (event.type === 'tool_end') {
@@ -314,7 +299,7 @@ async function selectConversation(id: string) {
             </span>
           </div>
         </template>
-        <p v-if="showThinking" class="hint">思考中…</p>
+        <p v-if="showThinking" class="hint">正在生成回答…</p>
         <p v-if="error" class="error">{{ error }}</p>
       </div>
 

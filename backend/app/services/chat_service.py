@@ -15,7 +15,7 @@ from app.services import conversation_service, message_service
 
 
 class ChatStreamEvent(TypedDict, total=False):
-    type: str  # "token" | "reset" | "tool_start" | "tool_end" | "approval_required" | "done" | "error"
+    type: str  # "token" | "tool_start" | "tool_end" | "approval_required" | "done" | "error"
     content: str
     conversation_id: str  # 要经 json.dumps 发给前端，uuid.UUID 必须转成字符串
     title: str
@@ -63,8 +63,7 @@ async def _persist_turn(
 
     turn_messages 已切在最后一条 HumanMessage 之后，只会是 assistant / tool——它之前都是历史、
     库里已有，不能重复存。每条单独 commit，靠各自不同的 created_at 保证顺序（顺序 await、事务
-    开始时间递增）。Reflexion 打回的重试已被图内 RemoveMessage 从状态里剪掉，所以这里天然就是
-    「通过的那一次」，不用自己筛。
+    开始时间递增）。最终综合回答只生成一次，因此图里的本轮轨迹可以直接按顺序保存。
     """
     async with AsyncSessionLocal() as db:
         for msg in turn_messages:
@@ -95,57 +94,43 @@ async def _drive_graph(
     thread_id: str,
     new_title: str | None = None,
 ) -> AsyncIterator[ChatStreamEvent]:
-    """驱动图跑一段（初次输入或 Command 恢复都走这里），流式转发文字/工具卡片，收尾分两种：
+    """驱动图跑一段（初次输入或 Command 恢复都走这里），流式转发最终回答和工具卡片：
 
     - 停在审批门（interrupt 挂起）：发 approval_required，带上 thread_id 和待批动作，本段到此为止、
-      不落库（这一轮还没走完，恢复请求会接着把它跑完）。agent 调工具前那句旁白此前已流式发出、
-      前端已展示，落库要等整轮走完后才做。
-    - 正常跑完：把本轮轨迹落库、发 done。
+      不落库（这一轮还没走完，恢复请求会接着把它跑完）。
+    - 正常跑完：synthesize 只生成一次，生成的 token 直接发给前端；图结束后把本轮轨迹落库并发 done。
 
     thread_id 决定用哪个 checkpoint 线程；初次和它的恢复共用同一个 thread_id 才能接上同一次挂起。
     这段不持有任何 db 连接（落库另开短事务），流式期间不占着连接。
     """
     config = {"configurable": {"thread_id": thread_id}}
-    evaluate_just_ran = False
     try:
         async for event in graph.astream_events(
             graph_input, config=config, version="v2"
         ):
             kind = event["event"]
+            event_name = event.get("name", "")
             node = event.get("metadata", {}).get("langgraph_node")
 
             # 工具调用的开始/结束：只转发只读工具的 start/end 让前端画工具行（TOOLS_BY_NAME 兜底
-            # 过滤，顺带挡掉 evaluate 结构化输出那个内部 tool_call）。写工具（WRITE_TOOLS）不发——它
-            # 由前端那条带按钮的审批行代表自己（approval_required + 裁决后翻成"已执行/已拒绝"），
-            # 再发工具行会和审批行重复成两条。start/end 带同一个 run_id，前端据此标记"进行中→完成"。
+            # 过滤）。写工具（WRITE_TOOLS）不发——它由前端那条带按钮的审批行代表自己
+            # （approval_required + 裁决后翻成"已执行/已拒绝"），再发工具行会重复成两条。
+            # start/end 带同一个 run_id，前端据此标记"进行中→完成"。
             is_visible_tool = (
-                event["name"] in TOOLS_BY_NAME and event["name"] not in WRITE_TOOLS
+                event_name in TOOLS_BY_NAME and event_name not in WRITE_TOOLS
             )
             if kind == "on_tool_start" and is_visible_tool:
-                if evaluate_just_ran:
-                    # 重试的第一个动作可能是"调工具"，这条 tool_start 会比 agent 第一个 token 先到。
-                    # reset 必须赶在它之前发，否则前端会先画出这次重试的工具卡片、紧接着又被 reset
-                    # 连着旧草稿一起清掉。
-                    yield {"type": "reset"}
-                    evaluate_just_ran = False
                 yield {
                     "type": "tool_start",
                     "id": event["run_id"],
-                    "tool": event["name"],
+                    "tool": event_name,
                 }
             elif kind == "on_tool_end" and is_visible_tool:
                 yield {"type": "tool_end", "id": event["run_id"]}
-            elif kind == "on_chain_end" and node == "evaluate":
-                # 质检跑完。若它打回重试，接下来会有新一轮 agent/工具活动——用这个标记，等重试第一个
-                # "可见动作"（tool_start 或 agent 第一个 token，谁先到算谁）到了再发 reset。
-                evaluate_just_ran = True
-            # specialist 子图的模型输出是内部调查报告，不直接流给用户；只有 synthesize 是最终回答。
+            # specialist 子图的模型输出是内部调查报告；只把唯一一次 synthesize 输出流给用户。
             elif kind == "on_chat_model_stream" and node == "synthesize":
                 content = event["data"]["chunk"].content
                 if content:
-                    if evaluate_just_ran:
-                        yield {"type": "reset"}
-                        evaluate_just_ran = False
                     yield {"type": "token", "content": content}
 
         # 图停下来了：先看是不是停在审批门。带了 checkpointer，挂起状态能被 aget_state 读出来；
@@ -213,10 +198,6 @@ async def stream_chat_turn(
         "specialist_instruction": "",
         "tool_iterations": 0,
         "supervisor_rounds": 0,
-        "reflections": [],
-        "review_attempts": 0,
-        "passed": False,
-        "retry_target": "synthesize",
         "allow_write_tools": True,
         "approval": None,
     }

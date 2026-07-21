@@ -58,10 +58,6 @@ async def triage_incident(ctx: dict, incident_id: str) -> dict:
                 "specialist_instruction": "",
                 "tool_iterations": 0,
                 "supervisor_rounds": 0,
-                "reflections": [],
-                "review_attempts": 0,
-                "passed": False,
-                "retry_target": "synthesize",
                 "allow_write_tools": False,
                 "approval": None,
             },
@@ -124,4 +120,4 @@ class WorkerSettings:
     functions = [triage_incident]
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
     on_startup = on_startup
-    job_timeout = 180  # agent 调查可能多轮工具调用 + 质检，给足超时
+    job_timeout = 180  # agent 调查可能包含多轮工具调用，给足超时

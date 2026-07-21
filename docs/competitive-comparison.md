@@ -23,8 +23,8 @@
 |---|------|------|---------|
 | 1 | 数据接入 | ✅ 有 | Prometheus/Loki/Alertmanager（docker-compose 起的真实源）+ Grafana 链接生成；读工具 5 个 + 写工具 1 个（`run_whitelisted_command`，真实 asyncssh，白名单 uptime/df/free） |
 | 2 | 告警去重/关联 | ⚠️ 半 | dedup 有（按 fingerprint）；关联是 **CEL 规则引擎**（`correlation.py`，按 instance+alertname 归组）——是关联的**雏形**，非 ML/跨服务收敛 |
-| 3 | 根因分析/自动诊断 | ✅ 有 | 事件触发 → arq worker 复用 ReAct+Reflexion agent → 调 correlate_incident/query_metrics/search_logs 调查 → 诊断回填事件 |
-| 4 | Agent 编排 | ✅ 有 | LangGraph StateGraph：`agent ↔ tools ← evaluate`，ReAct + Reflexion 重试 + **防编造质检**（答案里的数据必须有工具返回来源） |
+| 3 | 根因分析/自动诊断 | ✅ 有 | 事件触发 → arq worker 复用 Supervisor 多 Agent 图 → 调 correlate_incident/query_metrics/search_logs 调查 → 诊断回填事件 |
+| 4 | Agent 编排 | ✅ 有 | LangGraph StateGraph：`Supervisor → 专家子图 ↔ tools → synthesize`；最终回答只生成一次，并要求具体数据来自本轮工具证据 |
 | 5 | 事件生命周期 | ✅ 有 | `incidents` 一等实体，`FIRING/ACKNOWLEDGED/RESOLVED` 状态机，告警全 resolved 时自动 resolve，ack/resolve API |
 | 6 | 后台/事件驱动 | ✅ 有 | Alertmanager webhook → arq + Redis 队列 → 独立 worker 进程消费 |
 | 7 | 写操作/自动化+审批 | ⚠️ 半 | 白名单 SSH 只读命令；**无审计、无人工二次确认网关**（方向三待办） |
@@ -114,7 +114,7 @@
 | 数据接入（读） | ✅ PLG 三支柱（深） | ✅ 多、侧重 K8s/云 | ✅✅ 上百集成（广） |
 | 告警 dedup | ✅ fingerprint | ⚠️ 多数没有 | ✅ |
 | **告警关联（收敛成事件）** | ⚠️ CEL 归组（雏形） | ❌ 多数没有 | ✅✅ ML/图论（BigPanda/Moogsoft 招牌） |
-| **根因分析（AI）** | ✅ ReAct+Reflexion+防编造 | ✅ 各家核心 | ⚠️ 新叠 AI（Bits/Sift 已很强） |
+| **根因分析（AI）** | ✅ Supervisor+专家 ReAct+真实证据综合 | ✅ 各家核心 | ⚠️ 新叠 AI（Bits/Sift 已很强） |
 | Agent 编排 | ✅ LangGraph 图 | ⚠️ 多为顺序/单 ReAct，K8sGPT 甚至非 agent | ⚠️ 部分多 agent（incident.io/PD/Resolve） |
 | 三支柱关联原语 | ✅ correlate_incident | ⚠️ 部分（Holmes/Traversal 因果图） | ⚠️ 靠看板/Sift |
 | **事件生命周期** | ✅ FIRING/ACK/RESOLVED + 自动恢复 | ❌ 多数没有（OpenSRE 都没有） | ✅✅ 最成熟（合并/时间线/角色） |
@@ -132,7 +132,7 @@
 
 ## 6. AIOMS 领先 / 持平的地方（别妄自菲薄）
 
-- **诊断内核有章法**：真 ReAct + **Reflexion 反思重试** + **「答案的数据必须有工具返回来源」的防编造质检**——比不少 AI-SRE demo 更讲究，明显强过 K8sGPT 那种「扫一遍 + LLM 解释一次」。
+- **诊断内核有章法**：Supervisor 调度领域专家执行真实 ReAct 调查，最终综合明确要求**具体数据必须来自本轮工具证据**；回答只生成一次，把修正权交给用户追问。
 - **关联用规则不用 LLM**：上了 **CEL**（`cel-python`），正是 Keep 同款、survey 启发#1 的正解——很多打「AI 关联」旗号的开源版其实是死代码或企业版专享。
 - **事件生命周期状态机**：OpenSRE 这种专门的 AI-SRE **根本没有**；AIOMS 有一等 `incidents` + 三态 + 自动恢复。
 - **correlate_incident 三支柱对齐**：正是 survey 说的「AI SRE 和 chatbot 的分水岭」。
@@ -160,7 +160,7 @@
 - **AI 不是替代 SRE，而是在「去技能化」**（Bainbridge《自动化的反讽》）：自动化越多，人在少数失效时刻越关键、却越缺练习；对新人是「never-skilling」。处方是 **human-in-the-loop, not human-on-the-side**。
 - **宣传 vs 能力有差距**：很多工具标榜自主 remediation，实际要大量针对性配置；厂商自报的准确率/MTTR 数字**未经独立审计**。
 
-**这些恰好印证 AIOMS 的路子是对的**：human-in-the-loop、防编造质检、CLAUDE.md 安全红线——不是保守，是踩在赛道的共识与教训上。
+**这些恰好印证 AIOMS 的路子是对的**：human-in-the-loop、真实工具证据约束、CLAUDE.md 安全红线——不是保守，是踩在赛道的共识与教训上。
 
 ---
 

@@ -2,7 +2,6 @@ import type { PendingAction } from '../types/chat'
 
 export type ChatStreamEvent =
   | { type: 'token'; content: string }
-  | { type: 'reset' }
   | { type: 'tool_start'; id: string; tool: string }
   | { type: 'tool_end'; id: string }
   | {

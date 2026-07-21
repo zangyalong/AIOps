@@ -19,40 +19,34 @@ def _initial_state(*, allow_write_tools: bool) -> dict:
         "specialist_instruction": "",
         "tool_iterations": 0,
         "supervisor_rounds": 0,
-        "reflections": [],
-        "review_attempts": 0,
-        "passed": False,
-        "retry_target": "synthesize",
         "allow_write_tools": allow_write_tools,
         "approval": None,
     }
 
 
 class _FakeBaseLLM:
-    """按预设路线模拟 Supervisor，同时给综合和质检返回固定结果。"""
+    """按预设路线模拟 Supervisor，并记录最终综合模型的调用次数。"""
 
     def __init__(self, routes: list[str]) -> None:
         self.routes = iter(routes)
+        self.synthesis_calls = 0
 
     def with_structured_output(self, schema: type, method: str) -> RunnableLambda:
         del method
+        if schema is not chat_graph.SupervisorDecision:
+            raise AssertionError(f"不应再调用额外的结构化质检模型：{schema}")
 
         async def invoke(_: object) -> object:
-            if schema is chat_graph.SupervisorDecision:
-                route = next(self.routes)
-                return chat_graph.SupervisorDecision(
-                    next_agent=route,
-                    instruction="执行测试调查",
-                )
-            return chat_graph.ReflexionVerdict(
-                passed=True,
-                reflection="",
-                needs_more_investigation=False,
+            route = next(self.routes)
+            return chat_graph.SupervisorDecision(
+                next_agent=route,
+                instruction="执行测试调查",
             )
 
         return RunnableLambda(invoke)
 
     async def ainvoke(self, _: object) -> AIMessage:
+        self.synthesis_calls += 1
         return AIMessage("最终综合回答")
 
 
@@ -117,6 +111,7 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["reports"]["metrics_agent"], "指标证据报告")
         self.assertEqual(result["messages"][-1].content, "最终综合回答")
+        self.assertEqual(base.synthesis_calls, 1)
         self.assertEqual(len(result["messages"]), 4)
         self.assertEqual(len(result["work_messages"]), 4)
         self.assertTrue(
