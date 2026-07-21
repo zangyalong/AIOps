@@ -41,6 +41,9 @@ function uid(): string {
 
 const TOOL_LABELS: Record<string, string> = {
   query_servers: '查询服务器列表',
+  query_server_metrics: '查询服务器指标',
+  query_metrics: '查询 Prometheus 指标',
+  list_metric_instances: '查询监控实例',
   search_logs: '检索日志',
   query_alerts: '查询告警',
   run_whitelisted_command: '执行远程命令',

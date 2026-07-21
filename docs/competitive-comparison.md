@@ -23,7 +23,7 @@
 |---|------|------|---------|
 | 1 | 数据接入 | ✅ 有 | Prometheus/Loki/Alertmanager（docker-compose 起的真实源）+ Grafana 链接生成；读工具 5 个 + 写工具 1 个（`run_whitelisted_command`，真实 asyncssh，白名单 uptime/df/free） |
 | 2 | 告警去重/关联 | ⚠️ 半 | dedup 有（按 fingerprint）；关联是 **CEL 规则引擎**（`correlation.py`，按 instance+alertname 归组）——是关联的**雏形**，非 ML/跨服务收敛 |
-| 3 | 根因分析/自动诊断 | ✅ 有 | 事件触发 → arq worker 复用 Supervisor 多 Agent 图 → 调 correlate_incident/query_metrics/search_logs 调查 → 诊断回填事件 |
+| 3 | 根因分析/自动诊断 | ✅ 有 | 事件触发 → arq worker 复用 Supervisor 多 Agent 图 → 调 correlate_incident/query_server_metrics/search_logs 调查 → 诊断回填事件 |
 | 4 | Agent 编排 | ✅ 有 | LangGraph StateGraph：`Supervisor → 专家子图 ↔ tools → synthesize`；最终回答只生成一次，并要求具体数据来自本轮工具证据 |
 | 5 | 事件生命周期 | ✅ 有 | `incidents` 一等实体，`FIRING/ACKNOWLEDGED/RESOLVED` 状态机，告警全 resolved 时自动 resolve，ack/resolve API |
 | 6 | 后台/事件驱动 | ✅ 有 | Alertmanager webhook → arq + Redis 队列 → 独立 worker 进程消费 |

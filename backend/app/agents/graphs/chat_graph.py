@@ -26,7 +26,11 @@ from app.agents.tools.commands import run_whitelisted_command
 from app.agents.tools.correlate import correlate_incident
 from app.agents.tools.grafana import grafana_explore_link
 from app.agents.tools.logs import list_log_services, search_logs
-from app.agents.tools.metrics import list_metric_instances, query_metrics
+from app.agents.tools.metrics import (
+    list_metric_instances,
+    query_metrics,
+    query_server_metrics,
+)
 from app.agents.tools.servers import query_servers
 from app.core.config import settings
 
@@ -45,7 +49,12 @@ SupervisorRoute = Literal[
 ]
 
 SPECIALIST_TOOLS: dict[AgentName, list[BaseTool]] = {
-    "metrics_agent": [query_metrics, list_metric_instances, grafana_explore_link],
+    "metrics_agent": [
+        query_server_metrics,
+        query_metrics,
+        list_metric_instances,
+        grafana_explore_link,
+    ],
     "logs_agent": [search_logs, list_log_services, grafana_explore_link],
     "incident_agent": [query_alerts, correlate_incident, query_servers],
     "infrastructure_agent": [query_servers, run_whitelisted_command],
@@ -55,6 +64,7 @@ SPECIALIST_TOOLS: dict[AgentName, list[BaseTool]] = {
 TOOLS = [
     query_servers,
     run_whitelisted_command,
+    query_server_metrics,
     query_metrics,
     list_metric_instances,
     search_logs,
@@ -75,7 +85,10 @@ MAX_SUPERVISOR_ROUNDS = 4
 SPECIALIST_PROMPTS: dict[AgentName, str] = {
     "metrics_agent": (
         "你是 AIOMS 的指标分析专家，只负责 Prometheus 指标和 Grafana 指标链接。"
-        "需要当前真实值时必须调用 query_metrics；不知道实例名先调用 list_metric_instances。"
+        "用户给出已纳管服务器名称或 IP 时，必须优先一次调用 query_server_metrics，"
+        "不要先调用 list_metric_instances。只有用户直接询问 Prometheus instance、全部实例或原始 "
+        "PromQL 时才使用 query_metrics/list_metric_instances。用户明确要求图表或链接时才调用 "
+        "grafana_explore_link，不要擅自增加图表任务。"
         "完成调查后输出一份给 Supervisor 的简短证据报告，不要假装直接回复最终用户。"
     ),
     "logs_agent": (
@@ -107,6 +120,7 @@ SUPERVISOR_PROMPT = """你是 AIOMS 的 Supervisor，只负责拆解问题和把
 每次只选择一个专家。专家完成后你会再次拿到控制权，可以继续委派另一个专家；证据已经足够，或用户只是闲聊、解释概念时选择 finish。
 涉及“当前/最新”的服务器状态、指标、日志、告警或命令输出时，不能在没有对应专家真实调查结果的情况下 finish。
 不要重复委派已经回答清楚同一问题的专家。instruction 要写成该专家可以独立执行的具体任务，并带上必要实体、时间窗和筛选条件。
+不要擅自增加用户没有要求的图表、链接或额外调查项，避免无意义的工具调用。
 """
 
 SYNTHESIZER_PROMPT = """你是 AIOMS 面向用户的事件指挥官。根据 Supervisor 收集的专家报告和真实工具结果，给出清晰、简洁、可执行的最终回答。

@@ -11,6 +11,9 @@ import math
 
 from langchain_core.tools import tool
 
+from app.db.session import AsyncSessionLocal
+from app.models.server import Server
+from app.services import server_service
 from app.services.observability_service import prom_label_values, prom_query
 
 # 常用指标的 PromQL 模板。用 node_exporter 的标准查法：
@@ -42,16 +45,8 @@ _TITLES = {
 }
 
 
-@tool
-async def query_metrics(metric: str, instance: str = "") -> str:
-    """查询服务器的实时监控指标，数据来自 Prometheus。
-
-    metric 可传：
-    - "cpu" / "memory" / "disk"：对应主机的 CPU / 内存 / 磁盘使用率（百分比）
-    - "up"：各监控目标是否存活（1 存活 / 0 抓取失败）
-    - 其它任意字符串：当成一段 PromQL 表达式直接执行（高级用法，需自己写标签过滤）
-    instance 可选，传了就只看该实例（如 "node-exporter:9100"），不传返回所有实例。
-    """
+async def _query_metrics_text(metric: str, instance: str = "") -> str:
+    """执行 Prometheus 查询并格式化成 Agent 可直接引用的文本。"""
     metric = metric.strip()
     is_template = metric in PROMQL_TEMPLATES
     promql = PROMQL_TEMPLATES.get(metric, metric)  # 命中模板用模板，否则当原始 PromQL
@@ -73,7 +68,9 @@ async def query_metrics(metric: str, instance: str = "") -> str:
     # instance 过滤只对内置模板做（模板都带 instance 标签）；逃生口的原始 PromQL 不动，
     # 高级用法自己在表达式里写标签过滤。
     if instance and is_template:
-        results = [r for r in results if r.get("metric", {}).get("instance") == instance]
+        results = [
+            r for r in results if r.get("metric", {}).get("instance") == instance
+        ]
         if not results:
             return (
                 f'没有 instance="{instance}" 的 {metric} 数据，请确认实例名'
@@ -106,6 +103,73 @@ async def query_metrics(metric: str, instance: str = "") -> str:
 
 
 @tool
+async def query_metrics(metric: str, instance: str = "") -> str:
+    """按 Prometheus instance 查询实时指标，适合直接给出监控实例或原始 PromQL 的场景。
+
+    查询已纳管的业务服务器时优先使用 query_server_metrics，它会自动完成服务器到 instance 的映射。
+    metric 可传 cpu / memory / disk / up；其它字符串会当成原始 PromQL。instance 可选，格式如
+    "node-exporter:9100"；不传时返回全部实例。
+    """
+    return await _query_metrics_text(metric, instance)
+
+
+@tool
+async def query_server_metrics(server: str, metric: str) -> str:
+    """查询一台已纳管服务器的实时指标，一次完成服务器解析和 Prometheus 查询。
+
+    - server：servers 表里的服务器名称或 IP，例如 "docker-test-01" 或 "127.0.0.1"
+    - metric：cpu / memory / disk / up
+
+    工具会优先使用 servers.monitor_labels.instance；未配置时自动按服务器 IP 匹配 Prometheus
+    instance。因此查询业务服务器时直接调用本工具，不需要先调用 list_metric_instances。
+    """
+    identifier = server.strip()
+    async with AsyncSessionLocal() as db:
+        srv = await server_service.get_server_by_name_or_ip(db, identifier)
+    if srv is None:
+        return f'没有找到名称或 IP 为 "{identifier}" 的已纳管服务器。'
+
+    instance, error = await _resolve_metric_instance(srv)
+    if instance is None:
+        return error or f"无法确定服务器 {srv.name} 对应的 Prometheus instance。"
+
+    result = await _query_metrics_text(metric, instance)
+    return (
+        f"服务器映射：{srv.name} ({srv.ip_address}) → Prometheus instance={instance}\n"
+        f"{result}"
+    )
+
+
+async def _resolve_metric_instance(server: Server) -> tuple[str | None, str | None]:
+    """优先读显式标签；缺失时在一次工具调用内部按服务器 IP 完成实例发现。"""
+    configured = str((server.monitor_labels or {}).get("instance") or "").strip()
+    if configured:
+        return configured, None
+
+    try:
+        instances = await prom_label_values("instance")
+    except Exception as exc:  # noqa: BLE001 —— 工具要把数据源错误转成 Agent 可读文本
+        return (
+            None,
+            f"服务器 {server.name} 未配置 instance，自动查询 Prometheus 实例失败：{exc}。",
+        )
+
+    ip = server.ip_address.strip()
+    matches = [item for item in instances if item == ip or item.startswith(f"{ip}:")]
+    if len(matches) == 1:
+        return matches[0], None
+    if not matches:
+        return None, (
+            f"服务器 {server.name} 未配置 monitor_labels.instance，Prometheus 中也没有与 IP "
+            f"{ip} 匹配的实例。请先配置监控标签。"
+        )
+    return None, (
+        f"服务器 {server.name} 的 IP {ip} 匹配到多个 Prometheus 实例："
+        f"{', '.join(sorted(matches))}。请配置 monitor_labels.instance 明确指定。"
+    )
+
+
+@tool
 async def list_metric_instances() -> str:
     """列出当前 Prometheus 有指标可查的实例名（给 query_metrics 的 instance 参数选用）。
 
@@ -121,7 +185,10 @@ async def list_metric_instances() -> str:
     if not instances:
         return "Prometheus 里当前没有任何实例的指标（可能采集还没上来）。"
     lines = "\n".join(f"- {s}" for s in sorted(instances))
-    return "当前 Prometheus 有指标可查的实例（可作为 query_metrics 的 instance 参数）：\n" + lines
+    return (
+        "当前 Prometheus 有指标可查的实例（可作为 query_metrics 的 instance 参数）：\n"
+        + lines
+    )
 
 
 def _label_of(labels: dict, metric: str) -> str:

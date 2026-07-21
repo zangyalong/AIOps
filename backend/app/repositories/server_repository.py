@@ -17,6 +17,26 @@ async def get_by_id(db: AsyncSession, server_id: uuid.UUID) -> Server | None:
     return await db.get(Server, server_id)
 
 
+async def get_by_name_or_ip(db: AsyncSession, identifier: str) -> Server | None:
+    """按业务名或 IP 精确查服务器；名称优先，避免名称恰好与另一行 IP 相同时选错。"""
+    result = await db.scalars(
+        select(Server)
+        .where(Server.name == identifier)
+        .order_by(Server.created_at)
+        .limit(1)
+    )
+    server = result.first()
+    if server is not None:
+        return server
+    result = await db.scalars(
+        select(Server)
+        .where(Server.ip_address == identifier)
+        .order_by(Server.created_at)
+        .limit(1)
+    )
+    return result.first()
+
+
 async def create(db: AsyncSession, server: Server) -> Server:
     db.add(server)
     await db.commit()

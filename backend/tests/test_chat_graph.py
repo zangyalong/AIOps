@@ -64,10 +64,10 @@ def _fake_specialist_factory(
     return factory
 
 
-@tool("query_metrics")
-async def _fake_query_metrics(instance: str) -> str:
+@tool("query_server_metrics")
+async def _fake_query_server_metrics(server: str, metric: str) -> str:
     """返回不访问 Prometheus 的测试指标。"""
-    return f"{instance}: cpu=12%"
+    return f"{server}: {metric}=12%"
 
 
 class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
@@ -83,7 +83,7 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_supervisor_delegates_to_specialist_and_synthesizes(self) -> None:
         """父图 handoff 到指标子图，工具结果和报告都能正确合并回父图。"""
-        chat_graph.SPECIALIST_TOOLS["metrics_agent"] = [_fake_query_metrics]
+        chat_graph.SPECIALIST_TOOLS["metrics_agent"] = [_fake_query_server_metrics]
         base = _FakeBaseLLM(["metrics_agent", "finish"])
         chat_graph._base_llm = lambda: base
         chat_graph._specialist_llm = _fake_specialist_factory(
@@ -92,8 +92,8 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
                     "",
                     tool_calls=[
                         {
-                            "name": "query_metrics",
-                            "args": {"instance": "demo:9100"},
+                            "name": "query_server_metrics",
+                            "args": {"server": "demo", "metric": "cpu"},
                             "id": "metrics-call",
                             "type": "tool_call",
                         }

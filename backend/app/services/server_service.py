@@ -8,7 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.server import Server
 from app.repositories import server_repository
 from app.schemas.server import ConnectionTestResult, ServerCreate, ServerUpdate
-from app.services.ssh_service import SSHKeyMissing, SSHNotConfigured, build_connect_params
+from app.services.ssh_service import (
+    SSHKeyMissing,
+    SSHNotConfigured,
+    build_connect_params,
+)
 
 
 async def list_servers(db: AsyncSession) -> list[Server]:
@@ -17,6 +21,10 @@ async def list_servers(db: AsyncSession) -> list[Server]:
 
 async def get_server(db: AsyncSession, server_id: uuid.UUID) -> Server | None:
     return await server_repository.get_by_id(db, server_id)
+
+
+async def get_server_by_name_or_ip(db: AsyncSession, identifier: str) -> Server | None:
+    return await server_repository.get_by_name_or_ip(db, identifier)
 
 
 async def create_server(db: AsyncSession, data: ServerCreate) -> Server:
@@ -39,7 +47,9 @@ async def _probe_connection(server: Server) -> ConnectionTestResult:
     try:
         params = build_connect_params(server)
     except SSHNotConfigured:
-        return ConnectionTestResult(status="unconfigured", detail="没有配置 SSH 连接信息")
+        return ConnectionTestResult(
+            status="unconfigured", detail="没有配置 SSH 连接信息"
+        )
     except SSHKeyMissing as exc:
         return ConnectionTestResult(status="unconfigured", detail=str(exc))
 
