@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -9,18 +10,26 @@ from pydantic import BaseModel, ConfigDict
 class ChatRequest(BaseModel):
     message: str
     # 同一个 conversation_id 的多轮对话，每次请求都从 messages 表把历史加载出来
-    # 喂给图；第一次不传，后端建一条新 conversation，SSE 流结束时用 "done" 事件带回去。
+    # 喂给图；第一次不传，后端创建 conversation，并立即返回独立 Chat Run 的标识。
     conversation_id: uuid.UUID | None = None
 
 
 class ResumeApprovalRequest(BaseModel):
     """恢复一次挂在写操作审批门上的对话：带回 approval_required 里发出的 thread_id + 用户裁决。"""
 
+    run_id: str
     conversation_id: uuid.UUID
     thread_id: str
     approved: bool
     # 拒绝时可选带一句理由，会回喂给 agent 让它据此向用户说明
     reason: str | None = None
+
+
+class ChatRunOut(BaseModel):
+    run_id: str
+    conversation_id: uuid.UUID
+    status: Literal["running", "waiting_approval", "completed", "failed"]
+    title: str | None = None
 
 
 class ConversationSummary(BaseModel):

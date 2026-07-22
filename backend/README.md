@@ -7,7 +7,7 @@ AIOMS 的 FastAPI 后端，负责业务 API、LangGraph 多 Agent 工作流、�
 ## 当前能力
 
 - 服务器管理与 SSH 连通性测试
-- 多轮流式对话和会话历史
+- 多轮流式对话和会话历史；Agent 运行与浏览器 SSE 连接解耦，切页或关闭页面后继续生成
 - 工具调用旁白、工具状态与最终回答实时展示，刷新后按同一轨迹重建
 - Supervisor 调度四个专业 Agent
 - Prometheus 指标、Loki 日志、Alertmanager 告警查询；指标工具可按服务器名/IP 自动解析 instance
@@ -20,7 +20,7 @@ AIOMS 的 FastAPI 后端，负责业务 API、LangGraph 多 Agent 工作流、�
 ## 运行架构
 
 ```text
-FastAPI /chat
+FastAPI POST /chat → 创建后台 Chat Run
     ↓
 LangGraph Supervisor
     ├── metrics_agent         → Prometheus / Grafana
@@ -34,6 +34,10 @@ Alertmanager webhook → PostgreSQL → Redis/arq → Supervisor 自动诊断 �
 ```
 
 四个专家是共享状态的独立 LangGraph 子图，不是包装成普通工具的函数。Supervisor 可以连续委派多个专家，最后由综合节点基于本轮真实工具证据生成一次用户回答并直接返回。
+
+聊天请求先返回 `run_id`，前端再通过 `GET /chat/runs/{run_id}/events` 订阅 SSE。LangGraph
+运行在独立后台任务中，SSE 断开只会移除订阅者，不会取消 Agent；重新打开同一对话时可以查询
+活跃运行并重放当前进度，完成后完整消息统一落库。
 
 ## 环境要求
 
@@ -145,8 +149,10 @@ uv run arq app.worker.WorkerSettings
 
 | API                                    | 作用                       |
 | -------------------------------------- | -------------------------- |
-| `POST /chat`                         | 发起一轮 SSE 流式对话      |
-| `POST /chat/resume`                  | 恢复被人工审批门挂起的对话 |
+| `POST /chat`                         | 创建后台 Chat Run，返回 `run_id` |
+| `GET /chat/runs/active/{conversation_id}` | 查询对话当前活跃运行 |
+| `GET /chat/runs/{run_id}/events`     | 订阅或重连运行的 SSE 事件 |
+| `POST /chat/resume`                  | 恢复被人工审批门挂起的运行 |
 | `GET/POST /servers`                  | 查询、新增服务器           |
 | `PATCH/DELETE /servers/{id}`         | 修改、删除服务器           |
 | `POST /servers/{id}/test-connection` | 测试 SSH 连接              |
@@ -204,5 +210,6 @@ tests/             # 不依赖外部服务的自动化测试
 - 工具执行节点会再次校验审批决议，不能只靠模型是否正确路由；后台 worker 设置 `allow_write_tools=False`，从模型绑定和执行节点两层禁止写工具。
 - 本地 SSH 沙箱当前使用 `known_hosts=None`，只适用于一次性本地容器，不能直接用于生产服务器。
 - 当前仍缺少 API 鉴权、RBAC、正式密钥管理和不可篡改审计日志；`restart_service` 只用于受控开发环境验证，不应直接暴露到生产网络。
+- Chat Run 和事件重放目前保存在单个 FastAPI 进程内：浏览器断开不影响生成，但后端重启会中断运行；多进程或生产部署需要改用 Redis/持久化任务状态。
 
 开发计划和未完成项见 [`docs/dev-plan.md`](../docs/dev-plan.md)。

@@ -1,20 +1,13 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import NavSidebar, { type NavTab } from './components/NavSidebar.vue'
-import ChatView from './views/ChatView.vue'
-import IncidentsView from './views/IncidentsView.vue'
-import ServersView from './views/ServersView.vue'
-
-const activeTab = ref<NavTab>('chat')
+import { RouterView } from 'vue-router'
+import NavSidebar from './components/NavSidebar.vue'
 </script>
 
 <template>
   <div class="app-shell">
-    <NavSidebar v-model="activeTab" />
+    <NavSidebar />
     <main class="app-content">
-      <ChatView v-if="activeTab === 'chat'" />
-      <IncidentsView v-else-if="activeTab === 'incidents'" />
-      <ServersView v-else-if="activeTab === 'servers'" />
+      <RouterView />
     </main>
   </div>
 </template>

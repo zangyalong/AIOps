@@ -1,33 +1,37 @@
 <script setup lang="ts">
-export type NavTab = 'chat' | 'incidents' | 'servers'
+import { computed, ref, watch } from 'vue'
+import { RouterLink, useRoute } from 'vue-router'
 
-defineProps<{
-  modelValue: NavTab
-}>()
+const route = useRoute()
+const lastChatPath = ref(localStorage.getItem('aioms:last-chat-path') || '/chat')
 
-const emit = defineEmits<{
-  'update:modelValue': [tab: NavTab]
-}>()
+watch(
+  () => route.fullPath,
+  (path) => {
+    if (path === '/chat' || path.startsWith('/chat/')) {
+      lastChatPath.value = path
+      localStorage.setItem('aioms:last-chat-path', path)
+    }
+  },
+  { immediate: true },
+)
 
-const items: { key: NavTab; label: string; icon: string }[] = [
-  { key: 'chat', label: '对话', icon: '💬' },
-  { key: 'incidents', label: '事件中心', icon: '🚨' },
-  { key: 'servers', label: '服务器', icon: '🖥️' },
-]
+const items = computed(() => [
+  { to: lastChatPath.value, label: '对话', icon: '💬' },
+  { to: '/incidents', label: '事件中心', icon: '🚨' },
+  { to: '/servers', label: '服务器', icon: '🖥️' },
+])
 </script>
 
 <template>
   <nav class="nav-sidebar">
     <div class="brand">AIOMS</div>
     <ul>
-      <li
-        v-for="item in items"
-        :key="item.key"
-        :class="{ active: modelValue === item.key }"
-        @click="emit('update:modelValue', item.key)"
-      >
-        <span class="icon">{{ item.icon }}</span>
-        <span>{{ item.label }}</span>
+      <li v-for="item in items" :key="item.to">
+        <RouterLink :to="item.to" class="nav-item">
+          <span class="icon">{{ item.icon }}</span>
+          <span>{{ item.label }}</span>
+        </RouterLink>
       </li>
     </ul>
   </nav>
@@ -62,7 +66,7 @@ ul {
   gap: 0.25rem;
 }
 
-li {
+.nav-item {
   display: flex;
   align-items: center;
   gap: 0.6rem;
@@ -70,14 +74,15 @@ li {
   border-radius: var(--radius);
   color: var(--color-text-muted);
   font-size: 0.95rem;
+  text-decoration: none;
 }
 
-li:hover {
+.nav-item:hover {
   background: var(--color-bg);
   color: var(--color-text);
 }
 
-li.active {
+.nav-item.router-link-active {
   background: var(--color-accent);
   color: var(--color-accent-contrast);
 }

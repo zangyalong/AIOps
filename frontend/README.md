@@ -2,14 +2,16 @@
 
 AIOMS 的 Vue 3 前端，用于多 Agent 运维对话、事件处理和服务器管理。
 
-当前界面采用单页签状态切换，尚未引入 Vue Router 或 Pinia；跨后端交互统一封装在 `src/api/`。
+当前界面使用 Vue Router 管理真实 URL，尚未引入 Pinia；跨后端交互统一封装在 `src/api/`。
 
 ## 当前页面
 
 ### 对话
 
 - 新建、切换和删除历史会话
+- 新对话使用 `/chat`，历史对话使用 `/chat/:conversationId`；刷新、前进/后退和复制链接可以恢复同一会话
 - SSE 实时显示工具过程，并流式展示一次生成的最终回答
+- 切换内部页面或关闭浏览器不会取消后端 Agent；返回生成中的会话会自动重新订阅并重放进度
 - 工具调用前的 Agent 旁白会实时显示，刷新历史后保持相同顺序
 - 展示指标、日志、告警等工具调用状态；服务器指标查询合并为一张工具卡片
 - SSH 只读诊断显示普通工具状态；服务重启等高风险写操作显示人工审批卡片和风险标识
@@ -35,6 +37,7 @@ AIOMS 的 Vue 3 前端，用于多 Agent 运维对话、事件处理和服务器
 ## 技术栈
 
 - Vue 3.5
+- Vue Router 4
 - TypeScript 6
 - Vite 8
 - Composition API + `<script setup>`
@@ -72,7 +75,9 @@ PORT=5175 npm run dev
 FastAPI http://127.0.0.1:8010/incidents
 ```
 
-因此前端代码不需要硬编码后端域名，也不会在本地开发时遇到跨域问题。生产构建后需要由反向代理提供等价的 `/api` 转发规则。
+因此前端代码不需要硬编码后端域名，也不会在本地开发时遇到跨域问题。生产构建后需要由反向代理
+提供等价的 `/api` 转发规则，并把 `/chat/*`、`/incidents`、`/servers` 等前端路由回退到
+`index.html`，否则直接刷新历史对话 URL 会得到 404。
 
 ## 常用命令
 
@@ -95,6 +100,7 @@ npm run preview
 src/
 ├── api/          # chat、conversations、incidents、servers API 客户端
 ├── components/   # 导航和会话列表等复用组件
+├── router/       # /chat、/chat/:conversationId、/incidents、/servers
 ├── types/        # 与后端 schema 对应的 TypeScript 类型
 ├── views/
 │   ├── ChatView.vue
@@ -110,8 +116,13 @@ src/
 ### 普通对话
 
 ```text
-ChatView → POST /api/chat → SSE 工具事件实时展示 → 一次生成并流式展示最终回答 → done
+ChatView → POST /api/chat 创建 Chat Run
+         → GET /api/chat/runs/{run_id}/events 订阅/重连
+         → SSE 工具事件实时展示 → 一次生成并流式展示最终回答 → done
 ```
+
+Chat Run 在后端独立执行，浏览器的 SSE 只是订阅者。对话页卸载时会主动关闭当前订阅以节省连接，
+但后台任务继续；再次打开 `/chat/:conversationId` 时先加载数据库历史，再查询活跃运行并重放未完成轨迹。
 
 ### 写操作审批
 
@@ -139,10 +150,12 @@ POST /api/chat/resume
 4. 请求在测试服务器执行 `uptime`，确认它作为只读诊断直接执行，不出现审批卡片。
 5. 请求重启一个服务，确认先出现高风险审批卡片；拒绝后不执行，批准后仍需通过后端服务白名单。
 6. 刷新会话，确认消息、工具轨迹和审批结果可以从历史记录恢复。
+7. AI 生成途中切到“事件中心”或“服务器”，再点击“对话”，确认 URL 回到原会话并继续显示进度。
+8. AI 生成途中关闭页面，再用同一 `/chat/:conversationId` 地址打开，确认任务继续并最终入库。
 
 ## 当前限制
 
 - 没有登录、用户身份和前端 RBAC。
-- 页面切换不是 URL 路由，刷新后会回到“对话”页。
 - 事件认领人暂时由用户自由输入，后续应由登录身份提供。
+- 运行中的事件重放依赖当前 FastAPI 进程；后端重启后无法恢复尚未完成的 Chat Run。
 - 生产部署需要自行配置静态文件托管和 `/api` 反向代理。

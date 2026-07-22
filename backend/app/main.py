@@ -18,6 +18,7 @@ from app.models import (  # noqa: F401  # 注册模型到 Base.metadata
     server,
 )
 from app.models.base import Base
+from app.services.chat_run_service import ChatRunManager
 
 
 @asynccontextmanager
@@ -29,13 +30,18 @@ async def lifespan(app: FastAPI):
     # arq 连接池：webhook 用它往队列塞诊断作业。Redis 没起时也别让后端崩——置 None，
     # webhook 会跳过入队（只是暂时没有自动诊断，落库照常）。
     try:
-        app.state.arq_pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+        app.state.arq_pool = await create_pool(
+            RedisSettings.from_dsn(settings.redis_url)
+        )
     except Exception as exc:  # noqa: BLE001
         print(f"[startup] 连接 Redis 失败，自动诊断入队将跳过：{exc}")
         app.state.arq_pool = None
 
+    app.state.chat_run_manager = ChatRunManager()
+
     yield
 
+    await app.state.chat_run_manager.shutdown()
     if getattr(app.state, "arq_pool", None) is not None:
         await app.state.arq_pool.close()
 

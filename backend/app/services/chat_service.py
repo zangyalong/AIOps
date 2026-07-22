@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
@@ -15,7 +16,8 @@ from app.services import conversation_service, message_service
 
 
 class ChatStreamEvent(TypedDict, total=False):
-    type: str  # "token" | "tool_start" | "tool_end" | "approval_required" | "done" | "error"
+    type: str  # token/tool/approval/done/error
+    seq: int  # ChatRunManager 写入的运行内事件序号，重连和审批续传使用
     content: str
     conversation_id: str  # 要经 json.dumps 发给前端，uuid.UUID 必须转成字符串
     title: str
@@ -26,6 +28,15 @@ class ChatStreamEvent(TypedDict, total=False):
     actions: list[
         dict
     ]  # approval_required：待批的写操作（每项带 kind，前端按 kind 渲染）
+    approved: bool  # approval_resolved：人工裁决结果
+
+
+@dataclass(frozen=True)
+class PreparedChatTurn:
+    """已经完成历史加载和用户消息落库、可以交给后台 Chat Run 执行的一轮输入。"""
+
+    graph_input: dict
+    thread_id: str
 
 
 def _business_tool_names(message_or_chunk: object) -> set[str]:
@@ -217,18 +228,15 @@ async def _drive_graph(
         yield {"type": "error", "message": str(exc)}
 
 
-async def stream_chat_turn(
-    graph: CompiledStateGraph,
+async def prepare_chat_turn(
     conversation_id: uuid.UUID,
     user_message: str,
-    new_title: str | None = None,
-) -> AsyncIterator[ChatStreamEvent]:
-    """跑一轮新的对话输入：存用户消息 + 加载历史喂给图，之后交给 _drive_graph 流式吐结果、落库。
+) -> PreparedChatTurn:
+    """先持久化用户消息并准备图输入，确保 API 返回 run_id 时历史中已经能看到用户提问。
 
     每轮用一个全新 thread_id：图带了 checkpointer 后，fresh thread 保证 checkpointer 每轮从空
     开始，和"照旧把完整历史喂进来"不冲突（否则会和上一轮残留状态叠加成重复消息）。命中审批门时，
     这个 thread_id 随 approval_required 发给前端，恢复请求带着它回来才能接上同一次挂起。
-    new_title 只在这是一次新对话时传入，会附带在终结事件（done 或 approval_required）里。
     """
     thread_id = uuid.uuid4().hex
     # 短事务：加载历史（还原成真消息序列）+ 用户消息落库。用户这句先落库——即使后面 LLM 调用失败，
@@ -239,18 +247,34 @@ async def stream_chat_turn(
             db, conversation_id, role="user", content=user_message
         )
 
-    graph_input = {
-        "messages": [*history_messages, HumanMessage(user_message)],
-        "work_messages": [],
-        "reports": {},
-        "specialist_instruction": "",
-        "tool_iterations": 0,
-        "supervisor_rounds": 0,
-        "allow_write_tools": True,
-        "approval": None,
-    }
+    return PreparedChatTurn(
+        thread_id=thread_id,
+        graph_input={
+            "messages": [*history_messages, HumanMessage(user_message)],
+            "work_messages": [],
+            "reports": {},
+            "specialist_instruction": "",
+            "tool_iterations": 0,
+            "supervisor_rounds": 0,
+            "allow_write_tools": True,
+            "approval": None,
+        },
+    )
+
+
+async def run_prepared_chat_turn(
+    graph: CompiledStateGraph,
+    conversation_id: uuid.UUID,
+    prepared: PreparedChatTurn,
+    new_title: str | None = None,
+) -> AsyncIterator[ChatStreamEvent]:
+    """在后台 Chat Run 中执行已经准备好的一轮输入。"""
     async for event in _drive_graph(
-        graph, conversation_id, graph_input, thread_id, new_title=new_title
+        graph,
+        conversation_id,
+        prepared.graph_input,
+        prepared.thread_id,
+        new_title=new_title,
     ):
         yield event
 

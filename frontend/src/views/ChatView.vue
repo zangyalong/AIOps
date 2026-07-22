@@ -1,6 +1,13 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
-import { resumeApproval, streamChatMessage, type ChatStreamEvent } from '../api/chat'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import {
+  fetchActiveChatRun,
+  resumeApproval,
+  startChatMessage,
+  streamChatRun,
+  type ChatStreamEvent,
+} from '../api/chat'
 import { fetchConversationDetail } from '../api/conversations'
 import ConversationList from '../components/ConversationList.vue'
 import type { ChatMessage } from '../types/chat'
@@ -29,11 +36,17 @@ const error = ref<string | null>(null)
 // 同一个 conversationId 下的多轮对话，每次发消息后端都从 messages 表把历史加载出来；
 // 换一个 conversationId（或不传）就是开新对话，互相不共享上下文。
 const conversationId = ref<string | null>(null)
+const route = useRoute()
+const router = useRouter()
 const conversationListRef = ref<InstanceType<typeof ConversationList> | null>(null)
 const messagesEl = ref<HTMLElement | null>(null)
 // 当前是否有一个写操作挂在审批门上等裁决。非空时输入框禁用（先处理确认再继续对话），
 // 记住要恢复哪条挂起（threadId）——裁决时按 threadId 把这次挂起的所有待批行一起翻状态。
-const pendingApproval = ref<{ threadId: string } | null>(null)
+const pendingApproval = ref<{ runId: string; threadId: string } | null>(null)
+const activeRunId = ref<string | null>(null)
+const lastEventSequence = ref(0)
+let subscriptionController: AbortController | null = null
+let loadVersion = 0
 
 let uidCounter = 0
 function uid(): string {
@@ -106,10 +119,11 @@ const showThinking = computed(() => {
   return last.kind !== 'tool' || last.done
 })
 
-// 消费一段 SSE 事件流（初次发消息、以及审批后恢复，都走这里）。approval_required 会画出一张
-// 待批卡片并门控输入框，等 decide() 续跑。
+// 消费 Chat Run 的可重放事件。切页后重新订阅会从 seq=0 重建当前运行轨迹；审批后则从已消费的
+// seq 继续，避免把前半段重复画一遍。
 async function consume(stream: AsyncGenerator<ChatStreamEvent>) {
   for await (const event of stream) {
+    lastEventSequence.value = Math.max(lastEventSequence.value, event.seq)
     if (event.type === 'token') {
       appendToken(event.content)
     } else if (event.type === 'tool_start') {
@@ -135,11 +149,63 @@ async function consume(stream: AsyncGenerator<ChatStreamEvent>) {
           status: 'pending',
         })
       }
-      pendingApproval.value = { threadId: event.thread_id }
+      pendingApproval.value = {
+        runId: activeRunId.value as string,
+        threadId: event.thread_id,
+      }
+    } else if (event.type === 'approval_resolved') {
+      for (const item of timeline.value) {
+        if (
+          item.kind === 'approval' &&
+          item.threadId === event.thread_id &&
+          item.status === 'pending'
+        ) {
+          item.status = event.approved ? 'approved' : 'rejected'
+        }
+      }
+      if (pendingApproval.value?.threadId === event.thread_id) {
+        pendingApproval.value = null
+      }
+      assistantOpen = false
     } else if (event.type === 'done') {
       conversationId.value = event.conversation_id
+      activeRunId.value = null
+      sending.value = false
+      conversationListRef.value?.refresh()
     } else if (event.type === 'error') {
       error.value = event.message
+      activeRunId.value = null
+      sending.value = false
+    }
+  }
+}
+
+function stopSubscription() {
+  subscriptionController?.abort()
+  subscriptionController = null
+}
+
+async function attachRun(runId: string, after = 0) {
+  stopSubscription()
+  const controller = new AbortController()
+  subscriptionController = controller
+  activeRunId.value = runId
+  lastEventSequence.value = after
+  sending.value = true
+  assistantOpen = false
+
+  try {
+    await consume(streamChatRun(runId, after, controller.signal))
+  } catch (e) {
+    if (!(e instanceof DOMException && e.name === 'AbortError')) {
+      error.value = e instanceof Error ? e.message : String(e)
+    }
+  } finally {
+    if (subscriptionController === controller) {
+      subscriptionController = null
+      // 运行完成、失败或停在审批门时订阅都会结束；审批期间由 pendingApproval 单独禁用输入框，
+      // sending 必须恢复为 false，才能让“执行/不执行”按钮可点击。
+      sending.value = false
     }
   }
 }
@@ -157,13 +223,23 @@ async function send() {
   nextTick(scrollToBottom)
 
   try {
-    await consume(streamChatMessage(text, conversationId.value))
+    const run = await startChatMessage(text, conversationId.value)
+    activeRunId.value = run.run_id
+    conversationId.value = run.conversation_id
+    conversationListRef.value?.refresh()
+
+    if (route.params.conversationId !== run.conversation_id) {
+      // 新对话拿到后端生成的 UUID 后立刻写进地址栏；route watcher 会加载用户消息并订阅运行。
+      await router.replace({
+        name: 'chat-conversation',
+        params: { conversationId: run.conversation_id },
+      })
+    } else {
+      await loadConversation(run.conversation_id)
+    }
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
-  } finally {
     sending.value = false
-    // 新对话产生了标题、或者已有对话的 updated_at 刷新了排序，都需要重新拉一下列表
-    conversationListRef.value?.refresh()
   }
 }
 
@@ -173,101 +249,153 @@ async function decide(approved: boolean) {
   const pending = pendingApproval.value
   if (!pending || sending.value) return
 
-  // 乐观翻转这次挂起的所有待批行（批准→已批准 / 拒绝→已拒绝），按钮随之消失。
-  // “已批准”只表示人工决议；服务白名单、SSH 或 systemd 仍可能在执行阶段拒绝/失败。
-  const next = approved ? 'approved' : 'rejected'
-  for (const t of timeline.value) {
-    if (t.kind === 'approval' && t.threadId === pending.threadId && t.status === 'pending') {
-      t.status = next
-    }
-  }
-  pendingApproval.value = null
   sending.value = true
   error.value = null
   assistantOpen = false
+  const after = lastEventSequence.value
 
   try {
-    await consume(
-      resumeApproval({
-        conversationId: conversationId.value as string,
-        threadId: pending.threadId,
-        approved,
-      }),
-    )
+    await resumeApproval({
+      runId: pending.runId,
+      conversationId: conversationId.value as string,
+      threadId: pending.threadId,
+      approved,
+    })
+    void attachRun(pending.runId, after)
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
-  } finally {
     sending.value = false
-    conversationListRef.value?.refresh()
   }
 }
 
-function newConversation() {
+function resetConversation() {
+  stopSubscription()
   timeline.value = []
   conversationId.value = null
+  activeRunId.value = null
+  lastEventSequence.value = 0
+  pendingApproval.value = null
+  sending.value = false
   error.value = null
   assistantOpen = false
+}
+
+async function newConversation() {
+  if (route.name === 'chat') {
+    resetConversation()
+  } else {
+    await router.push({ name: 'chat' })
+  }
 }
 
 function onConversationDeleted(id: string) {
   // 删掉的正好是当前打开的这个对话 → 清空聊天区，回到"新对话"状态
-  if (id === conversationId.value) newConversation()
+  if (id === conversationId.value) void newConversation()
 }
 
-async function selectConversation(id: string) {
-  if (sending.value) return
-  error.value = null
-  try {
-    const detail = await fetchConversationDetail(id)
-    conversationId.value = detail.conversation.id
-    // 先建 tool_call_id → 该工具返回内容 的映射：写工具的审批行要据此还原当初是执行了还是被拒。
-    const toolResultById = new Map<string, string>()
-    for (const m of detail.messages) {
-      if (m.role === 'tool' && m.tool_call_id) toolResultById.set(m.tool_call_id, m.content)
+function buildTimeline(messages: ChatMessage[]): TimelineItem[] {
+  const toolResultById = new Map<string, string>()
+  for (const message of messages) {
+    if (message.role === 'tool' && message.tool_call_id) {
+      toolResultById.set(message.tool_call_id, message.content)
     }
-    // 从 canonical 消息行重建时间线，跟实时时一致：
-    // - tool 行（工具结果）不单独显示——由它前面 assistant 的 tool_calls 渲染
-    // - 带 tool_calls 的 assistant：先旁白气泡（如有文字），再每个 tool_call 一行：写工具→审批行
-    //   （据配对返回还原已执行/已拒绝），只读工具→普通工具行（历史一律 done）
-    // - 普通 user 提问 / assistant 最终答案 → 气泡
-    timeline.value = detail.messages.flatMap((m: ChatMessage): TimelineItem[] => {
-      if (m.role === 'tool') return []
-      const items: TimelineItem[] = []
-      if (m.role === 'assistant' && m.tool_calls?.length) {
-        if (m.content) {
-          items.push({ kind: 'message', key: uid(), role: 'assistant', content: m.content })
-        }
-        for (const tc of m.tool_calls) {
-          if (WRITE_TOOLS.has(tc.name)) {
-            // 写工具重建成审批行，持久显示当初的裁决：返回以"用户拒绝执行"开头 = 被拒，否则已执行。
-            const result = (tc.id && toolResultById.get(tc.id)) || ''
-            const args = (tc.args ?? {}) as Record<string, unknown>
-            items.push({
-              kind: 'approval',
-              key: uid(),
-              threadId: '',
-              command: historyApprovalCommand(tc.name, args),
-              label: String(args.server_name ?? ''),
-              riskLevel: tc.name === 'restart_service' ? 'high' : undefined,
-              status: result.startsWith('用户拒绝执行') ? 'rejected' : 'approved',
-            })
-          } else {
-            items.push({ kind: 'tool', key: uid(), id: uid(), tool: tc.name, done: true })
-          }
-        }
-        return items
+  }
+
+  return messages.flatMap((message): TimelineItem[] => {
+    if (message.role === 'tool') return []
+    const items: TimelineItem[] = []
+    if (message.role === 'assistant' && message.tool_calls?.length) {
+      if (message.content) {
+        items.push({ kind: 'message', key: uid(), role: 'assistant', content: message.content })
       }
-      if (m.content) {
-        items.push({ kind: 'message', key: uid(), role: m.role, content: m.content })
+      for (const toolCall of message.tool_calls) {
+        if (WRITE_TOOLS.has(toolCall.name)) {
+          const result = (toolCall.id && toolResultById.get(toolCall.id)) || ''
+          const args = (toolCall.args ?? {}) as Record<string, unknown>
+          items.push({
+            kind: 'approval',
+            key: uid(),
+            threadId: '',
+            command: historyApprovalCommand(toolCall.name, args),
+            label: String(args.server_name ?? ''),
+            riskLevel: toolCall.name === 'restart_service' ? 'high' : undefined,
+            status: result.startsWith('用户拒绝执行') ? 'rejected' : 'approved',
+          })
+        } else {
+          items.push({
+            kind: 'tool',
+            key: uid(),
+            id: uid(),
+            tool: toolCall.name,
+            done: true,
+          })
+        }
       }
       return items
-    })
-    assistantOpen = false
+    }
+    if (message.content) {
+      items.push({ kind: 'message', key: uid(), role: message.role, content: message.content })
+    }
+    return items
+  })
+}
+
+async function loadConversation(id: string) {
+  const version = ++loadVersion
+  stopSubscription()
+  conversationId.value = id
+  activeRunId.value = null
+  pendingApproval.value = null
+  lastEventSequence.value = 0
+  sending.value = false
+  error.value = null
+  assistantOpen = false
+
+  try {
+    let detail = await fetchConversationDetail(id)
+    const run = await fetchActiveChatRun(id)
+    // active 查询返回 404 代表后台已经完成并落库；再读一次可避开第一次查询正好撞在落库前。
+    if (!run) detail = await fetchConversationDetail(id)
+    if (version !== loadVersion) return
+
+    timeline.value = buildTimeline(detail.messages)
     nextTick(scrollToBottom)
+    // 完整一轮的最后一条一定是无 tool_calls 的最终 assistant。极小概率下数据库已经落完，
+    // 但 Chat Run 尚未来得及从 active 索引移除；此时直接使用历史，避免再重放一遍造成重复。
+    const lastMessage = detail.messages.at(-1)
+    const alreadyPersisted =
+      lastMessage?.role === 'assistant' && !lastMessage.tool_calls?.length
+    if (run && !alreadyPersisted) void attachRun(run.run_id)
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
+    if (version === loadVersion) {
+      error.value = e instanceof Error ? e.message : String(e)
+    }
   }
 }
+
+function selectConversation(id: string) {
+  if (id !== route.params.conversationId) {
+    void router.push({ name: 'chat-conversation', params: { conversationId: id } })
+  }
+}
+
+watch(
+  () => route.params.conversationId,
+  (id) => {
+    if (typeof id === 'string') {
+      void loadConversation(id)
+    } else {
+      loadVersion += 1
+      resetConversation()
+    }
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => {
+  loadVersion += 1
+  stopSubscription()
+})
 </script>
 
 <template>
