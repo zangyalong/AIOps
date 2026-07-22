@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from app.agents.tools.actions import restart_service
 from app.agents.tools.alerts import query_alerts
+from app.agents.tools.changes import query_recent_changes
 from app.agents.tools.catalog import (
     describe_write_action,
     ensure_read_tools,
@@ -63,7 +64,12 @@ SPECIALIST_READ_TOOLS: dict[AgentName, list[BaseTool]] = {
         grafana_explore_link,
     ],
     "logs_agent": [search_logs, list_log_services, grafana_explore_link],
-    "incident_agent": [query_alerts, correlate_incident, query_servers],
+    "incident_agent": [
+        query_alerts,
+        correlate_incident,
+        query_recent_changes,
+        query_servers,
+    ],
     "infrastructure_agent": [query_servers, run_diagnostic_command],
 }
 
@@ -98,8 +104,10 @@ SPECIALIST_PROMPTS: dict[AgentName, str] = {
         "完成调查后输出一份给 Supervisor 的简短证据报告，不要假装直接回复最终用户。"
     ),
     "incident_agent": (
-        "你是 AIOMS 的事件指挥专家，负责告警查询、事件关联和跨指标/日志/告警的时间窗分析。"
-        "优先用 correlate_incident 做同一实体、同一时间窗的关联；需要当前告警时调用 query_alerts。"
+        "你是 AIOMS 的事件指挥专家，负责告警查询、事件关联，以及指标/日志/告警/变更的时间窗分析。"
+        "优先用 correlate_incident 做同一实体、同一时间窗的关联；需要当前告警时调用 query_alerts，"
+        "只需要单独核对发布、回滚、扩缩容或配置变更时调用 query_recent_changes。"
+        "变更与故障时间重合只是相关性证据，不能在没有其他证据时直接断言为根因。"
         "完成调查后输出一份给 Supervisor 的简短证据报告，不要假装直接回复最终用户。"
     ),
     "infrastructure_agent": (
@@ -116,7 +124,7 @@ SUPERVISOR_PROMPT = """你是 AIOMS 的 Supervisor，只负责拆解问题和把
 可委派的专家：
 - metrics_agent：Prometheus 指标、实例发现、指标图表链接
 - logs_agent：Loki 日志、服务发现、日志图表链接
-- incident_agent：当前告警、事件关联、指标+日志+告警的横向诊断
+- incident_agent：当前告警、变更记录、事件关联和跨信号横向诊断
 - infrastructure_agent：服务器清单、SSH 只读诊断和需人工审批的受控服务重启
 
 每次只选择一个专家。专家完成后你会再次拿到控制权，可以继续委派另一个专家；证据已经足够，或用户只是闲聊、解释概念时选择 finish。

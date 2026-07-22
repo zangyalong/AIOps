@@ -1,11 +1,11 @@
-"""关联原语（方向一·任务5）：把三支柱在同一实体、同一时间窗对齐。
+"""关联原语（方向一·任务5）：把可观测性三支柱与变更在同一实体、同一时间窗对齐。
 
-给定一台服务器（业务名）+ 一个时刻，**并发**拉齐它的指标走势 + 日志 + 正在触发的告警，
+给定一台服务器（业务名）+ 一个时刻，**并发**拉齐它的指标走势 + 日志 + 正在触发的告警 + 变更，
 并置成一份"横切面报告"，便于一眼看清"那会儿这台机器发生了什么"——这是 AI SRE 区别于
 普通 chatbot 的关键：不是逐个支柱单独问，而是把它们在同一实体、同一窗口对齐一起看。
 
 实体怎么映射到监控标签：靠 servers 表的 monitor_labels 列（{"instance": ..., "service": ...}）。
-correlate_incident 收业务服务器名 → 查表拿到监控标签 → 分别去 Prometheus / Loki / Alertmanager
+correlate_incident 收业务服务器名 → 查表拿到监控标签 → 分别去 Prometheus / Loki / Alertmanager / 变更表
 拉数据。关联的"聪明"（判断因果）留给 LLM，这里只干"拉齐 + 裁剪 + 并置"这件确定性的活。
 """
 
@@ -19,9 +19,10 @@ from datetime import datetime, timedelta
 
 from langchain_core.tools import tool
 
+from app.agents.tools.changes import format_change_records
 from app.agents.tools.metrics import PROMQL_TEMPLATES
 from app.db.session import AsyncSessionLocal
-from app.services import server_service
+from app.services import change_record_service, server_service
 from app.services.observability_service import (
     am_get_alerts,
     loki_query_range,
@@ -36,10 +37,12 @@ _MAX_LINE_LEN = 300
 
 
 @tool
-async def correlate_incident(server: str, at: str = "", window_minutes: int = 15) -> str:
-    """把一台服务器的指标、日志、告警在同一时间窗对齐，生成横切面报告，排查"那会儿发生了什么"。
+async def correlate_incident(
+    server: str, at: str = "", window_minutes: int = 15
+) -> str:
+    """把一台服务器的指标、日志、告警、变更在同一时间窗对齐，排查"那会儿发生了什么"。
 
-    适合"某台机器某个时刻出了问题，一起看看它的指标/日志/告警"这类排查场景（比逐个调
+    适合"某台机器某个时刻出了问题，一起看看它的指标/日志/告警/变更"这类排查场景（比逐个调
     query_metrics / search_logs / query_alerts 更省事、且时间对齐）。
 
     - server：业务服务器名（servers 表里的 name）。需要这台服务器配了 monitor_labels（监控标签映射）。
@@ -69,11 +72,14 @@ async def correlate_incident(server: str, at: str = "", window_minutes: int = 15
     start = anchor - timedelta(minutes=window_minutes)
     end = anchor + timedelta(minutes=window_minutes)
 
-    # 3. 并发拉三支柱（互不依赖，gather 一起跑）
-    metrics_text, logs_text, alerts_text = await asyncio.gather(
+    # 3. 并发拉四类证据（互不依赖，gather 一起跑）
+    metrics_text, logs_text, alerts_text, changes_text = await asyncio.gather(
         _pull_metrics(instance, start, end),
         _pull_logs(service, start, end),
         _pull_alerts(instance),
+        _pull_changes(
+            service, labels.get("environment") or labels.get("env"), start, end
+        ),
     )
 
     # 4. 并置成一份报告
@@ -90,6 +96,9 @@ async def correlate_incident(server: str, at: str = "", window_minutes: int = 15
             "",
             "### 告警（当前 firing）",
             alerts_text,
+            "",
+            "### 变更记录",
+            changes_text,
         ]
     )
 
@@ -103,10 +112,15 @@ async def _pull_metrics(instance: str | None, start: datetime, end: datetime) ->
     lines: list[str] = []
     for key, name in [("cpu", "CPU 使用率"), ("memory", "内存使用率")]:
         # 把网络调用 + 结果解析都放进 try：数据源返回结构畸形时也只降级成一行提示，
-        # 绝不让异常冒泡（否则会崩掉整个 gather、连累另外两支柱一起挂）。
+        # 绝不让异常冒泡（否则会崩掉整个 gather、连累其他证据查询）。
         try:
-            series = await prom_query_range(PROMQL_TEMPLATES[key], start_s, end_s, step=step)
-            s = next((x for x in series if x.get("metric", {}).get("instance") == instance), None)
+            series = await prom_query_range(
+                PROMQL_TEMPLATES[key], start_s, end_s, step=step
+            )
+            s = next(
+                (x for x in series if x.get("metric", {}).get("instance") == instance),
+                None,
+            )
             summary = _summarize_series(s.get("values", [])) if s else "窗口内无数据"
         except Exception as exc:  # noqa: BLE001 —— 网络错/畸形数据都转成给 LLM 读的文本
             summary = f"查询失败（{exc}）"
@@ -122,7 +136,9 @@ async def _pull_logs(service: str | None, start: datetime, end: datetime) -> str
     logql = f'{{service_name="{_esc(service)}"}}'
     # 网络调用 + 结果解析都放进 try，畸形响应也只降级成一行提示，不冒泡崩掉 gather。
     try:
-        streams = await loki_query_range(logql, start_ns, end_ns, limit=_LOG_FETCH_LIMIT)
+        streams = await loki_query_range(
+            logql, start_ns, end_ns, limit=_LOG_FETCH_LIMIT
+        )
         rows: list[tuple[int, str]] = []
         for st in streams:
             for ts, line in st.get("values", []):
@@ -136,7 +152,9 @@ async def _pull_logs(service: str | None, start: datetime, end: datetime) -> str
     tally = Counter(_level_of(line) for _, line in rows)
     dist = "、".join(f"{k} {v}" for k, v in tally.most_common())
     sample = [f"[{_clock_ns(ts)}] {_clean(line)}" for ts, line in rows[:_LOG_SAMPLE]]
-    head = f"窗口内 {len(rows)} 条（{dist}），采样最近 {min(len(rows), _LOG_SAMPLE)} 条："
+    head = (
+        f"窗口内 {len(rows)} 条（{dist}），采样最近 {min(len(rows), _LOG_SAMPLE)} 条："
+    )
     return head + "\n" + "\n".join(sample)
 
 
@@ -155,8 +173,33 @@ async def _pull_alerts(instance: str | None) -> str:
     for a in active:
         lb = a.get("labels", {})
         summary = a.get("annotations", {}).get("summary", "")
-        lines.append(f"- [{lb.get('severity', '?')}] {lb.get('alertname', '?')}：{summary}")
+        lines.append(
+            f"- [{lb.get('severity', '?')}] {lb.get('alertname', '?')}：{summary}"
+        )
     return "\n".join(lines)
+
+
+async def _pull_changes(
+    service: str | None,
+    environment: str | None,
+    start: datetime,
+    end: datetime,
+) -> str:
+    if not service:
+        return "（未配置 service 标签，无法关联变更）"
+    try:
+        async with AsyncSessionLocal() as db:
+            records = await change_record_service.list_change_records(
+                db,
+                service_name=service,
+                environment=environment,
+                start_at=start,
+                end_at=end,
+                limit=100,
+            )
+    except Exception as exc:  # noqa: BLE001 —— 变更库查询失败不应拖垮其他三类证据
+        return f"查询失败（{exc}）"
+    return format_change_records(records)
 
 
 def _summarize_series(values: list) -> str:
@@ -173,7 +216,9 @@ def _summarize_series(values: list) -> str:
         return "无有效数据"
     first, last, lo, hi = nums[0], nums[-1], min(nums), max(nums)
     trend = "上升" if last > first + 1 else ("下降" if last < first - 1 else "平稳")
-    return f"起始 {first:.1f}% → 结束 {last:.1f}%（区间 {lo:.1f}%~{hi:.1f}%，趋势{trend}）"
+    return (
+        f"起始 {first:.1f}% → 结束 {last:.1f}%（区间 {lo:.1f}%~{hi:.1f}%，趋势{trend}）"
+    )
 
 
 def _level_of(line: str) -> str:

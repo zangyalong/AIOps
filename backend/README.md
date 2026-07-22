@@ -11,7 +11,8 @@ AIOMS 的 FastAPI 后端，负责业务 API、LangGraph 多 Agent 工作流、�
 - 工具调用旁白、工具状态与最终回答实时展示，刷新后按同一轨迹重建
 - Supervisor 调度四个专业 Agent
 - Prometheus 指标、Loki 日志、Alertmanager 告警查询；指标工具可按服务器名/IP 自动解析 instance
-- 指标、日志、告警的同实体时间窗关联
+- 服务发布、回滚、扩缩容和配置变更记录 CRUD，以及 `query_recent_changes` 只读工具
+- 指标、日志、告警、变更的同实体时间窗关联
 - Alertmanager webhook、告警去重归组和事件生命周期
 - Redis/arq 后台自动诊断事件
 - 集中式工具目录：纯读诊断与有副作用写操作分开注册
@@ -25,12 +26,14 @@ FastAPI POST /chat → 创建后台 Chat Run
 LangGraph Supervisor
     ├── metrics_agent         → Prometheus / Grafana
     ├── logs_agent            → Loki / Grafana
-    ├── incident_agent        → Alertmanager / 三支柱关联
+    ├── incident_agent        → Alertmanager / 变更记录 / 跨信号关联
     └── infrastructure_agent  → servers 表 / SSH 工具
                                  ├── 只读诊断：直接执行
                                  └── 服务重启：interrupt 人工审批
 
-Alertmanager webhook → PostgreSQL → Redis/arq → Supervisor 自动诊断 → incidents.diagnosis
+Alertmanager webhook → PostgreSQL → Redis/arq → Supervisor 自动诊断
+                                               ├── incidents.diagnosis
+                                               └── change_records 时间窗证据
 ```
 
 四个专家是共享状态的独立 LangGraph 子图，不是包装成普通工具的函数。Supervisor 可以连续委派多个专家，最后由综合节点基于本轮真实工具证据生成一次用户回答并直接返回。
@@ -161,10 +164,17 @@ uv run arq app.worker.WorkerSettings
 | `POST /alerts/webhook`               | 接收 Alertmanager webhook  |
 | `GET /alerts`                        | 查询已落库告警             |
 | `GET /incidents`                     | 查询关联后的事件           |
+| `GET /incidents/{id}/changes`        | 查询事件前后同服务的变更   |
 | `POST /incidents/{id}/ack`           | 认领事件                   |
 | `POST /incidents/{id}/resolve`       | 人工解决事件               |
+| `GET/POST /changes`                  | 查询、新增变更记录         |
+| `GET/PATCH/DELETE /changes/{id}`     | 查看、修改、删除变更记录   |
 
 前端开发环境请求 `/api/...`，由 Vite 代理去掉 `/api` 前缀后转发到这里。
+
+事件与变更通过 `servers.monitor_labels` 中的 `instance`、`service` 对齐；如果同一服务有多套环境，
+建议再配置 `environment`（或 `env`），避免把测试环境变更带入生产事件时间线。关联只说明时间与实体重合，
+Agent 提示词和事件页面都会明确它不是已确认的根因。
 
 ## 测试与静态检查
 

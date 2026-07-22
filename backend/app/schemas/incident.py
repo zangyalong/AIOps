@@ -7,6 +7,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
+from app.schemas.change_record import ChangeRecordRead
+
 
 class IncidentRead(BaseModel):
     """事件，给 GET /incidents 返回。"""
@@ -33,3 +35,15 @@ class AckRequest(BaseModel):
     """认领事件的入参。acked_by 暂时是自由文本（还没接鉴权，方向三再接真身份）。"""
 
     acked_by: str
+
+
+class IncidentChangesRead(BaseModel):
+    """事件按实例映射到服务后，在事件发生前后查询到的变更上下文。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    service_name: str | None
+    environment: str | None
+    window_start: datetime
+    window_end: datetime
+    changes: list[ChangeRecordRead]
