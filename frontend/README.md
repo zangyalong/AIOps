@@ -12,6 +12,7 @@ AIOMS 的 Vue 3 前端，用于多 Agent 运维对话、事件处理和服务器
 - 新对话使用 `/chat`，历史对话使用 `/chat/:conversationId`；刷新、前进/后退和复制链接可以恢复同一会话
 - SSE 实时显示工具过程，并流式展示一次生成的最终回答
 - 切换内部页面或关闭浏览器不会取消后端 Agent；返回生成中的会话会自动重新订阅并重放进度
+- AI 回复使用 markdown-it 渲染 Markdown，并由 DOMPurify 清理 HTML；长链接、代码块和表格不会撑出消息区域
 - 工具调用前的 Agent 旁白会实时显示，刷新历史后保持相同顺序
 - 展示指标、日志、告警等工具调用状态；服务器指标查询合并为一张工具卡片
 - SSH 只读诊断显示普通工具状态；服务重启等高风险写操作显示人工审批卡片和风险标识
@@ -23,7 +24,7 @@ AIOMS 的 Vue 3 前端，用于多 Agent 运维对话、事件处理和服务器
 
 - 展示关联归组后的运维事件
 - 按待处理、已认领、已解决筛选
-- 查看事件摘要和 AI 自动诊断详情
+- 查看事件摘要和 AI 自动诊断详情；诊断正文使用与对话一致的安全 Markdown 渲染
 - 填写认领人并认领事件
 - 人工标记事件为已解决
 
@@ -38,6 +39,7 @@ AIOMS 的 Vue 3 前端，用于多 Agent 运维对话、事件处理和服务器
 
 - Vue 3.5
 - Vue Router 4
+- markdown-it + DOMPurify
 - TypeScript 6
 - Vite 8
 - Composition API + `<script setup>`
@@ -100,13 +102,14 @@ npm run preview
 src/
 ├── api/          # chat、conversations、incidents、servers API 客户端
 ├── components/   # 导航和会话列表等复用组件
+│   └── MarkdownContent.vue # AI Markdown 安全渲染与防横向溢出样式
 ├── router/       # /chat、/chat/:conversationId、/incidents、/servers
 ├── types/        # 与后端 schema 对应的 TypeScript 类型
 ├── views/
 │   ├── ChatView.vue
 │   ├── IncidentsView.vue
 │   └── ServersView.vue
-├── App.vue       # 当前页签状态和页面切换
+├── App.vue       # 应用布局和 RouterView 出口
 ├── main.ts       # Vue 入口
 └── style.css     # 全局浅色设计变量和基础样式
 ```

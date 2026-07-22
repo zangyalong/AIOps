@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { acknowledgeIncident, fetchIncidents, resolveIncident } from '../api/incidents'
+import MarkdownContent from '../components/MarkdownContent.vue'
 import type { Incident, IncidentStatus } from '../types/incident'
 
 type IncidentFilter = 'all' | IncidentStatus
@@ -228,7 +229,11 @@ async function resolve(incident: Incident) {
             <h3>AI 诊断结论</h3>
             <span v-if="selectedIncident.triaged_at">{{ formatTime(selectedIncident.triaged_at) }}</span>
           </div>
-          <pre v-if="selectedIncident.diagnosis">{{ selectedIncident.diagnosis }}</pre>
+          <MarkdownContent
+            v-if="selectedIncident.diagnosis"
+            class="diagnosis-markdown"
+            :content="selectedIncident.diagnosis"
+          />
           <p v-else class="no-diagnosis">自动诊断尚未完成，稍后刷新查看。</p>
         </section>
 
@@ -608,6 +613,7 @@ button:disabled {
 }
 
 .diagnosis-panel {
+  min-width: 0;
   margin-top: 1.4rem;
 }
 
@@ -628,22 +634,25 @@ button:disabled {
   font-size: 0.72rem;
 }
 
-.diagnosis-panel pre,
+.diagnosis-markdown,
 .no-diagnosis {
   margin: 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   padding: 1rem;
-  font-family: inherit;
   font-size: 0.86rem;
-  line-height: 1.7;
-  white-space: pre-wrap;
-  word-break: break-word;
+}
+
+.diagnosis-markdown {
+  overflow-x: hidden;
 }
 
 .no-diagnosis {
   color: var(--color-text-muted);
   background: var(--color-bg);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .drawer-actions {

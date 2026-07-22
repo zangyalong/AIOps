@@ -10,6 +10,7 @@ import {
 } from '../api/chat'
 import { fetchConversationDetail } from '../api/conversations'
 import ConversationList from '../components/ConversationList.vue'
+import MarkdownContent from '../components/MarkdownContent.vue'
 import type { ChatMessage } from '../types/chat'
 
 // 会话时间线：消息、工具行、写操作审批行按发生顺序混在一个数组里，这样它们能显示在实际
@@ -420,7 +421,11 @@ onBeforeUnmount(() => {
         <template v-for="item in timeline" :key="item.key">
           <div v-if="item.kind === 'message'" class="message" :class="item.role">
             <strong>{{ item.role === 'user' ? '我' : '助手' }}：</strong>
-            <span style="white-space: pre-wrap">{{ item.content }}</span>
+            <MarkdownContent
+              v-if="item.role === 'assistant'"
+              :content="item.content"
+            />
+            <span v-else class="plain-message">{{ item.content }}</span>
           </div>
           <div v-else-if="item.kind === 'tool'" class="tool-line" :class="{ done: item.done }">
             {{ item.done ? '✓' : '›' }} {{ item.done ? '已' : '正在' }}{{ toolLabel(item.tool) }}{{ item.done ? '' : '…' }}
@@ -503,19 +508,40 @@ h1 {
 
 .messages {
   flex: 1;
+  min-width: 0;
+  min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
   margin-bottom: 1rem;
 }
 
+/* 列表负责纵向滚动；每条消息必须保持内容撑开的真实高度，不能为了塞进视口参与 flex 压缩。 */
+.messages > * {
+  flex-shrink: 0;
+}
+
 .message {
-  max-width: 80%;
+  min-width: 0;
+  max-width: min(80%, 100%);
   padding: 0.55rem 0.85rem;
   border-radius: var(--radius);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
+  overflow-wrap: anywhere;
+}
+
+.message.assistant > strong {
+  display: block;
+  margin-bottom: 0.2rem;
+}
+
+.plain-message {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .message.user {
