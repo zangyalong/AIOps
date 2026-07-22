@@ -1,7 +1,7 @@
 # 本地 SSH 测试沙箱
 
 用 Docker 在 macOS 上起一个装了 SSH server 的轻量 Linux 容器，把它注册进 `servers` 表，
-然后在 AIOMS 对话界面里让 `run_whitelisted_command` 真的通过 SSH 连上去执行命令——而不是
+然后在 AIOMS 对话界面里让 `run_diagnostic_command` 真的通过 SSH 连上去执行命令——而不是
 之前那种写死的模拟结果（见 `app/agents/tools/commands.py`）。
 
 **为什么用容器测，不直接连真实服务器**：这个工具本质是"AI 决定要不要执行一条命令"，
@@ -114,8 +114,24 @@ curl -X POST http://localhost:8010/servers \
 
 > 帮我看看 docker-test-01 这台服务器现在的负载和内存情况
 
-正常的话 AI 会调用 `run_whitelisted_command`，后端日志里能看到真实的 SSH 执行过程，
+正常的话 AI 会调用 `run_diagnostic_command`，后端日志里能看到真实的 SSH 执行过程，
 回答里会带上"（真实执行于 docker-test-01）"这样的字样和真实命令输出，不再是固定的模拟文本。
+
+这是纯读诊断工具，因此不会弹人工审批卡片。当前沙箱镜像默认关闭 sudo，也不运行 systemd，
+不能用它验证 `restart_service` 写工具；写工具应在专门的、可随时重建的 systemd 测试机上验收。
+
+## 写工具验收说明
+
+`restart_service` 与上面的读诊断工具走不同边界：模型提出重启后，LangGraph 会先挂起并等待
+人工批准；批准后，工具还会检查 `SSH_RESTART_SERVICE_ALLOWLIST`，只有精确命中的服务名才会
+执行。例如在专用测试机上只允许重启 nginx：
+
+```dotenv
+SSH_RESTART_SERVICE_ALLOWLIST=nginx
+```
+
+目标测试账号还必须能非交互执行 `sudo -n -- systemctl restart -- nginx`。不要在生产服务器上直接
+做首次验收；当前项目尚未完成鉴权、RBAC、主机指纹校验和不可篡改审计日志。
 
 ## 排错
 
@@ -133,9 +149,11 @@ curl -X POST http://localhost:8010/servers \
 - `app/agents/tools/commands.py` 里连接时传的是 `known_hosts=None`，也就是不校验目标主机
   的身份——这对一次性的本地测试沙箱没问题（流量根本没出这台 Mac），但**绝对不能带着这个设置去连真实/生产服务器**，那样谁都能冒充目标主机。真要接真实服务器，要么提前把
   host key 指纹加进 known_hosts，要么显式传一个真实的 `known_hosts` 路径。
-- 白名单目前硬编码在 `_ALLOWED_COMMANDS` 里，只有 `uptime` / `df -h` / `free -m` 三个
+- 读诊断白名单目前硬编码在 `_ALLOWED_COMMANDS` 里，只有 `uptime` / `df -h` / `free -m` 三个
   只读命令。想加新命令要改代码、过一遍是不是真的"只读、无害"，不要为了图方便把白名单
   放开成任意命令。
+- 写工具不能复用读诊断命令入口。新增写工具必须注册到 `catalog.py` 的写工具目录，声明风险
+  等级和审批内容，并在工具内部继续校验允许执行的具体对象。
 
 ## 清理
 

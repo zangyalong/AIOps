@@ -21,8 +21,15 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command, interrupt
 from pydantic import BaseModel, Field
 
+from app.agents.tools.actions import restart_service
 from app.agents.tools.alerts import query_alerts
-from app.agents.tools.commands import run_whitelisted_command
+from app.agents.tools.catalog import (
+    describe_write_action,
+    ensure_read_tools,
+    ensure_write_tools,
+    is_write_tool,
+)
+from app.agents.tools.commands import run_diagnostic_command
 from app.agents.tools.correlate import correlate_incident
 from app.agents.tools.grafana import grafana_explore_link
 from app.agents.tools.logs import list_log_services, search_logs
@@ -48,7 +55,7 @@ SupervisorRoute = Literal[
     "finish",
 ]
 
-SPECIALIST_TOOLS: dict[AgentName, list[BaseTool]] = {
+SPECIALIST_READ_TOOLS: dict[AgentName, list[BaseTool]] = {
     "metrics_agent": [
         query_server_metrics,
         query_metrics,
@@ -57,27 +64,21 @@ SPECIALIST_TOOLS: dict[AgentName, list[BaseTool]] = {
     ],
     "logs_agent": [search_logs, list_log_services, grafana_explore_link],
     "incident_agent": [query_alerts, correlate_incident, query_servers],
-    "infrastructure_agent": [query_servers, run_whitelisted_command],
+    "infrastructure_agent": [query_servers, run_diagnostic_command],
 }
 
-# 全量工具表仍由流式服务用来识别真正的业务工具事件；同一个工具即使被多个专家使用，也只登记一次。
-TOOLS = [
-    query_servers,
-    run_whitelisted_command,
-    query_server_metrics,
-    query_metrics,
-    list_metric_instances,
-    search_logs,
-    list_log_services,
-    query_alerts,
-    grafana_explore_link,
-    correlate_incident,
-]
-TOOLS_BY_NAME = {tool.name: tool for tool in TOOLS}
+SPECIALIST_WRITE_TOOLS: dict[AgentName, list[BaseTool]] = {
+    "metrics_agent": [],
+    "logs_agent": [],
+    "incident_agent": [],
+    "infrastructure_agent": [restart_service],
+}
 
-# 需要人工审批才能执行的有副作用工具。它目前位于 infrastructure_agent 子图中；子图内的 interrupt
-# 会继承父图 checkpointer，因此 HTTP 请求可以先挂起、再用同一个 thread_id 恢复。
-WRITE_TOOLS: frozenset[str] = frozenset({"run_whitelisted_command"})
+# 启动导入阶段就校验每个专家的工具归类，防止以后把写工具误塞进读工具列表绕过审批。
+for _tools in SPECIALIST_READ_TOOLS.values():
+    ensure_read_tools(_tools)
+for _tools in SPECIALIST_WRITE_TOOLS.values():
+    ensure_write_tools(_tools)
 
 MAX_TOOL_ITERATIONS = 5
 MAX_SUPERVISOR_ROUNDS = 4
@@ -102,9 +103,10 @@ SPECIALIST_PROMPTS: dict[AgentName, str] = {
         "完成调查后输出一份给 Supervisor 的简短证据报告，不要假装直接回复最终用户。"
     ),
     "infrastructure_agent": (
-        "你是 AIOMS 的基础设施专家，负责查询纳管服务器和通过 SSH 执行白名单诊断命令。"
-        "当前服务器信息必须调用 query_servers，命令输出必须调用 run_whitelisted_command。"
-        "SSH 工具会经过人工审批；没有批准或工具不可用时必须如实报告。"
+        "你是 AIOMS 的基础设施专家，负责查询纳管服务器、只读诊断和受控变更。"
+        "当前服务器信息必须调用 query_servers；uptime/df/free 等只读信息调用 "
+        "run_diagnostic_command，它不需要审批。只有用户明确要求重启服务时才能调用 "
+        "restart_service；它是高风险写工具，必须等待人工审批，不能用诊断工具替代或拼接写命令。"
         "完成调查后输出一份给 Supervisor 的简短证据报告，不要假装直接回复最终用户。"
     ),
 }
@@ -115,7 +117,7 @@ SUPERVISOR_PROMPT = """你是 AIOMS 的 Supervisor，只负责拆解问题和把
 - metrics_agent：Prometheus 指标、实例发现、指标图表链接
 - logs_agent：Loki 日志、服务发现、日志图表链接
 - incident_agent：当前告警、事件关联、指标+日志+告警的横向诊断
-- infrastructure_agent：服务器清单和 SSH 白名单诊断命令
+- infrastructure_agent：服务器清单、SSH 只读诊断和需人工审批的受控服务重启
 
 每次只选择一个专家。专家完成后你会再次拿到控制权，可以继续委派另一个专家；证据已经足够，或用户只是闲聊、解释概念时选择 finish。
 涉及“当前/最新”的服务器状态、指标、日志、告警或命令输出时，不能在没有对应专家真实调查结果的情况下 finish。
@@ -129,7 +131,8 @@ SYNTHESIZER_PROMPT = """你是 AIOMS 面向用户的事件指挥官。根据 Sup
 1. 服务器状态、命令输出、指标、日志和告警等具体数据只能引用本轮真实工具结果，禁止编造。
 2. 历史工具结果只是旧快照；用户询问当前情况时只能使用本轮新证据。
 3. 专家没有拿到数据时明确说明“当前拿不到”，不要补造一份看起来合理的结果。
-4. 区分事实、推断和建议；涉及破坏性操作只能建议，不能声称已经执行。
+4. 区分事实、推断和建议；只有本轮写工具结果明确证明执行成功时，才能声称操作已经执行，
+   否则只能说明已批准、执行失败或给出建议。
 """
 
 
@@ -188,9 +191,9 @@ def _specialist_llm(
 ) -> Runnable:
     if mode == "none":
         return _base_llm()
-    tools = SPECIALIST_TOOLS[agent_name]
-    if not allow_write_tools:
-        tools = [tool for tool in tools if tool.name not in WRITE_TOOLS]
+    tools = list(SPECIALIST_READ_TOOLS[agent_name])
+    if allow_write_tools:
+        tools.extend(SPECIALIST_WRITE_TOOLS[agent_name])
     return _base_llm().bind_tools(tools)
 
 
@@ -236,30 +239,6 @@ def _evidence_text(work_messages: list[BaseMessage]) -> str:
     if not results:
         return "（本轮没有调用任何工具）"
     return "\n\n".join(f"【{name}】返回：\n{content}" for name, content in results)
-
-
-def _describe_pending_action(tool_call: dict) -> dict:
-    name = tool_call["name"]
-    args = tool_call.get("args", {}) or {}
-    tool_call_id = tool_call.get("id", "")
-    if name == "run_whitelisted_command":
-        server = str(args.get("server_name", "?"))
-        command = str(args.get("command", ""))
-        return {
-            "tool_call_id": tool_call_id,
-            "tool": name,
-            "kind": "shell_command",
-            "title": f"在 {server} 上执行命令",
-            "server_name": server,
-            "command": command,
-        }
-    return {
-        "tool_call_id": tool_call_id,
-        "tool": name,
-        "kind": "generic",
-        "title": f"执行 {name}",
-        "args": args,
-    }
 
 
 async def supervisor_node(
@@ -359,29 +338,39 @@ async def specialist_tools_node(agent_name: AgentName, state: SpecialistState) -
     t0 = time.monotonic()
     last = state["work_messages"][-1]
     assert isinstance(last, AIMessage)
-    tool_map = {tool.name: tool for tool in SPECIALIST_TOOLS[agent_name]}
+    assigned_tools = [
+        *SPECIALIST_READ_TOOLS[agent_name],
+        *SPECIALIST_WRITE_TOOLS[agent_name],
+    ]
+    tool_map = {tool.name: tool for tool in assigned_tools}
     decision = state.get("approval")
     allow_write = state.get("allow_write_tools", False)
     results: list[BaseMessage] = []
 
     for tool_call in last.tool_calls:
         name = tool_call["name"]
-        if name in WRITE_TOOLS and not allow_write:
+        if name not in tool_map:
             result: BaseMessage = ToolMessage(
+                content=f"{agent_name} 无权调用工具 {name}，已拒绝执行。",
+                tool_call_id=tool_call["id"],
+                name=name,
+            )
+        elif is_write_tool(name) and not allow_write:
+            result = ToolMessage(
                 content="无人值守任务禁止调用写工具，已拒绝执行。",
                 tool_call_id=tool_call["id"],
                 name=name,
             )
-        elif decision is not None and not decision.get("approved", False):
-            reason = (decision.get("reason") or "").strip() or "用户拒绝了本次操作"
+        elif is_write_tool(name) and decision is None:
             result = ToolMessage(
-                content=f"用户拒绝执行该操作（{reason}）。请不要重试。",
+                content="写工具缺少人工审批决议，已拒绝执行。",
                 tool_call_id=tool_call["id"],
                 name=name,
             )
-        elif name not in tool_map:
+        elif is_write_tool(name) and not decision.get("approved", False):
+            reason = (decision.get("reason") or "").strip() or "用户拒绝了本次操作"
             result = ToolMessage(
-                content=f"{agent_name} 无权调用工具 {name}，已拒绝执行。",
+                content=f"用户拒绝执行该操作（{reason}）。请不要重试。",
                 tool_call_id=tool_call["id"],
                 name=name,
             )
@@ -403,9 +392,9 @@ async def approval_node(state: SpecialistState) -> dict:
     last = state["work_messages"][-1]
     assert isinstance(last, AIMessage)
     pending = [
-        _describe_pending_action(tool_call)
+        describe_write_action(tool_call)
         for tool_call in last.tool_calls
-        if tool_call["name"] in WRITE_TOOLS
+        if is_write_tool(tool_call["name"])
     ]
     decision = interrupt({"actions": pending})
     return {"approval": decision}
@@ -415,7 +404,7 @@ def route_after_specialist(state: SpecialistState) -> str:
     last = state["work_messages"][-1]
     if not isinstance(last, AIMessage) or not last.tool_calls:
         return END
-    has_write = any(call["name"] in WRITE_TOOLS for call in last.tool_calls)
+    has_write = any(is_write_tool(call["name"]) for call in last.tool_calls)
     if has_write and state.get("allow_write_tools", False):
         return "approval"
     return "tools"
@@ -426,7 +415,7 @@ def build_specialist_subgraph(agent_name: AgentName) -> CompiledStateGraph:
     builder = StateGraph(SpecialistState)
     builder.add_node("specialist", partial(specialist_node, agent_name))
     builder.add_node("tools", partial(specialist_tools_node, agent_name))
-    if any(tool.name in WRITE_TOOLS for tool in SPECIALIST_TOOLS[agent_name]):
+    if SPECIALIST_WRITE_TOOLS[agent_name]:
         builder.add_node("approval", approval_node)
         builder.add_edge("approval", "tools")
 
@@ -457,7 +446,7 @@ def build_chat_graph() -> CompiledStateGraph:
     """构建父级 Supervisor 图，并把四个共享状态的专家子图作为真正节点接入。"""
     builder = StateGraph(ChatState)
     builder.add_node("supervisor", supervisor_node)
-    for agent_name in SPECIALIST_TOOLS:
+    for agent_name in SPECIALIST_READ_TOOLS:
         builder.add_node(agent_name, build_specialist_subgraph(agent_name))
         builder.add_edge(agent_name, "supervisor")
     builder.add_node("synthesize", synthesize_node)

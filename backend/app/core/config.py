@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     # SSH 私钥统一放仓库根目录的 ssh/ 下（.gitignore 忽略，不提交仓库），
     # servers 表里只存文件名（ssh_key_filename），实际路径是 ssh_key_dir / 文件名拼出来的。
     ssh_key_dir: Path = REPO_ROOT / "ssh"
+    # 有副作用的服务重启写工具使用独立白名单；默认空字符串=禁止重启任何服务。
+    ssh_restart_service_allowlist: str = ""
 
     # DeepSeek 走 OpenAI 兼容接口，base_url/model 以官方文档为准（2026-07 查证）
     deepseek_api_key: str = ""

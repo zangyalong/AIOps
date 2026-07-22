@@ -21,7 +21,7 @@ export interface ConversationSummary {
 }
 
 // 一个待人工审批的写操作（后端 approval_required 事件带过来）。带 kind——审批是通用机制，
-// 不只认命令：shell_command 渲染成命令块，将来的结构化入库（写告警入表等）渲染成表名+列值。
+// 不只认命令：service_restart 渲染服务重启动作，将来的结构化写入也能携带自己的展示字段。
 export interface PendingAction {
   tool_call_id: string
   tool: string
@@ -29,5 +29,7 @@ export interface PendingAction {
   title: string
   command?: string
   server_name?: string
+  service_name?: string
+  risk_level?: 'high' | 'critical'
   args?: Record<string, unknown>
 }

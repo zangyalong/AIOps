@@ -12,12 +12,13 @@ type TimelineItem =
   | { kind: 'message'; key: string; role: 'user' | 'assistant'; content: string }
   | { kind: 'tool'; key: string; id: string; tool: string; done: boolean }
   | {
-      // 写操作审批行：pending 时右侧带执行/不执行按钮；裁决后翻成 approved（已执行）/rejected（已拒绝）
+      // 写操作审批行：pending 时右侧带执行/不执行按钮；裁决后翻成 approved（已批准）/rejected（已拒绝）
       kind: 'approval'
       key: string
       threadId: string // 挂起恢复用；历史重建的已决定项为 '' （无需也无法再恢复）
       command: string // 展示的命令 / 动作摘要
       label: string // 副标题（在哪台执行等），可空
+      riskLevel?: 'high' | 'critical'
       status: 'pending' | 'approved' | 'rejected'
     }
 
@@ -46,15 +47,23 @@ const TOOL_LABELS: Record<string, string> = {
   list_metric_instances: '查询监控实例',
   search_logs: '检索日志',
   query_alerts: '查询告警',
-  run_whitelisted_command: '执行远程命令',
+  run_diagnostic_command: '执行只读诊断',
+  restart_service: '重启服务',
+  run_whitelisted_command: '执行远程命令（旧记录）',
 }
 function toolLabel(name: string): string {
   return TOOL_LABELS[name] ?? name
 }
 
-// 与后端 chat_graph.py 的 WRITE_TOOLS 对应：这些工具的调用要走审批、渲染成带按钮的审批行
-// （而非普通工具行），历史重建时也据此还原成审批行。加新写工具时两边都要更新。
-const WRITE_TOOLS = new Set(['run_whitelisted_command'])
+// restart_service 是当前写工具；旧名称仅用于正确还原已有历史会话，不会再绑定给 Agent。
+const WRITE_TOOLS = new Set(['restart_service', 'run_whitelisted_command'])
+
+function historyApprovalCommand(name: string, args: Record<string, unknown>): string {
+  if (name === 'restart_service') {
+    return `重启服务 ${String(args.service_name ?? '?')}`
+  }
+  return String(args.command ?? name)
+}
 
 function scrollToBottom() {
   const el = messagesEl.value
@@ -122,6 +131,7 @@ async function consume(stream: AsyncGenerator<ChatStreamEvent>) {
           threadId: event.thread_id,
           command: a.command ?? (a.args ? JSON.stringify(a.args) : a.title),
           label: a.server_name ?? '',
+          riskLevel: a.risk_level,
           status: 'pending',
         })
       }
@@ -163,7 +173,8 @@ async function decide(approved: boolean) {
   const pending = pendingApproval.value
   if (!pending || sending.value) return
 
-  // 乐观翻转这次挂起的所有待批行（批准→已执行 / 拒绝→已拒绝），按钮随之消失
+  // 乐观翻转这次挂起的所有待批行（批准→已批准 / 拒绝→已拒绝），按钮随之消失。
+  // “已批准”只表示人工决议；服务白名单、SSH 或 systemd 仍可能在执行阶段拒绝/失败。
   const next = approved ? 'approved' : 'rejected'
   for (const t of timeline.value) {
     if (t.kind === 'approval' && t.threadId === pending.threadId && t.status === 'pending') {
@@ -235,8 +246,9 @@ async function selectConversation(id: string) {
               kind: 'approval',
               key: uid(),
               threadId: '',
-              command: String(args.command ?? tc.name),
+              command: historyApprovalCommand(tc.name, args),
               label: String(args.server_name ?? ''),
+              riskLevel: tc.name === 'restart_service' ? 'high' : undefined,
               status: result.startsWith('用户拒绝执行') ? 'rejected' : 'approved',
             })
           } else {
@@ -291,8 +303,9 @@ async function selectConversation(id: string) {
             }}</span>
             <span class="approval-text">
               <span class="approval-verb">{{
-                item.status === 'pending' ? '待确认' : item.status === 'approved' ? '已执行' : '已拒绝'
+                item.status === 'pending' ? '待确认' : item.status === 'approved' ? '已批准' : '已拒绝'
               }}</span>
+              <span v-if="item.riskLevel" class="approval-risk">高风险</span>
               <code class="approval-cmd">{{ item.command }}</code>
               <span v-if="item.label" class="approval-loc">· {{ item.label }}</span>
             </span>
@@ -442,6 +455,15 @@ h1 {
 
 .approval-verb {
   margin-right: 0.35rem;
+}
+
+.approval-risk {
+  margin-right: 0.35rem;
+  padding: 0.05rem 0.3rem;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-status-unreachable) 12%, transparent);
+  color: var(--color-status-unreachable);
+  font-size: 0.75rem;
 }
 
 .approval-cmd {

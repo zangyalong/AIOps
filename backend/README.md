@@ -2,7 +2,7 @@
 
 AIOMS 的 FastAPI 后端，负责业务 API、LangGraph 多 Agent 工作流、工具调用、告警接入和后台自动诊断。
 
-当前后端已经接入 PostgreSQL、Prometheus、Loki、Alertmanager、Grafana、Redis/arq 和 SSH 白名单命令，不再是只有模拟数据的聊天 Demo。
+当前后端已经接入 PostgreSQL、Prometheus、Loki、Alertmanager、Grafana、Redis/arq 和受控 SSH 工具，不再是只有模拟数据的聊天 Demo。
 
 ## 当前能力
 
@@ -14,7 +14,8 @@ AIOMS 的 FastAPI 后端，负责业务 API、LangGraph 多 Agent 工作流、�
 - 指标、日志、告警的同实体时间窗关联
 - Alertmanager webhook、告警去重归组和事件生命周期
 - Redis/arq 后台自动诊断事件
-- SSH 白名单命令与 LangGraph 人工审批门
+- 集中式工具目录：纯读诊断与有副作用写操作分开注册
+- SSH 只读诊断，以及经过 LangGraph 人工审批和服务白名单双重限制的服务重启
 
 ## 运行架构
 
@@ -25,9 +26,9 @@ LangGraph Supervisor
     ├── metrics_agent         → Prometheus / Grafana
     ├── logs_agent            → Loki / Grafana
     ├── incident_agent        → Alertmanager / 三支柱关联
-    └── infrastructure_agent  → servers 表 / SSH 白名单命令
-                                      ↓
-                               interrupt 人工审批
+    └── infrastructure_agent  → servers 表 / SSH 工具
+                                 ├── 只读诊断：直接执行
+                                 └── 服务重启：interrupt 人工审批
 
 Alertmanager webhook → PostgreSQL → Redis/arq → Supervisor 自动诊断 → incidents.diagnosis
 ```
@@ -92,6 +93,7 @@ psql -d aioms -c "select current_database();"
 | `GRAFANA_BASE_URL`      | `http://localhost:3000`    | 生成 Explore 链接          |
 | `REDIS_URL`             | `redis://localhost:6379`   | arq broker                 |
 | `OBS_HTTP_TIMEOUT`      | `10`                       | 可观测性 HTTP 请求超时秒数 |
+| `SSH_RESTART_SERVICE_ALLOWLIST` | 空                  | 允许重启的 systemd 服务名，逗号分隔；空值表示全部禁止 |
 
 SSH 私钥目录固定为仓库根目录的 `ssh/`，数据库只保存私钥文件名。具体测试方法见 [`docs/local-ssh-sandbox.md`](../docs/local-ssh-sandbox.md)。
 
@@ -160,7 +162,7 @@ uv run arq app.worker.WorkerSettings
 
 ## 测试与静态检查
 
-当前测试不访问 DeepSeek、SSH 或真实可观测性服务，使用内存假模型验证 Supervisor handoff 和审批安全边界：
+当前测试不访问 DeepSeek 或真实可观测性服务，使用内存假模型验证 Supervisor handoff、读写工具边界和审批安全边界；SSH 写工具测试使用假的连接对象核对精确命令：
 
 ```bash
 cd backend
@@ -182,7 +184,7 @@ app/
 ├── api/           # FastAPI 路由，只做协议转换和依赖注入
 ├── agents/
 │   ├── graphs/    # Supervisor、专业子图、审批与最终综合
-│   └── tools/     # 指标、日志、告警、关联、SSH 等工具
+│   └── tools/     # 指标、日志、告警、关联、SSH 工具及集中式读写目录
 ├── core/          # 配置
 ├── db/            # SQLAlchemy 引擎和 Session
 ├── models/        # 唯一 Base 下的 ORM 模型
@@ -196,10 +198,11 @@ tests/             # 不依赖外部服务的自动化测试
 
 ## 当前安全边界
 
-- SSH 只允许 `uptime`、`df -h`、`free -m` 三条精确白名单命令。
-- 聊天中的 SSH 调用必须经过 LangGraph `interrupt` 人工审批。
-- 后台 worker 设置 `allow_write_tools=False`，即使模型越权提出 SSH 也会被工具层拒绝。
+- `catalog.py` 是唯一的工具分类入口；每个工具必须明确注册为读工具或写工具，两类不允许重叠。
+- `run_diagnostic_command` 是读工具，只允许 `uptime`、`df -h`、`free -m` 三条精确命令，不进入人工审批。
+- `restart_service` 是高风险写工具，先经过 LangGraph `interrupt` 人工审批，执行时还必须命中 `SSH_RESTART_SERVICE_ALLOWLIST`；默认空白名单会拒绝全部重启。
+- 工具执行节点会再次校验审批决议，不能只靠模型是否正确路由；后台 worker 设置 `allow_write_tools=False`，从模型绑定和执行节点两层禁止写工具。
 - 本地 SSH 沙箱当前使用 `known_hosts=None`，只适用于一次性本地容器，不能直接用于生产服务器。
-- 当前仍缺少 API 鉴权、RBAC、正式密钥管理和不可篡改审计日志，不应直接暴露到生产网络。
+- 当前仍缺少 API 鉴权、RBAC、正式密钥管理和不可篡改审计日志；`restart_service` 只用于受控开发环境验证，不应直接暴露到生产网络。
 
 开发计划和未完成项见 [`docs/dev-plan.md`](../docs/dev-plan.md)。

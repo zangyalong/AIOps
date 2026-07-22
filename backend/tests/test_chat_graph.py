@@ -70,20 +70,49 @@ async def _fake_query_server_metrics(server: str, metric: str) -> str:
     return f"{server}: {metric}=12%"
 
 
+@tool("run_diagnostic_command")
+async def _fake_run_diagnostic_command(server_name: str, command: str) -> str:
+    """返回不访问 SSH 的只读诊断结果。"""
+    return f"{server_name}: {command}: ok"
+
+
+_write_calls: list[tuple[str, str]] = []
+
+
+@tool("restart_service")
+async def _fake_restart_service(server_name: str, service_name: str) -> str:
+    """记录写工具是否真的越过审批门执行。"""
+    _write_calls.append((server_name, service_name))
+    return f"已重启 {server_name} 上的 {service_name}"
+
+
 class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.original_base = chat_graph._base_llm
         self.original_specialist = chat_graph._specialist_llm
-        self.original_metrics_tools = chat_graph.SPECIALIST_TOOLS["metrics_agent"]
+        self.original_metrics_tools = chat_graph.SPECIALIST_READ_TOOLS["metrics_agent"]
+        self.original_infra_read_tools = chat_graph.SPECIALIST_READ_TOOLS[
+            "infrastructure_agent"
+        ]
+        self.original_infra_write_tools = chat_graph.SPECIALIST_WRITE_TOOLS[
+            "infrastructure_agent"
+        ]
+        _write_calls.clear()
 
     def tearDown(self) -> None:
         chat_graph._base_llm = self.original_base
         chat_graph._specialist_llm = self.original_specialist
-        chat_graph.SPECIALIST_TOOLS["metrics_agent"] = self.original_metrics_tools
+        chat_graph.SPECIALIST_READ_TOOLS["metrics_agent"] = self.original_metrics_tools
+        chat_graph.SPECIALIST_READ_TOOLS["infrastructure_agent"] = (
+            self.original_infra_read_tools
+        )
+        chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"] = (
+            self.original_infra_write_tools
+        )
 
     async def test_supervisor_delegates_to_specialist_and_synthesizes(self) -> None:
         """父图 handoff 到指标子图，工具结果和报告都能正确合并回父图。"""
-        chat_graph.SPECIALIST_TOOLS["metrics_agent"] = [_fake_query_server_metrics]
+        chat_graph.SPECIALIST_READ_TOOLS["metrics_agent"] = [_fake_query_server_metrics]
         base = _FakeBaseLLM(["metrics_agent", "finish"])
         chat_graph._base_llm = lambda: base
         chat_graph._specialist_llm = _fake_specialist_factory(
@@ -131,8 +160,8 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
                     "",
                     tool_calls=[
                         {
-                            "name": "run_whitelisted_command",
-                            "args": {"server_name": "demo", "command": "uptime"},
+                            "name": "restart_service",
+                            "args": {"server_name": "demo", "service_name": "nginx"},
                             "id": "ssh-call",
                             "type": "tool_call",
                         }
@@ -147,6 +176,7 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
         await graph.ainvoke(_initial_state(allow_write_tools=True), config=config)
         snapshot = await graph.aget_state(config)
         self.assertTrue(snapshot.interrupts)
+        self.assertEqual(_write_calls, [])
 
         result = await graph.ainvoke(
             Command(resume={"approved": False, "reason": "测试拒绝"}),
@@ -160,6 +190,7 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
                 for message in result["messages"]
             )
         )
+        self.assertEqual(_write_calls, [])
 
     async def test_unattended_worker_cannot_reach_write_approval(self) -> None:
         """即使假模型越权提出 SSH，allow_write_tools=False 也会在工具层硬拒绝且不挂起。"""
@@ -171,8 +202,8 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
                     "",
                     tool_calls=[
                         {
-                            "name": "run_whitelisted_command",
-                            "args": {"server_name": "demo", "command": "uptime"},
+                            "name": "restart_service",
+                            "args": {"server_name": "demo", "service_name": "nginx"},
                             "id": "blocked-ssh-call",
                             "type": "tool_call",
                         }
@@ -197,3 +228,115 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
                 for message in result["messages"]
             )
         )
+        self.assertEqual(_write_calls, [])
+
+    async def test_read_diagnostic_tool_does_not_interrupt(self) -> None:
+        """只读 SSH 诊断直接执行，不应误入写操作审批门。"""
+        chat_graph.SPECIALIST_READ_TOOLS["infrastructure_agent"] = [
+            _fake_run_diagnostic_command
+        ]
+        base = _FakeBaseLLM(["infrastructure_agent", "finish"])
+        chat_graph._base_llm = lambda: base
+        chat_graph._specialist_llm = _fake_specialist_factory(
+            [
+                AIMessage(
+                    "",
+                    tool_calls=[
+                        {
+                            "name": "run_diagnostic_command",
+                            "args": {"server_name": "demo", "command": "uptime"},
+                            "id": "diagnostic-call",
+                            "type": "tool_call",
+                        }
+                    ],
+                ),
+                AIMessage("只读诊断完成"),
+            ]
+        )
+
+        graph = chat_graph.build_chat_graph()
+        config = {"configurable": {"thread_id": "read-tool-test"}}
+        result = await graph.ainvoke(
+            _initial_state(allow_write_tools=True), config=config
+        )
+        snapshot = await graph.aget_state(config)
+
+        self.assertFalse(snapshot.interrupts)
+        self.assertTrue(
+            any(
+                isinstance(message, ToolMessage)
+                and "uptime: ok" in str(message.content)
+                for message in result["messages"]
+            )
+        )
+
+    async def test_approved_write_tool_executes_once(self) -> None:
+        """写工具在批准前不执行，批准恢复后只执行一次。"""
+        chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"] = [
+            _fake_restart_service
+        ]
+        base = _FakeBaseLLM(["infrastructure_agent", "finish"])
+        chat_graph._base_llm = lambda: base
+        chat_graph._specialist_llm = _fake_specialist_factory(
+            [
+                AIMessage(
+                    "",
+                    tool_calls=[
+                        {
+                            "name": "restart_service",
+                            "args": {"server_name": "demo", "service_name": "nginx"},
+                            "id": "approved-restart",
+                            "type": "tool_call",
+                        }
+                    ],
+                ),
+                AIMessage("服务重启完成"),
+            ]
+        )
+
+        graph = chat_graph.build_chat_graph()
+        config = {"configurable": {"thread_id": "approved-write-test"}}
+        await graph.ainvoke(_initial_state(allow_write_tools=True), config=config)
+        self.assertEqual(_write_calls, [])
+
+        await graph.ainvoke(
+            Command(resume={"approved": True, "reason": "测试批准"}),
+            config=config,
+        )
+        self.assertEqual(_write_calls, [("demo", "nginx")])
+
+    async def test_write_tool_node_rejects_missing_approval_decision(self) -> None:
+        """即使绕过图路由直达执行节点，没有审批决议也必须硬拒绝。"""
+        chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"] = [
+            _fake_restart_service
+        ]
+        result = await chat_graph.specialist_tools_node(
+            "infrastructure_agent",
+            {
+                "messages": [],
+                "work_messages": [
+                    AIMessage(
+                        "",
+                        tool_calls=[
+                            {
+                                "name": "restart_service",
+                                "args": {
+                                    "server_name": "demo",
+                                    "service_name": "nginx",
+                                },
+                                "id": "missing-approval",
+                                "type": "tool_call",
+                            }
+                        ],
+                    )
+                ],
+                "reports": {},
+                "specialist_instruction": "",
+                "tool_iterations": 0,
+                "allow_write_tools": True,
+                "approval": None,
+            },
+        )
+
+        self.assertIn("缺少人工审批决议", str(result["messages"][0].content))
+        self.assertEqual(_write_calls, [])

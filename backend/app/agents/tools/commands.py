@@ -1,4 +1,4 @@
-"""白名单命令执行工具，通过 asyncssh 真实连接目标服务器执行。
+"""只读 SSH 诊断工具，通过 asyncssh 真实连接目标服务器执行。
 
 对应 CLAUDE.md 安全红线里"SSH/Shell 工具要走白名单命令，不要开放任意执行"这条：不在
 _ALLOWED_COMMANDS 里的命令一律拒绝，绝不会当成任意 shell 命令执行。
@@ -15,13 +15,17 @@ from langchain_core.tools import tool
 
 from app.db.session import AsyncSessionLocal
 from app.services import server_service
-from app.services.ssh_service import SSHKeyMissing, SSHNotConfigured, build_connect_params
+from app.services.ssh_service import (
+    SSHKeyMissing,
+    SSHNotConfigured,
+    build_connect_params,
+)
 
 _ALLOWED_COMMANDS = frozenset({"uptime", "df -h", "free -m"})
 
 
 @tool
-async def run_whitelisted_command(server_name: str, command: str) -> str:
+async def run_diagnostic_command(server_name: str, command: str) -> str:
     """在指定服务器上通过 SSH 执行一条白名单内的只读诊断命令，返回真实执行结果。
 
     当前白名单：uptime / df -h / free -m。不在白名单内的命令一律拒绝。只有 servers 表
@@ -29,7 +33,7 @@ async def run_whitelisted_command(server_name: str, command: str) -> str:
     """
     if command not in _ALLOWED_COMMANDS:
         allowed = "、".join(sorted(_ALLOWED_COMMANDS))
-        return f"命令 \"{command}\" 不在白名单内，已拒绝执行。当前允许的命令：{allowed}"
+        return f'命令 "{command}" 不在白名单内，已拒绝执行。当前允许的命令：{allowed}'
 
     async with AsyncSessionLocal() as db:
         servers = await server_service.list_servers(db)

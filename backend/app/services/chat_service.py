@@ -9,7 +9,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.graphs.chat_graph import TOOLS_BY_NAME, WRITE_TOOLS
+from app.agents.tools.catalog import TOOLS_BY_NAME, WRITE_TOOL_NAMES
 from app.db.session import AsyncSessionLocal
 from app.services import conversation_service, message_service
 
@@ -134,11 +134,11 @@ async def _drive_graph(
             node = event.get("metadata", {}).get("langgraph_node")
 
             # 工具调用的开始/结束：只转发只读工具的 start/end 让前端画工具行（TOOLS_BY_NAME 兜底
-            # 过滤）。写工具（WRITE_TOOLS）不发——它由前端那条带按钮的审批行代表自己
-            # （approval_required + 裁决后翻成"已执行/已拒绝"），再发工具行会重复成两条。
+            # 过滤）。写工具（WRITE_TOOL_NAMES）不发——它由前端那条带按钮的审批行代表自己
+            # （approval_required + 裁决后翻成"已批准/已拒绝"），再发工具行会重复成两条。
             # start/end 带同一个 run_id，前端据此标记"进行中→完成"。
             is_visible_tool = (
-                event_name in TOOLS_BY_NAME and event_name not in WRITE_TOOLS
+                event_name in TOOLS_BY_NAME and event_name not in WRITE_TOOL_NAMES
             )
             if kind == "on_tool_start" and is_visible_tool:
                 yield {

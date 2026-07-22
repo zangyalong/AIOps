@@ -21,13 +21,13 @@
 
 | # | 维度 | 状态 | 核心实现 |
 |---|------|------|---------|
-| 1 | 数据接入 | ✅ 有 | Prometheus/Loki/Alertmanager（docker-compose 起的真实源）+ Grafana 链接生成；读工具 5 个 + 写工具 1 个（`run_whitelisted_command`，真实 asyncssh，白名单 uptime/df/free） |
+| 1 | 数据接入 | ✅ 有 | Prometheus/Loki/Alertmanager（docker-compose 起的真实源）+ Grafana 链接生成；工具集中登记为读/写两类，SSH 读诊断只允许 uptime/df/free |
 | 2 | 告警去重/关联 | ⚠️ 半 | dedup 有（按 fingerprint）；关联是 **CEL 规则引擎**（`correlation.py`，按 instance+alertname 归组）——是关联的**雏形**，非 ML/跨服务收敛 |
 | 3 | 根因分析/自动诊断 | ✅ 有 | 事件触发 → arq worker 复用 Supervisor 多 Agent 图 → 调 correlate_incident/query_server_metrics/search_logs 调查 → 诊断回填事件 |
 | 4 | Agent 编排 | ✅ 有 | LangGraph StateGraph：`Supervisor → 专家子图 ↔ tools → synthesize`；最终回答只生成一次，并要求具体数据来自本轮工具证据 |
 | 5 | 事件生命周期 | ✅ 有 | `incidents` 一等实体，`FIRING/ACKNOWLEDGED/RESOLVED` 状态机，告警全 resolved 时自动 resolve，ack/resolve API |
 | 6 | 后台/事件驱动 | ✅ 有 | Alertmanager webhook → arq + Redis 队列 → 独立 worker 进程消费 |
-| 7 | 写操作/自动化+审批 | ⚠️ 半 | 白名单 SSH 只读命令；**无审计、无人工二次确认网关**（方向三待办） |
+| 7 | 写操作/自动化+审批 | ⚠️ 半 | `restart_service` 受服务白名单限制，并接入 LangGraph interrupt 真审批；仍缺鉴权、RBAC 和不可篡改审计 |
 | 8 | 知识/记忆/RAG | ❌ 无 | 无向量库/知识图谱/runbook 检索 |
 | 9 | 可观测性/工程化 | ⚠️ 部分 | 只有 print 日志 + 超时卡位；**无 tracing/LangSmith、无 eval 集、无测试套件** |
 | 10 | 通知/协作 | ❌ 无 | 推 Slack/IM 明确缓做，诊断只落库 + `GET /alerts` 可查 |
@@ -97,7 +97,7 @@
 | **激进自主（仍分级 human-in-loop）** | Resolve.ai（~80% 目标） |
 | **写但缺门控**（反面） | K8sGPT 自愈、Robusta **OSS** remediation |
 
-**AIOMS 在哪**：唯一的写工具是白名单**只读** SSH 命令 → 实质上也是「只读」阵营，**但缺少真正做写操作时需要的审批网关机制**（正是方向三）。
+**AIOMS 在哪**：读诊断与写操作已拆开；当前唯一写工具是受服务白名单约束的 `restart_service`，必须经过 LangGraph 人工审批。它进入了「建议 + 人工 gated 执行」阶段，但鉴权、RBAC、正式密钥管理和不可篡改审计尚未补齐。
 
 **两条对 AIOMS 的启示**：
 1. **连业界领头羊都把「写」用审批/IAM 关起来**——所以「破坏性操作必须人工二次确认」不是过度谨慎，是行业共识（也是你 CLAUDE.md 红线）。
@@ -119,7 +119,7 @@
 | 三支柱关联原语 | ✅ correlate_incident | ⚠️ 部分（Holmes/Traversal 因果图） | ⚠️ 靠看板/Sift |
 | **事件生命周期** | ✅ FIRING/ACK/RESOLVED + 自动恢复 | ❌ 多数没有（OpenSRE 都没有） | ✅✅ 最成熟（合并/时间线/角色） |
 | 事件驱动/后台队列 | ✅ webhook+arq+Redis | ⚠️ | ✅ |
-| 写操作 + **审批门控** | ⚠️ 白名单 SSH，**无审批无审计** | ⚠️ 窄，且审批常缺/假（OSS 尤甚） | ✅ 真 workflow + 审批（PD/incident.io） |
+| 写操作 + **审批门控** | ⚠️ 服务重启白名单 + 真审批，**仍无鉴权/审计** | ⚠️ 窄，且审批常缺/假（OSS 尤甚） | ✅ 真 workflow + 审批（PD/incident.io） |
 | **On-call / 排班 / 升级 / 通知路由** | ❌ **零** | ❌（少数有 sink 通知，如 K8sGPT/Robusta） | ✅✅ **命根子**（PD/Opsgenie/incident.io/Grafana） |
 | 复盘 / postmortem / 学习闭环 | ❌ | ❌（个别有记忆宣传） | ✅（incident.io/PD 强） |
 | 知识 / RAG / runbook | ❌ | ⚠️ 多为宣传（实测常是半成品） | ⚠️ 挂链接为主 |
