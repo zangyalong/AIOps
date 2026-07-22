@@ -1,6 +1,6 @@
 # AIOMS Frontend
 
-AIOMS 的 Vue 3 前端，用于多 Agent 运维对话、事件处理和服务器管理。
+AIOMS 的 Vue 3 前端，用于多 Agent 运维对话、事件处理、变更记录和服务器管理。
 
 当前界面使用 Vue Router 管理真实 URL，尚未引入 Pinia；跨后端交互统一封装在 `src/api/`。
 
@@ -25,8 +25,15 @@ AIOMS 的 Vue 3 前端，用于多 Agent 运维对话、事件处理和服务器
 - 展示关联归组后的运维事件
 - 按待处理、已认领、已解决筛选
 - 查看事件摘要和 AI 自动诊断详情；诊断正文使用与对话一致的安全 Markdown 渲染
+- 查看事件发生前后各 30 分钟的同服务变更时间线
 - 填写认领人并认领事件
 - 人工标记事件为已解决
+
+### 变更记录
+
+- 新增、编辑和删除发布、回滚、扩缩容、配置变更记录
+- 记录服务、环境、版本 / commit、发生时间和操作说明
+- 按服务和环境在页面内筛选；记录会作为事件诊断的只读事实证据
 
 ### 服务器
 
@@ -78,7 +85,7 @@ FastAPI http://127.0.0.1:8010/incidents
 ```
 
 因此前端代码不需要硬编码后端域名，也不会在本地开发时遇到跨域问题。生产构建后需要由反向代理
-提供等价的 `/api` 转发规则，并把 `/chat/*`、`/incidents`、`/servers` 等前端路由回退到
+提供等价的 `/api` 转发规则，并把 `/chat/*`、`/incidents`、`/changes`、`/servers` 等前端路由回退到
 `index.html`，否则直接刷新历史对话 URL 会得到 404。
 
 ## 常用命令
@@ -100,13 +107,14 @@ npm run preview
 
 ```text
 src/
-├── api/          # chat、conversations、incidents、servers API 客户端
+├── api/          # chat、conversations、incidents、changes、servers API 客户端
 ├── components/   # 导航和会话列表等复用组件
 │   └── MarkdownContent.vue # AI Markdown 安全渲染与防横向溢出样式
-├── router/       # /chat、/chat/:conversationId、/incidents、/servers
+├── router/       # /chat、/chat/:conversationId、/incidents、/changes、/servers
 ├── types/        # 与后端 schema 对应的 TypeScript 类型
 ├── views/
 │   ├── ChatView.vue
+│   ├── ChangesView.vue
 │   ├── IncidentsView.vue
 │   └── ServersView.vue
 ├── App.vue       # 应用布局和 RouterView 出口
@@ -149,12 +157,13 @@ POST /api/chat/resume
 
 1. 打开“服务器”，确认列表能够加载并测试一台已配置服务器。
 2. 打开“事件中心”，确认事件筛选、诊断详情、认领和解决操作。
-3. 在“对话”询问当前指标、日志和告警，观察工具卡片与最终汇总。
-4. 请求在测试服务器执行 `uptime`，确认它作为只读诊断直接执行，不出现审批卡片。
-5. 请求重启一个服务，确认先出现高风险审批卡片；拒绝后不执行，批准后仍需通过后端服务白名单。
-6. 刷新会话，确认消息、工具轨迹和审批结果可以从历史记录恢复。
-7. AI 生成途中切到“事件中心”或“服务器”，再点击“对话”，确认 URL 回到原会话并继续显示进度。
-8. AI 生成途中关闭页面，再用同一 `/chat/:conversationId` 地址打开，确认任务继续并最终入库。
+3. 打开“变更记录”新增一条与事件同服务、时间相近的发布记录，再回到事件详情确认时间线。
+4. 在“对话”询问当前指标、日志、告警或近期发布，观察工具卡片与最终汇总。
+5. 请求在测试服务器执行 `uptime`，确认它作为只读诊断直接执行，不出现审批卡片。
+6. 请求重启一个服务，确认先出现高风险审批卡片；拒绝后不执行，批准后仍需通过后端服务白名单。
+7. 刷新会话，确认消息、工具轨迹和审批结果可以从历史记录恢复。
+8. AI 生成途中切到“事件中心”或“服务器”，再点击“对话”，确认 URL 回到原会话并继续显示进度。
+9. AI 生成途中关闭页面，再用同一 `/chat/:conversationId` 地址打开，确认任务继续并最终入库。
 
 ## 当前限制
 

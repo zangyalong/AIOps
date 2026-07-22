@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import ChatView from '../views/ChatView.vue'
+import ChangesView from '../views/ChangesView.vue'
 import IncidentsView from '../views/IncidentsView.vue'
 import ServersView from '../views/ServersView.vue'
 
@@ -19,6 +20,7 @@ export const router = createRouter({
       component: ChatView,
     },
     { path: '/incidents', name: 'incidents', component: IncidentsView },
+    { path: '/changes', name: 'changes', component: ChangesView },
     { path: '/servers', name: 'servers', component: ServersView },
     { path: '/:pathMatch(.*)*', redirect: '/chat' },
   ],

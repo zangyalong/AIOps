@@ -1,4 +1,4 @@
-import type { Incident, IncidentStatus } from '../types/incident'
+import type { Incident, IncidentChangeContext, IncidentStatus } from '../types/incident'
 
 async function parseIncidentResponse(res: Response, fallbackMessage: string): Promise<Incident> {
   if (!res.ok) {
@@ -16,6 +16,16 @@ export async function fetchIncidents(status?: IncidentStatus): Promise<Incident[
   if (!res.ok) {
     throw new Error(`获取事件列表失败：${res.status}`)
   }
+  return res.json()
+}
+
+export async function fetchIncidentChanges(
+  id: string,
+  windowMinutes = 30,
+): Promise<IncidentChangeContext> {
+  const params = new URLSearchParams({ window_minutes: String(windowMinutes) })
+  const res = await fetch(`/api/incidents/${id}/changes?${params}`)
+  if (!res.ok) throw new Error(`获取事件关联变更失败：${res.status}`)
   return res.json()
 }
 
