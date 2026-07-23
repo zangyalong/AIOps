@@ -27,6 +27,11 @@ from app.agents.tools.metrics import (
     query_server_metrics,
 )
 from app.agents.tools.servers import query_servers
+from app.agents.tools.service_topology import (
+    query_impacted_services,
+    query_service_dependencies,
+    query_upstream_candidates,
+)
 
 RiskLevel = Literal["high", "critical"]
 ActionDetailsBuilder = Callable[[dict[str, Any]], dict[str, Any]]
@@ -76,6 +81,9 @@ READ_TOOLS: tuple[BaseTool, ...] = (
     grafana_explore_link,
     correlate_incident,
     query_recent_changes,
+    query_service_dependencies,
+    query_impacted_services,
+    query_upstream_candidates,
 )
 
 _WRITE_SPECS = (

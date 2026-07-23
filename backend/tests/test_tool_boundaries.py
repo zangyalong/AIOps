@@ -43,6 +43,9 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         """目录必须把诊断命令归为读、服务重启归为写，且写工具带审批元数据。"""
         self.assertIn("run_diagnostic_command", catalog.READ_TOOLS_BY_NAME)
         self.assertIn("query_recent_changes", catalog.READ_TOOLS_BY_NAME)
+        self.assertIn("query_service_dependencies", catalog.READ_TOOLS_BY_NAME)
+        self.assertIn("query_impacted_services", catalog.READ_TOOLS_BY_NAME)
+        self.assertIn("query_upstream_candidates", catalog.READ_TOOLS_BY_NAME)
         self.assertNotIn("run_diagnostic_command", catalog.WRITE_TOOLS_BY_NAME)
         self.assertNotIn("query_recent_changes", catalog.WRITE_TOOLS_BY_NAME)
         self.assertIn("restart_service", catalog.WRITE_TOOLS_BY_NAME)

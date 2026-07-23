@@ -40,6 +40,11 @@ from app.agents.tools.metrics import (
     query_server_metrics,
 )
 from app.agents.tools.servers import query_servers
+from app.agents.tools.service_topology import (
+    query_impacted_services,
+    query_service_dependencies,
+    query_upstream_candidates,
+)
 from app.core.config import settings
 
 AgentName = Literal[
@@ -68,6 +73,9 @@ SPECIALIST_READ_TOOLS: dict[AgentName, list[BaseTool]] = {
         query_alerts,
         correlate_incident,
         query_recent_changes,
+        query_service_dependencies,
+        query_impacted_services,
+        query_upstream_candidates,
         query_servers,
     ],
     "infrastructure_agent": [query_servers, run_diagnostic_command],
@@ -107,6 +115,8 @@ SPECIALIST_PROMPTS: dict[AgentName, str] = {
         "你是 AIOMS 的事件指挥专家，负责告警查询、事件关联，以及指标/日志/告警/变更的时间窗分析。"
         "优先用 correlate_incident 做同一实体、同一时间窗的关联；需要当前告警时调用 query_alerts，"
         "只需要单独核对发布、回滚、扩缩容或配置变更时调用 query_recent_changes。"
+        "需要理解服务直接依赖时调用 query_service_dependencies；分析故障影响范围时调用 "
+        "query_impacted_services；寻找依赖传播的根因候选时调用 query_upstream_candidates。"
         "变更与故障时间重合只是相关性证据，不能在没有其他证据时直接断言为根因。"
         "完成调查后输出一份给 Supervisor 的简短证据报告，不要假装直接回复最终用户。"
     ),
@@ -124,7 +134,7 @@ SUPERVISOR_PROMPT = """你是 AIOMS 的 Supervisor，只负责拆解问题和把
 可委派的专家：
 - metrics_agent：Prometheus 指标、实例发现、指标图表链接
 - logs_agent：Loki 日志、服务发现、日志图表链接
-- incident_agent：当前告警、变更记录、事件关联和跨信号横向诊断
+- incident_agent：当前告警、变更记录、服务拓扑、影响范围、事件关联和跨信号横向诊断
 - infrastructure_agent：服务器清单、SSH 只读诊断和需人工审批的受控服务重启
 
 每次只选择一个专家。专家完成后你会再次拿到控制权，可以继续委派另一个专家；证据已经足够，或用户只是闲聊、解释概念时选择 finish。

@@ -22,7 +22,8 @@ from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models.incident import RESOLVED, Incident
 from app.models.server import Server
-from app.services import incident_service, server_service
+from app.models.service_catalog import Service
+from app.services import incident_service, server_service, service_catalog_service
 
 
 async def triage_incident(ctx: dict, incident_id: str) -> dict:
@@ -35,17 +36,27 @@ async def triage_incident(ctx: dict, incident_id: str) -> dict:
         if incident is None or incident.status == RESOLVED:
             print(f"[triage] 事件 {incident_id} 不存在或已 resolved，跳过")
             return {"incident_id": incident_id, "skipped": True}
-        # 反查实体：找 monitor_labels.instance 跟事件 instance 对上的服务器，好让 agent 用业务名关联
-        servers = await server_service.list_servers(db)
-        srv = next(
-            (
-                s
-                for s in servers
-                if (s.monitor_labels or {}).get("instance") == incident.instance
-            ),
-            None,
+        resolved_service = await service_catalog_service.resolve_by_metric_instance(
+            db, incident.instance
         )
-        prompt = _build_prompt(incident, srv)
+        service = resolved_service.service if resolved_service else None
+        srv = None
+        if resolved_service and resolved_service.instance.server_id:
+            srv = await server_service.get_server(
+                db, resolved_service.instance.server_id
+            )
+        if srv is None:
+            # 兼容服务目录落地前的旧 monitor_labels 映射。
+            servers = await server_service.list_servers(db)
+            srv = next(
+                (
+                    s
+                    for s in servers
+                    if (s.monitor_labels or {}).get("instance") == incident.instance
+                ),
+                None,
+            )
+        prompt = _build_prompt(incident, srv, service)
         alertname = incident.alertname  # 提前取出来，出了 session 就别再碰 ORM 对象了
 
     print(f"[triage] 开始诊断事件 {alertname}（{incident_id}）")
@@ -82,7 +93,9 @@ async def triage_incident(ctx: dict, incident_id: str) -> dict:
     return {"incident_id": incident_id, "diagnosis_chars": len(diagnosis)}
 
 
-def _build_prompt(incident: Incident, srv: Server | None) -> str:
+def _build_prompt(
+    incident: Incident, srv: Server | None, service: Service | None
+) -> str:
     who = (
         f"服务器 {srv.name}"
         if srv
@@ -97,10 +110,25 @@ def _build_prompt(incident: Incident, srv: Server | None) -> str:
         + (f"（监控实例 {incident.instance}）" if srv and incident.instance else ""),
         f"- 摘要：{incident.summary or '（无）'}",
     ]
+    if service:
+        lines.append(
+            f"- 关联服务：{service.name}/{service.environment}"
+            + (f"（负责人 {service.owner}）" if service.owner else "")
+        )
+        lines.append(
+            "提示：需要判断依赖传播或影响范围时，先调用服务拓扑工具获取结构性候选，"
+            "再用同一时间窗的真实指标、日志和告警验证，不能只靠拓扑断言根因。"
+        )
     if srv:
+        service_args = (
+            f"，service={service.name}，environment={service.environment}"
+            if service
+            else ""
+        )
         lines.append(
             f"提示：优先用 correlate_incident 关联 {srv.name} 在 "
-            f"{incident.created_at.isoformat()} 前后的指标、日志、告警和变更来判断。"
+            f"{incident.created_at.isoformat()} 前后的指标、日志、告警和变更来判断"
+            f"{service_args}。"
         )
     elif incident.instance:
         lines.append(

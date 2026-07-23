@@ -22,7 +22,7 @@ from langchain_core.tools import tool
 from app.agents.tools.changes import format_change_records
 from app.agents.tools.metrics import PROMQL_TEMPLATES
 from app.db.session import AsyncSessionLocal
-from app.services import change_record_service, server_service
+from app.services import change_record_service, server_service, service_catalog_service
 from app.services.observability_service import (
     am_get_alerts,
     loki_query_range,
@@ -38,7 +38,11 @@ _MAX_LINE_LEN = 300
 
 @tool
 async def correlate_incident(
-    server: str, at: str = "", window_minutes: int = 15
+    server: str,
+    at: str = "",
+    window_minutes: int = 15,
+    service: str = "",
+    environment: str = "",
 ) -> str:
     """把一台服务器的指标、日志、告警、变更在同一时间窗对齐，排查"那会儿发生了什么"。
 
@@ -48,21 +52,59 @@ async def correlate_incident(
     - server：业务服务器名（servers 表里的 name）。需要这台服务器配了 monitor_labels（监控标签映射）。
     - at：时间锚点，ISO8601（如 "2026-07-07T14:00"，不带时区当本地时间）。留空=现在。
     - window_minutes：锚点前后各取多少分钟，默认 15（即总共 30 分钟窗口）。
+    - service / environment：已知逻辑服务时填写，用服务目录精确选择这台服务器上的部署实例。
     """
     # 1. 解析实体 → 监控标签
     async with AsyncSessionLocal() as db:
         servers = await server_service.list_servers(db)
-    srv = next((s for s in servers if s.name == server), None)
-    if srv is None:
-        names = "、".join(s.name for s in servers) or "（无）"
-        return f"没有找到名为 {server} 的服务器。当前有：{names}。"
+        srv = next((s for s in servers if s.name == server), None)
+        if srv is None:
+            names = "、".join(s.name for s in servers) or "（无）"
+            return f"没有找到名为 {server} 的服务器。当前有：{names}。"
+
+        catalog_service = None
+        catalog_instance = None
+        if service.strip():
+            try:
+                catalog_service = await service_catalog_service.resolve_service(
+                    db, service.strip(), environment.strip() or None
+                )
+            except service_catalog_service.AmbiguousService as exc:
+                return str(exc)
+            if catalog_service is None:
+                return f"服务目录中没有找到 {service.strip()}/{environment.strip() or '未指定环境'}。"
+            candidates = await service_catalog_service.list_instances(
+                db, service_id=catalog_service.id, server_id=srv.id
+            )
+            if len(candidates) == 1:
+                catalog_instance = candidates[0]
+        else:
+            candidates = await service_catalog_service.list_instances(
+                db, server_id=srv.id
+            )
+            if len(candidates) == 1:
+                catalog_instance = candidates[0]
+                catalog_service = await service_catalog_service.get_service(
+                    db, catalog_instance.service_id
+                )
+
     labels = srv.monitor_labels or {}
-    instance = labels.get("instance")
-    service = labels.get("service")
-    if not instance and not service:
+    instance = (
+        catalog_instance.metric_instance if catalog_instance else None
+    ) or labels.get("instance")
+    log_service = (
+        catalog_instance.log_service if catalog_instance else None
+    ) or labels.get("service")
+    service_name = catalog_service.name if catalog_service else labels.get("service")
+    service_environment = (
+        catalog_service.environment
+        if catalog_service
+        else (labels.get("environment") or labels.get("env"))
+    )
+    if not instance and not log_service and not service_name:
         return (
             f"{server} 还没有配置监控标签（monitor_labels），无法关联。"
-            "需要给它配 instance（查 Prometheus 指标/告警）和/或 service（查 Loki 日志）。"
+            "请在服务目录登记部署实例，或配置旧 monitor_labels。"
         )
     if window_minutes <= 0:
         return "window_minutes 需要是正数（表示锚点前后各取多少分钟）。"
@@ -75,18 +117,18 @@ async def correlate_incident(
     # 3. 并发拉四类证据（互不依赖，gather 一起跑）
     metrics_text, logs_text, alerts_text, changes_text = await asyncio.gather(
         _pull_metrics(instance, start, end),
-        _pull_logs(service, start, end),
+        _pull_logs(log_service, start, end),
         _pull_alerts(instance),
-        _pull_changes(
-            service, labels.get("environment") or labels.get("env"), start, end
-        ),
+        _pull_changes(service_name, service_environment, start, end),
     )
 
     # 4. 并置成一份报告
     return "\n".join(
         [
             f"## 关联横切面：{server} @ {_clock(anchor)}（窗口 {_clock(start)} ~ {_clock(end)}）",
-            f"实体标签：instance={instance or '（无）'}　service={service or '（无）'}",
+            f"实体标签：metric_instance={instance or '（无）'}　"
+            f"log_service={log_service or '（无）'}　"
+            f"service={service_name or '（无）'}/{service_environment or '（无环境）'}",
             "",
             "### 指标",
             metrics_text,

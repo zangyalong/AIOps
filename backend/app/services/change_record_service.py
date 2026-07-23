@@ -10,11 +10,12 @@ from app.models.change_record import ChangeRecord
 from app.models.incident import Incident
 from app.repositories import change_record_repository
 from app.schemas.change_record import ChangeRecordCreate, ChangeRecordUpdate
-from app.services import server_service
+from app.services import server_service, service_catalog_service
 
 
 @dataclass(frozen=True)
 class IncidentChangeContext:
+    service_id: uuid.UUID | None
     service_name: str | None
     environment: str | None
     window_start: datetime
@@ -73,18 +74,30 @@ async def get_incident_change_context(
     window_start = anchor - timedelta(minutes=window_minutes)
     window_end = anchor + timedelta(minutes=window_minutes)
 
-    servers = await server_service.list_servers(db)
-    server = next(
-        (
-            item
-            for item in servers
-            if (item.monitor_labels or {}).get("instance") == incident.instance
-        ),
-        None,
+    resolved = await service_catalog_service.resolve_by_metric_instance(
+        db, incident.instance
     )
-    labels = (server.monitor_labels or {}) if server is not None else {}
-    service_name = labels.get("service")
-    environment = labels.get("environment") or labels.get("env")
+    service_id: uuid.UUID | None = None
+    service_name: str | None = None
+    environment: str | None = None
+    if resolved is not None:
+        service_id = resolved.service.id
+        service_name = resolved.service.name
+        environment = resolved.service.environment
+    else:
+        # 兼容服务目录落地前的旧数据；新实例应优先登记到 service_instances。
+        servers = await server_service.list_servers(db)
+        server = next(
+            (
+                item
+                for item in servers
+                if (item.monitor_labels or {}).get("instance") == incident.instance
+            ),
+            None,
+        )
+        labels = (server.monitor_labels or {}) if server is not None else {}
+        service_name = labels.get("service")
+        environment = labels.get("environment") or labels.get("env")
     changes: list[ChangeRecord] = []
     if service_name:
         changes = await list_change_records(
@@ -97,6 +110,7 @@ async def get_incident_change_context(
         )
 
     return IncidentChangeContext(
+        service_id=service_id,
         service_name=service_name,
         environment=environment,
         window_start=window_start,

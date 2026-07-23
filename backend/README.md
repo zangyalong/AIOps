@@ -12,6 +12,7 @@ AIOMS 的 FastAPI 后端，负责业务 API、LangGraph 多 Agent 工作流、�
 - Supervisor 调度四个专业 Agent
 - Prometheus 指标、Loki 日志、Alertmanager 告警查询；指标工具可按服务器名/IP 自动解析 instance
 - 服务发布、回滚、扩缩容和配置变更记录 CRUD，以及 `query_recent_changes` 只读工具
+- 服务目录、部署实例与有向依赖拓扑；支持直接依赖、潜在影响范围和根因候选查询
 - 指标、日志、告警、变更的同实体时间窗关联
 - Alertmanager webhook、告警去重归组和事件生命周期
 - Redis/arq 后台自动诊断事件
@@ -26,7 +27,7 @@ FastAPI POST /chat → 创建后台 Chat Run
 LangGraph Supervisor
     ├── metrics_agent         → Prometheus / Grafana
     ├── logs_agent            → Loki / Grafana
-    ├── incident_agent        → Alertmanager / 变更记录 / 跨信号关联
+    ├── incident_agent        → Alertmanager / 变更记录 / 服务拓扑 / 跨信号关联
     └── infrastructure_agent  → servers 表 / SSH 工具
                                  ├── 只读诊断：直接执行
                                  └── 服务重启：interrupt 人工审批
@@ -169,12 +170,24 @@ uv run arq app.worker.WorkerSettings
 | `POST /incidents/{id}/resolve`       | 人工解决事件               |
 | `GET/POST /changes`                  | 查询、新增变更记录         |
 | `GET/PATCH/DELETE /changes/{id}`     | 查看、修改、删除变更记录   |
+| `GET/POST /services`                 | 查询、新增逻辑服务         |
+| `GET/PATCH/DELETE /services/{id}`    | 查看、修改、删除服务       |
+| `GET /services/{id}/topology`        | 查询服务关联拓扑           |
+| `GET/POST /service-instances`        | 查询、新增服务部署实例     |
+| `PATCH/DELETE /service-instances/{id}` | 修改、删除部署实例       |
+| `GET/POST /service-dependencies`     | 查询、新增服务依赖边       |
+| `PATCH/DELETE /service-dependencies/{id}` | 修改、删除依赖边     |
 
 前端开发环境请求 `/api/...`，由 Vite 代理去掉 `/api` 前缀后转发到这里。
 
-事件与变更通过 `servers.monitor_labels` 中的 `instance`、`service` 对齐；如果同一服务有多套环境，
-建议再配置 `environment`（或 `env`），避免把测试环境变更带入生产事件时间线。关联只说明时间与实体重合，
-Agent 提示词和事件页面都会明确它不是已确认的根因。
+新接入的实体应在服务目录创建 `service_instances`，分别填写 `metric_instance`、`log_service` 并绑定
+`server_id`。事件会优先按 `metric_instance` 精确解析逻辑服务，再用服务名和环境关联变更；旧的
+`servers.monitor_labels` 仍作为兼容回退。关联只说明时间与实体重合，Agent 提示词和事件页面都会明确
+它不是已确认的根因。
+
+服务依赖边定义为 `upstream_service_id → downstream_service_id`，即“调用方依赖被调用方”。
+`query_impacted_services` 反向遍历调用方推导潜在影响范围；`query_upstream_candidates` 沿依赖方向
+寻找可能传播到当前服务的根因候选，两者都只提供结构性线索，仍需结合真实观测证据确认。
 
 ## 测试与静态检查
 

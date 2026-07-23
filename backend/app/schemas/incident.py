@@ -42,6 +42,7 @@ class IncidentChangesRead(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    service_id: uuid.UUID | None
     service_name: str | None
     environment: str | None
     window_start: datetime

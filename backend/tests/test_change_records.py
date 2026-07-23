@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import uuid
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -32,6 +33,39 @@ class ChangeRecordSchemaTest(unittest.TestCase):
 
 
 class IncidentChangeContextTest(unittest.IsolatedAsyncioTestCase):
+    async def test_prefers_normalized_service_instance_mapping(self) -> None:
+        anchor = datetime(2026, 7, 22, 14, 5, tzinfo=timezone.utc)
+        incident = SimpleNamespace(created_at=anchor, instance="orders:9100")
+        service = SimpleNamespace(
+            id=uuid.uuid4(), name="orders-api", environment="prod"
+        )
+        resolved = SimpleNamespace(service=service, instance=SimpleNamespace())
+        query = AsyncMock(return_value=[])
+        legacy_lookup = AsyncMock()
+
+        with (
+            patch.object(
+                change_record_service.service_catalog_service,
+                "resolve_by_metric_instance",
+                AsyncMock(return_value=resolved),
+            ),
+            patch.object(
+                change_record_service.server_service,
+                "list_servers",
+                legacy_lookup,
+            ),
+            patch.object(change_record_service, "list_change_records", query),
+        ):
+            context = await change_record_service.get_incident_change_context(
+                object(), incident
+            )
+
+        self.assertEqual(context.service_id, service.id)
+        self.assertEqual(context.service_name, "orders-api")
+        self.assertEqual(context.environment, "prod")
+        legacy_lookup.assert_not_awaited()
+        query.assert_awaited_once()
+
     async def test_maps_instance_to_service_and_uses_symmetric_window(self) -> None:
         anchor = datetime(2026, 7, 22, 14, 5, tzinfo=timezone.utc)
         incident = SimpleNamespace(created_at=anchor, instance="api:9100")
@@ -47,6 +81,11 @@ class IncidentChangeContextTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(
+                change_record_service.service_catalog_service,
+                "resolve_by_metric_instance",
+                AsyncMock(return_value=None),
+            ),
+            patch.object(
                 change_record_service.server_service,
                 "list_servers",
                 AsyncMock(return_value=[server]),
@@ -58,6 +97,7 @@ class IncidentChangeContextTest(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(context.service_name, "orders-api")
+        self.assertIsNone(context.service_id)
         self.assertEqual(context.environment, "prod")
         self.assertEqual(context.window_start, anchor - timedelta(minutes=30))
         self.assertEqual(context.window_end, anchor + timedelta(minutes=30))
@@ -79,6 +119,11 @@ class IncidentChangeContextTest(unittest.IsolatedAsyncioTestCase):
         query = AsyncMock()
 
         with (
+            patch.object(
+                change_record_service.service_catalog_service,
+                "resolve_by_metric_instance",
+                AsyncMock(return_value=None),
+            ),
             patch.object(
                 change_record_service.server_service,
                 "list_servers",
@@ -140,6 +185,7 @@ class CorrelateChangesTest(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         server = SimpleNamespace(
+            id=uuid.uuid4(),
             name="api-01",
             monitor_labels={
                 "instance": "api:9100",
@@ -157,6 +203,11 @@ class CorrelateChangesTest(unittest.IsolatedAsyncioTestCase):
                 correlate.server_service,
                 "list_servers",
                 AsyncMock(return_value=[server]),
+            ),
+            patch.object(
+                correlate.service_catalog_service,
+                "list_instances",
+                AsyncMock(return_value=[]),
             ),
             patch.object(
                 correlate, "_pull_metrics", AsyncMock(return_value="指标证据")
