@@ -20,6 +20,8 @@
   - 代码、后端测试和前端构建完成后仍保持未勾选，等用户用真实记录完成运行时验收
 - [ ] **服务目录与依赖拓扑**：建立服务、负责人、环境、监控标签、仓库 / 仪表盘链接，以及服务依赖和服务器归属关系
   - 提供服务管理与依赖图页面，以及 `query_service_dependencies`、`query_impacted_services`、`query_upstream_candidates` 只读工具
+  - 已实现 `services`、`service_instances`、`service_dependencies` 三张规范化表与完整 CRUD；事件和自动 triage 优先按实例解析服务，旧 `monitor_labels` 兼容回退
+  - 已实现可点击 SVG 拓扑和服务详情 URL；代码、后端测试和前端构建完成后仍保持未勾选，等用户运行时验收
 - [ ] **值班报告与通知**：基于事件状态机生成确定性日报 / 周报，并为未认领、超时未解决和自动诊断完成事件发送通知
   - 复用 Redis / arq 调度任务；先接一个通知渠道，模型只负责基于统计事实生成摘要和建议
 
@@ -62,7 +64,7 @@
 - [x] **Grafana 联动**（可选）：agent 能引用/生成 Grafana 面板链接，把结论落到统一仪表盘
   - `grafana_explore_link` 工具：按查询 + 时间窗拼 Grafana Explore 链接（纯字符串，不访问网络），支持 metrics（PromQL）/ logs（LogQL）/ alerts（Prometheus 的 ALERTS 指标）三种。docker-compose 加 grafana + 数据源 provisioning（固定 uid）。后续引入前端 md 渲染即可让链接可点击
 - [x] **关联原语**：实体模型（服务→实例→依赖拓扑）+ 时间窗对齐——给定告警/时间点，自动拉同一服务、同一窗口的 metrics + logs（+ traces）一起看
-  - `correlate_incident` 工具：给定业务服务器名 + 时刻，`asyncio.gather` 并发拉齐指标(range)+日志+告警，同一时间窗对齐成横切面报告。实体模型用 servers 表新增的 `monitor_labels` JSONB 列（业务名→{instance, service} 映射，`scripts/seed_monitor_labels.py` 加列+配 docker-test-01）。经对抗式审查加固（异常兜底、window 校验、自适应 step）。traces 暂缺（单机 PLG 无 Tempo）
+  - `correlate_incident` 工具：给定业务服务器名 + 时刻，`asyncio.gather` 并发拉齐指标(range)+日志+告警+变更，同一时间窗对齐成横切面报告。实体映射优先使用规范化服务实例，旧 `servers.monitor_labels` 作为兼容回退。经对抗式审查加固（异常兜底、window 校验、自适应 step）。traces 暂缺（单机 PLG 无 Tempo）
 - [ ] **读工具 / 写工具边界划分**（survey 启发 #2）：把纯读诊断工具和有破坏力的写工具分成两类抽象，别混在一起
   - 已新增集中式 `catalog.py`，读工具与写工具分开注册且禁止重叠；原 SSH 白名单命令明确改为只读诊断工具，不再触发审批
   - 已新增真实写工具 `restart_service`：人工审批 + systemd 服务白名单双重限制，worker 不绑定写工具，执行节点也会拒绝缺少审批决议的调用
@@ -77,7 +79,7 @@ CLAUDE.md 项目定位里"值班/告警诊断"的核心闭环。
 - [x] **后台任务 runner**：当前是纯请求-响应，需要 background/scheduled 能力（告警触发的诊断、定时值班报告都要它）
   - 用 arq + Redis 搭任务队列：webhook 落库时把「新触发」的告警入队，独立的 arq worker 进程（`app.worker.WorkerSettings`）消费。以后定时值班报告也挂这个 runner
 - [x] **告警自动 triage**：告警落库后自动触发 agent 调查（拉 metrics/logs）→ 诊断结果推 Slack/IM
-  - worker 的 `triage_alert` 复用 ReAct+Reflexion agent 图：按 fingerprint 载入告警 → 反查实体（instance→server via monitor_labels）→ agent 调 correlate_incident 等工具调查 → 诊断回填到 `alert_events.diagnosis`。**推 Slack/IM 这步先缓**（诊断已落库、`GET /alerts` 可查，通知渠道以后单接）。顺带修了 evaluate 质检 bug（改看工具实际返回，不再误判 correlate 编造）
+  - worker 的 `triage_incident` 复用 Supervisor 专家图：载入事件 → 按 `service_instances.metric_instance` 解析服务与服务器（旧 monitor_labels 回退）→ agent 调拓扑和 correlate 工具调查 → 诊断回填到事件。**推 Slack/IM 这步先缓**（诊断已落库、`GET /incidents` 可查，通知渠道以后单接）
 - [x] **去重/关联层用规则引擎**（CEL 或等价），不用 LLM——survey 启发 #1，Keep 最成熟的实现就是纯规则，快/可解释/好测；这是 agent 之前的确定性预处理
   - `app/services/correlation.py`：用 CEL（celpy）写匹配条件 + group_by 归组，算出 `group_key`（同 key = 同一事件）。当前规则 by-instance：带 instance 的 critical/warning 告警按 `[instance, alertname]` 归组（同机同种告警去重、不同种各成事件）。ingest 时算 group_key 落库，**只有事件的第一条 firing 才入队诊断**，同事件其余静默归入——治好「同台机多条告警重复诊断」。dedup（按 fingerprint）本就有
 - [x] **事件生命周期状态机**：`alert_events` 从平铺一条记录升级成 `FIRING/ACK/RESOLVED` 状态机（谁认领、后续如何）——survey 模块 6 / 启发 #6

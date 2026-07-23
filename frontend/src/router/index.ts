@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import ChatView from '../views/ChatView.vue'
 import ChangesView from '../views/ChangesView.vue'
 import IncidentsView from '../views/IncidentsView.vue'
+import ServicesView from '../views/ServicesView.vue'
 import ServersView from '../views/ServersView.vue'
 
 function lastChatPath(): string {
@@ -21,6 +22,8 @@ export const router = createRouter({
     },
     { path: '/incidents', name: 'incidents', component: IncidentsView },
     { path: '/changes', name: 'changes', component: ChangesView },
+    { path: '/services', name: 'services', component: ServicesView },
+    { path: '/services/:serviceId', name: 'service-detail', component: ServicesView },
     { path: '/servers', name: 'servers', component: ServersView },
     { path: '/:pathMatch(.*)*', redirect: '/chat' },
   ],

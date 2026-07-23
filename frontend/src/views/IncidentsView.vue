@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { RouterLink } from 'vue-router'
 import {
   acknowledgeIncident,
   fetchIncidentChanges,
@@ -335,6 +336,11 @@ async function resolve(incident: Incident) {
           <p v-if="changeContext?.changes.length" class="timeline-note">
             时间重合仅作为诊断线索，不代表该变更已经被确认是根因。
           </p>
+          <RouterLink
+            v-if="changeContext?.service_id"
+            class="service-directory-link"
+            :to="`/services/${changeContext.service_id}`"
+          >查看关联服务及依赖拓扑 →</RouterLink>
         </section>
 
         <section class="diagnosis-panel">
@@ -848,6 +854,14 @@ button:disabled {
   margin: 0.25rem 0 0;
   color: var(--color-text-muted);
   font-size: 0.72rem;
+}
+
+.service-directory-link {
+  display: inline-block;
+  margin-top: 0.55rem;
+  color: var(--color-accent);
+  font-size: 0.76rem;
+  text-decoration: none;
 }
 
 .diagnosis-markdown {

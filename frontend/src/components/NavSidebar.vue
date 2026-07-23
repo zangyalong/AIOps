@@ -20,6 +20,7 @@ const items = computed(() => [
   { to: lastChatPath.value, label: '对话', icon: '💬' },
   { to: '/incidents', label: '事件中心', icon: '🚨' },
   { to: '/changes', label: '变更记录', icon: '🚀' },
+  { to: '/services', label: '服务目录', icon: '🧩' },
   { to: '/servers', label: '服务器', icon: '🖥️' },
 ])
 </script>

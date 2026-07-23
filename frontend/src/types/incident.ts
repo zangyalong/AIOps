@@ -20,6 +20,7 @@ export interface Incident {
 }
 
 export interface IncidentChangeContext {
+  service_id: string | null
   service_name: string | null
   environment: string | null
   window_start: string
