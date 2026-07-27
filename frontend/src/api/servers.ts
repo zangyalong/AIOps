@@ -20,6 +20,21 @@ export async function createServer(data: ServerCreateInput): Promise<Server> {
   return res.json()
 }
 
+export async function updateServer(
+  id: string,
+  data: Partial<ServerCreateInput>,
+): Promise<Server> {
+  const res = await fetch(`/api/servers/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) {
+    throw new Error(`更新服务器失败：${res.status}`)
+  }
+  return res.json()
+}
+
 export async function deleteServer(id: string): Promise<void> {
   const res = await fetch(`/api/servers/${id}`, { method: 'DELETE' })
   if (!res.ok) {

@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { createServer, deleteServer, fetchServers, testServerConnection } from '../api/servers'
+import {
+  createServer,
+  deleteServer,
+  fetchServers,
+  testServerConnection,
+  updateServer,
+} from '../api/servers'
 import type { Server, ServerCreateInput, ServerStatus } from '../types/server'
 
 const servers = ref<Server[]>([])
@@ -8,7 +14,8 @@ const loading = ref(true)
 const error = ref<string | null>(null)
 
 const showModal = ref(false)
-const creating = ref(false)
+const editingServer = ref<Server | null>(null)
+const saving = ref(false)
 const formError = ref<string | null>(null)
 const form = reactive<ServerCreateInput>({
   name: '',
@@ -49,37 +56,56 @@ function resetForm() {
   formError.value = null
 }
 
-function openModal() {
+function openCreateModal() {
   resetForm()
+  editingServer.value = null
+  showModal.value = true
+}
+
+function openEditModal(server: Server) {
+  form.name = server.name
+  form.ip_address = server.ip_address
+  form.description = server.description ?? ''
+  form.ssh_port = server.ssh_port
+  form.ssh_user = server.ssh_user ?? ''
+  form.ssh_key_filename = server.ssh_key_filename ?? ''
+  formError.value = null
+  editingServer.value = server
   showModal.value = true
 }
 
 function closeModal() {
   showModal.value = false
+  editingServer.value = null
 }
 
-async function submitAdd() {
+async function submitForm() {
   if (!form.name.trim() || !form.ip_address.trim()) {
     formError.value = '名称和 IP 地址是必填的'
     return
   }
-  creating.value = true
+  saving.value = true
   formError.value = null
   try {
-    await createServer({
+    const payload: ServerCreateInput = {
       name: form.name.trim(),
       ip_address: form.ip_address.trim(),
       description: form.description?.trim() || null,
       ssh_port: form.ssh_port || null,
       ssh_user: form.ssh_user?.trim() || null,
       ssh_key_filename: form.ssh_key_filename?.trim() || null,
-    })
-    showModal.value = false
+    }
+    if (editingServer.value) {
+      await updateServer(editingServer.value.id, payload)
+    } else {
+      await createServer(payload)
+    }
+    closeModal()
     await loadServers()
   } catch (e) {
     formError.value = e instanceof Error ? e.message : String(e)
   } finally {
-    creating.value = false
+    saving.value = false
   }
 }
 
@@ -136,14 +162,14 @@ const sortedServers = computed(() =>
         <h1>服务器</h1>
         <p class="subtitle">管理被 AIOMS 纳管的服务器，配置 SSH 后可测试连通性</p>
       </div>
-      <button type="button" class="btn-primary" @click="openModal">+ 新增服务器</button>
+      <button type="button" class="btn-primary" @click="openCreateModal">+ 新增服务器</button>
     </header>
 
     <p v-if="loading" class="hint">加载中…</p>
     <p v-else-if="error" class="error">{{ error }}</p>
     <div v-else-if="sortedServers.length === 0" class="empty">
       <p>还没有服务器</p>
-      <button type="button" class="btn-primary" @click="openModal">新增第一台</button>
+      <button type="button" class="btn-primary" @click="openCreateModal">新增第一台</button>
     </div>
 
     <ul v-else class="server-grid">
@@ -163,19 +189,20 @@ const sortedServers = computed(() =>
           <button type="button" class="btn-ghost" @click="testConnection(server)" :disabled="state.status === 'testing'">
             {{ state.status === 'testing' ? '测试中…' : '测试连接' }}
           </button>
+          <button type="button" class="btn-ghost" @click="openEditModal(server)">编辑</button>
           <button type="button" class="btn-ghost danger" @click="remove(server)">删除</button>
         </div>
       </li>
     </ul>
 
-    <!-- 新增服务器弹窗 -->
+    <!-- 新增和编辑共用同一个表单，编辑时会预填当前配置 -->
     <div v-if="showModal" class="modal-backdrop" @click.self="closeModal">
       <div class="modal" role="dialog" aria-modal="true">
         <div class="modal-header">
-          <h2>新增服务器</h2>
+          <h2>{{ editingServer ? '编辑服务器' : '新增服务器' }}</h2>
           <button type="button" class="close-btn" @click="closeModal" aria-label="关闭">×</button>
         </div>
-        <form class="modal-body" @submit.prevent="submitAdd">
+        <form class="modal-body" @submit.prevent="submitForm">
           <div class="form-row">
             <label>名称 *<input v-model="form.name" placeholder="比如 web-01" /></label>
             <label>IP 地址 *<input v-model="form.ip_address" placeholder="比如 10.0.1.11" /></label>
@@ -195,8 +222,8 @@ const sortedServers = computed(() =>
           <p v-if="formError" class="error">{{ formError }}</p>
           <div class="modal-actions">
             <button type="button" class="btn-ghost" @click="closeModal">取消</button>
-            <button type="submit" class="btn-primary" :disabled="creating">
-              {{ creating ? '保存中…' : '保存' }}
+            <button type="submit" class="btn-primary" :disabled="saving">
+              {{ saving ? '保存中…' : '保存' }}
             </button>
           </div>
         </form>
