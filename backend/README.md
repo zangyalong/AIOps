@@ -228,7 +228,8 @@ tests/             # 不依赖外部服务的自动化测试
 ## 当前安全边界
 
 - `catalog.py` 是唯一的工具分类入口；每个工具必须明确注册为读工具或写工具，两类不允许重叠。
-- `run_diagnostic_command` 是读工具，只允许 `uptime`、`df -h`、`free -m` 三条精确命令，不进入人工审批。
+- `run_diagnostic_command` 是读工具，开放主机资源、进程、网络、systemd、journal、Docker、crictl 和 Kubernetes 的受控只读命令；固定命令精确匹配，带资源名的命令严格校验参数，并统一限制执行时间和输出长度，不进入人工审批。
+- Docker 只读命令在 SSH 端会改写为 `sudo -n -- /usr/bin/docker ...`，目标服务器必须为 SSH 用户配置参数完全一致的 `NOPASSWD` sudoers 规则；应用不会退化成任意 `sudo docker`。
 - `restart_service` 是高风险写工具，先经过 LangGraph `interrupt` 人工审批，执行时还必须命中 `SSH_RESTART_SERVICE_ALLOWLIST`；默认空白名单会拒绝全部重启。
 - 工具执行节点会再次校验审批决议，不能只靠模型是否正确路由；后台 worker 设置 `allow_write_tools=False`，从模型绑定和执行节点两层禁止写工具。
 - 本地 SSH 沙箱当前使用 `known_hosts=None`，只适用于一次性本地容器，不能直接用于生产服务器。

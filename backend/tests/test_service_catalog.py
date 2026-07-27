@@ -78,6 +78,48 @@ class ServiceTopologyTraversalTest(unittest.IsolatedAsyncioTestCase):
 
 
 class ServiceTopologyToolsTest(unittest.IsolatedAsyncioTestCase):
+    async def test_server_services_lists_registered_instances(self) -> None:
+        server = SimpleNamespace(
+            id=uuid.uuid4(), name="web-01", ip_address="10.0.0.11"
+        )
+        service = _service("web")
+        instance = SimpleNamespace(
+            service_id=service.id,
+            name="web-01-main",
+            metric_instance="10.0.0.11:9100",
+            log_service="web",
+        )
+
+        with (
+            patch.object(
+                service_topology, "AsyncSessionLocal", return_value=_SessionContext()
+            ),
+            patch.object(
+                service_topology.server_service,
+                "get_server_by_name_or_ip",
+                AsyncMock(return_value=server),
+            ),
+            patch.object(
+                service_topology.service_catalog_service,
+                "list_instances",
+                AsyncMock(return_value=[instance]),
+            ) as list_instances,
+            patch.object(
+                service_topology.service_catalog_service,
+                "list_services",
+                AsyncMock(return_value=[service]),
+            ),
+        ):
+            result = await service_topology.query_server_services.ainvoke(
+                {"server": "web-01"}
+            )
+
+        list_instances.assert_awaited_once()
+        self.assertEqual(list_instances.await_args.kwargs, {"server_id": server.id})
+        self.assertIn("web/prod", result)
+        self.assertIn("实例=web-01-main", result)
+        self.assertIn("不代表实时进程或容器运行状态", result)
+
     async def test_impacted_services_walks_reverse_dependencies(self) -> None:
         orders = _service("orders")
         payments = _service("payments")

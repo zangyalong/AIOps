@@ -42,6 +42,7 @@ from app.agents.tools.metrics import (
 from app.agents.tools.servers import query_servers
 from app.agents.tools.service_topology import (
     query_impacted_services,
+    query_server_services,
     query_service_dependencies,
     query_upstream_candidates,
 )
@@ -73,12 +74,17 @@ SPECIALIST_READ_TOOLS: dict[AgentName, list[BaseTool]] = {
         query_alerts,
         correlate_incident,
         query_recent_changes,
+        query_server_services,
         query_service_dependencies,
         query_impacted_services,
         query_upstream_candidates,
         query_servers,
     ],
-    "infrastructure_agent": [query_servers, run_diagnostic_command],
+    "infrastructure_agent": [
+        query_servers,
+        query_server_services,
+        run_diagnostic_command,
+    ],
 }
 
 SPECIALIST_WRITE_TOOLS: dict[AgentName, list[BaseTool]] = {
@@ -115,6 +121,8 @@ SPECIALIST_PROMPTS: dict[AgentName, str] = {
         "你是 AIOMS 的事件指挥专家，负责告警查询、事件关联，以及指标/日志/告警/变更的时间窗分析。"
         "优先用 correlate_incident 做同一实体、同一时间窗的关联；需要当前告警时调用 query_alerts，"
         "只需要单独核对发布、回滚、扩缩容或配置变更时调用 query_recent_changes。"
+        "用户询问某台服务器在服务目录中登记或部署了哪些服务时，调用 query_server_services；"
+        "它查询的是 AIOMS 登记关系，不能用来回答实时进程或容器运行状态。"
         "需要理解服务直接依赖时调用 query_service_dependencies；分析故障影响范围时调用 "
         "query_impacted_services；寻找依赖传播的根因候选时调用 query_upstream_candidates。"
         "变更与故障时间重合只是相关性证据，不能在没有其他证据时直接断言为根因。"
@@ -122,8 +130,11 @@ SPECIALIST_PROMPTS: dict[AgentName, str] = {
     ),
     "infrastructure_agent": (
         "你是 AIOMS 的基础设施专家，负责查询纳管服务器、只读诊断和受控变更。"
-        "当前服务器信息必须调用 query_servers；uptime/df/free 等只读信息调用 "
-        "run_diagnostic_command，它不需要审批。只有用户明确要求重启服务时才能调用 "
+        "当前服务器信息必须调用 query_servers；用户询问服务目录中登记或部署了哪些服务时调用 "
+        "query_server_services，并说明它不是实时运行状态。用户询问当前实际运行的系统服务、"
+        "容器或进程时，调用 run_diagnostic_command，按工具描述选择 systemctl list-units、"
+        "docker ps、ps aux 等只读白名单命令；不要拼接或变形出白名单外命令。"
+        "只有用户明确要求重启服务时才能调用 "
         "restart_service；它是高风险写工具，必须等待人工审批，不能用诊断工具替代或拼接写命令。"
         "完成调查后输出一份给 Supervisor 的简短证据报告，不要假装直接回复最终用户。"
     ),
@@ -134,12 +145,13 @@ SUPERVISOR_PROMPT = """你是 AIOMS 的 Supervisor，只负责拆解问题和把
 可委派的专家：
 - metrics_agent：Prometheus 指标、实例发现、指标图表链接
 - logs_agent：Loki 日志、服务发现、日志图表链接
-- incident_agent：当前告警、变更记录、服务拓扑、影响范围、事件关联和跨信号横向诊断
-- infrastructure_agent：服务器清单、SSH 只读诊断和需人工审批的受控服务重启
+- incident_agent：当前告警、变更记录、服务目录、按服务器查询已登记服务、拓扑、影响范围和事件关联
+- infrastructure_agent：服务器清单、实时系统服务/容器/进程、SSH 只读诊断和受控服务重启
 
 每次只选择一个专家。专家完成后你会再次拿到控制权，可以继续委派另一个专家；证据已经足够，或用户只是闲聊、解释概念时选择 finish。
 涉及“当前/最新”的服务器状态、指标、日志、告警或命令输出时，不能在没有对应专家真实调查结果的情况下 finish。
 不要重复委派已经回答清楚同一问题的专家。instruction 要写成该专家可以独立执行的具体任务，并带上必要实体、时间窗和筛选条件。
+用户询问服务目录登记/部署关系时交给 incident_agent 调用 query_server_services；询问当前实际运行的服务、容器或进程时交给 infrastructure_agent 调用只读诊断命令。
 不要擅自增加用户没有要求的图表、链接或额外调查项，避免无意义的工具调用。
 """
 

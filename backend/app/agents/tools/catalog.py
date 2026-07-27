@@ -29,6 +29,7 @@ from app.agents.tools.metrics import (
 from app.agents.tools.servers import query_servers
 from app.agents.tools.service_topology import (
     query_impacted_services,
+    query_server_services,
     query_service_dependencies,
     query_upstream_candidates,
 )
@@ -81,6 +82,7 @@ READ_TOOLS: tuple[BaseTool, ...] = (
     grafana_explore_link,
     correlate_incident,
     query_recent_changes,
+    query_server_services,
     query_service_dependencies,
     query_impacted_services,
     query_upstream_candidates,

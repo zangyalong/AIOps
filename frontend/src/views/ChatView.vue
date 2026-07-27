@@ -61,6 +61,7 @@ const TOOL_LABELS: Record<string, string> = {
   list_metric_instances: '查询监控实例',
   search_logs: '检索日志',
   query_alerts: '查询告警',
+  query_server_services: '查询服务器上的服务',
   run_diagnostic_command: '执行只读诊断',
   restart_service: '重启服务',
   run_whitelisted_command: '执行远程命令（旧记录）',

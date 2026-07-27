@@ -4,6 +4,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from app.agents.graphs import chat_graph
 from app.agents.tools import actions, catalog
 
 
@@ -43,6 +44,7 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         """目录必须把诊断命令归为读、服务重启归为写，且写工具带审批元数据。"""
         self.assertIn("run_diagnostic_command", catalog.READ_TOOLS_BY_NAME)
         self.assertIn("query_recent_changes", catalog.READ_TOOLS_BY_NAME)
+        self.assertIn("query_server_services", catalog.READ_TOOLS_BY_NAME)
         self.assertIn("query_service_dependencies", catalog.READ_TOOLS_BY_NAME)
         self.assertIn("query_impacted_services", catalog.READ_TOOLS_BY_NAME)
         self.assertIn("query_upstream_candidates", catalog.READ_TOOLS_BY_NAME)
@@ -51,6 +53,13 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("restart_service", catalog.WRITE_TOOLS_BY_NAME)
         self.assertFalse(
             set(catalog.READ_TOOLS_BY_NAME) & set(catalog.WRITE_TOOLS_BY_NAME)
+        )
+        self.assertIn(
+            "query_server_services",
+            {
+                tool.name
+                for tool in chat_graph.SPECIALIST_READ_TOOLS["infrastructure_agent"]
+            },
         )
 
         action = catalog.describe_write_action(

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_openai import StreamChunkTimeoutError
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -224,6 +225,11 @@ async def _drive_graph(
         if new_title is not None:
             done_event["title"] = new_title
         yield done_event
+    except StreamChunkTimeoutError:
+        yield {
+            "type": "error",
+            "message": "模型流式响应长时间没有返回新内容，请重试本次提问。",
+        }
     except Exception as exc:  # noqa: BLE001 - 流式响应里要把错误也发给前端，不能直接 500
         yield {"type": "error", "message": str(exc)}
 

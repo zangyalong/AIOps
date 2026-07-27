@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from langchain_core.messages import AIMessage, HumanMessage
+from langchain_openai import StreamChunkTimeoutError
 
 from app.services import chat_service
 
@@ -99,6 +100,16 @@ class _FakeGraph:
         return self.snapshot
 
 
+class _TimeoutGraph:
+    async def astream_events(self, graph_input: object, config: dict, version: str):
+        del graph_input, config, version
+        if False:
+            yield
+        raise StreamChunkTimeoutError(
+            120.0, model_name="deepseek-v4-flash", chunks_received=39
+        )
+
+
 class ChatStreamTest(unittest.IsolatedAsyncioTestCase):
     async def test_streams_tool_narration_and_hides_specialist_report(self) -> None:
         """工具旁白、工具卡片和最终回答实时发送，专家内部报告仍不发送。"""
@@ -125,3 +136,24 @@ class ChatStreamTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[3]["content"], "一次生成的最终回答")
         self.assertNotIn("专家内部报告", str(events))
         persist.assert_awaited_once()
+
+    async def test_stream_timeout_returns_readable_error(self) -> None:
+        events = [
+            event
+            async for event in chat_service._drive_graph(
+                _TimeoutGraph(),  # type: ignore[arg-type] - 测试替身只模拟超时
+                uuid.uuid4(),
+                graph_input={},
+                thread_id="timeout-test",
+            )
+        ]
+
+        self.assertEqual(
+            events,
+            [
+                {
+                    "type": "error",
+                    "message": "模型流式响应长时间没有返回新内容，请重试本次提问。",
+                }
+            ],
+        )
