@@ -43,6 +43,8 @@ const error = ref<string | null>(null)
 const formError = ref<string | null>(null)
 const saving = ref(false)
 const search = ref('')
+const selectedServerId = ref<string | null>(null)
+const expandedServerIds = ref<Set<string>>(new Set())
 
 const serviceModal = ref(false)
 const editingService = ref<ServiceRecord | null>(null)
@@ -101,9 +103,18 @@ const serviceMap = computed(
   () => new Map(services.value.map((service) => [service.id, service])),
 )
 const serverMap = computed(() => new Map(servers.value.map((server) => [server.id, server])))
-const selectedInstances = computed(() =>
+const selectedServer = computed(
+  () => servers.value.find((server) => server.id === selectedServerId.value) ?? null,
+)
+const allSelectedInstances = computed(() =>
   instances.value.filter((instance) => instance.service_id === selectedId.value),
 )
+const selectedInstances = computed(() => {
+  if (!selectedServerId.value) return allSelectedInstances.value
+  return allSelectedInstances.value.filter(
+    (instance) => instance.server_id === selectedServerId.value,
+  )
+})
 const directDependencies = computed(() =>
   dependencies.value.filter((edge) => edge.upstream_service_id === selectedId.value),
 )
@@ -113,18 +124,56 @@ const directDependents = computed(() =>
 const targetServices = computed(() =>
   services.value.filter((service) => service.id !== selectedId.value),
 )
-const filteredServices = computed(() => {
+const filteredServers = computed(() => {
   const keyword = search.value.trim().toLowerCase()
-  if (!keyword) return services.value
-  return services.value.filter((service) =>
-    [service.name, service.environment, service.owner ?? ''].some((value) =>
-      value.toLowerCase().includes(keyword),
-    ),
+  if (!keyword) return servers.value
+  return servers.value.filter(
+    (server) =>
+      [server.name, server.ip_address].some((value) =>
+        value.toLowerCase().includes(keyword),
+      ) ||
+      servicesForServer(server.id).some((service) => serviceMatchesSearch(service, keyword)),
   )
 })
 
-function instanceCount(serviceId: string): number {
-  return instances.value.filter((instance) => instance.service_id === serviceId).length
+function servicesForServer(serverId: string): ServiceRecord[] {
+  const serviceIds = new Set(
+    instances.value
+      .filter((instance) => instance.server_id === serverId)
+      .map((instance) => instance.service_id),
+  )
+  return services.value.filter((service) => serviceIds.has(service.id))
+}
+
+function serviceMatchesSearch(service: ServiceRecord, keyword: string): boolean {
+  return [service.name, service.environment, service.owner ?? ''].some((value) =>
+    value.toLowerCase().includes(keyword),
+  )
+}
+
+function visibleServicesForServer(server: Server): ServiceRecord[] {
+  const serverServices = servicesForServer(server.id)
+  const keyword = search.value.trim().toLowerCase()
+  if (!keyword) return serverServices
+  if (
+    [server.name, server.ip_address].some((value) =>
+      value.toLowerCase().includes(keyword),
+    )
+  ) {
+    return serverServices
+  }
+  return serverServices.filter((service) => serviceMatchesSearch(service, keyword))
+}
+
+function serverServiceCount(serverId: string): number {
+  return servicesForServer(serverId).length
+}
+
+function serviceInstanceCountOnServer(serviceId: string, serverId: string): number {
+  return instances.value.filter(
+    (instance) =>
+      instance.service_id === serviceId && instance.server_id === serverId,
+  ).length
 }
 
 function dependencyCount(serviceId: string): number {
@@ -150,6 +199,8 @@ async function loadAll() {
     servers.value = serverRows
     if (selectedId.value && !serviceRows.some((service) => service.id === selectedId.value)) {
       await router.replace('/services')
+    } else if (selectedId.value) {
+      syncSelectedServerToService(selectedId.value)
     }
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
@@ -173,10 +224,68 @@ async function loadTopology() {
 }
 
 onMounted(loadAll)
-watch(selectedId, () => void loadTopology(), { immediate: true })
+watch(
+  selectedId,
+  (serviceId) => {
+    void loadTopology()
+    if (serviceId) syncSelectedServerToService(serviceId)
+  },
+  { immediate: true },
+)
+
+function syncSelectedServerToService(serviceId: string) {
+  const selectedServerHasService = instances.value.some(
+    (instance) =>
+      instance.service_id === serviceId && instance.server_id === selectedServerId.value,
+  )
+  if (!selectedServerHasService) {
+    selectedServerId.value =
+      instances.value.find(
+        (instance) => instance.service_id === serviceId && instance.server_id !== null,
+      )?.server_id ?? null
+  }
+  if (selectedServerId.value) expandServer(selectedServerId.value)
+}
 
 function openService(serviceId: string) {
+  syncSelectedServerToService(serviceId)
   void router.push(`/services/${serviceId}`)
+}
+
+function openServiceForServer(serviceId: string, serverId: string) {
+  selectedServerId.value = serverId
+  expandServer(serverId)
+  void router.push(`/services/${serviceId}`)
+}
+
+function expandServer(serverId: string) {
+  const next = new Set(expandedServerIds.value)
+  next.add(serverId)
+  expandedServerIds.value = next
+}
+
+function isServerExpanded(serverId: string): boolean {
+  return Boolean(search.value.trim()) || expandedServerIds.value.has(serverId)
+}
+
+function toggleServer(serverId: string) {
+  const next = new Set(expandedServerIds.value)
+  if (next.has(serverId)) {
+    next.delete(serverId)
+  } else {
+    next.add(serverId)
+    selectedServerId.value = serverId
+    if (
+      selectedId.value &&
+      !instances.value.some(
+        (instance) =>
+          instance.service_id === selectedId.value && instance.server_id === serverId,
+      )
+    ) {
+      void router.push('/services')
+    }
+  }
+  expandedServerIds.value = next
 }
 
 function resetServiceForm() {
@@ -273,6 +382,7 @@ function resetInstanceForm() {
 
 function openCreateInstance() {
   resetInstanceForm()
+  instanceForm.server_id = selectedServerId.value ?? ''
   instanceModal.value = true
 }
 
@@ -309,6 +419,10 @@ async function submitInstance() {
     const index = instances.value.findIndex((instance) => instance.id === saved.id)
     if (index === -1) instances.value.push(saved)
     else instances.value[index] = saved
+    if (saved.server_id) {
+      selectedServerId.value = saved.server_id
+      expandServer(saved.server_id)
+    }
     instanceModal.value = false
     await loadTopology()
   } catch (e) {
@@ -324,6 +438,16 @@ async function removeInstance(instance: ServiceInstance) {
   try {
     await deleteServiceInstance(instance.id)
     instances.value = instances.value.filter((item) => item.id !== instance.id)
+    if (
+      selectedServerId.value &&
+      !instances.value.some(
+        (item) =>
+          item.service_id === instance.service_id &&
+          item.server_id === selectedServerId.value,
+      )
+    ) {
+      await router.push('/services')
+    }
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   }
@@ -412,6 +536,16 @@ function serverLabel(serverId: string | null): string {
   return server ? `${server.name}（${server.ip_address}）` : '服务器记录不存在'
 }
 
+function serverStatusLabel(server: Server): string {
+  const labels: Record<Server['status'], string> = {
+    unknown: '未检测',
+    active: '可连接',
+    unreachable: '不可达',
+    unconfigured: '未配置 SSH',
+  }
+  return labels[server.status]
+}
+
 function safeExternalUrl(value: string | null): string | null {
   if (!value) return null
   try {
@@ -428,7 +562,7 @@ function safeExternalUrl(value: string | null): string | null {
     <header class="view-header">
       <div>
         <h1>服务目录</h1>
-        <p class="subtitle">统一管理逻辑服务、部署实例和有方向的依赖关系</p>
+        <p class="subtitle">按服务器展开服务菜单，查看部署实例和依赖关系</p>
       </div>
       <button type="button" class="btn-primary" @click="openCreateService">+ 新增服务</button>
     </header>
@@ -437,24 +571,64 @@ function safeExternalUrl(value: string | null): string | null {
     <p v-if="loading" class="hint">加载服务目录…</p>
 
     <div v-else class="directory-layout">
-      <aside class="service-list-panel">
-        <input v-model="search" class="service-search" placeholder="搜索服务、环境或负责人" />
-        <p v-if="filteredServices.length === 0" class="list-empty">没有符合条件的服务</p>
-        <button
-          v-for="service in filteredServices"
-          :key="service.id"
-          type="button"
-          class="service-list-item"
-          :class="{ active: service.id === selectedId }"
-          @click="openService(service.id)"
-        >
-          <span class="service-name">{{ service.name }}</span>
-          <span class="environment-badge">{{ service.environment }}</span>
-          <span class="service-owner">{{ service.owner || '未设置负责人' }}</span>
-          <span class="service-counts">
-            {{ instanceCount(service.id) }} 个实例 · {{ dependencyCount(service.id) }} 条关系
-          </span>
-        </button>
+      <aside class="directory-menu-panel">
+        <div class="panel-heading">
+          <h2>服务器与服务</h2>
+          <span class="panel-count">{{ servers.length }}</span>
+        </div>
+        <input v-model="search" class="directory-search" placeholder="搜索服务器或服务" />
+        <p v-if="servers.length === 0" class="list-empty">还没有纳管服务器</p>
+        <p v-else-if="filteredServers.length === 0" class="list-empty">没有符合条件的服务器或服务</p>
+
+        <nav v-else class="server-tree" aria-label="服务器与服务目录">
+          <section v-for="server in filteredServers" :key="server.id" class="server-menu-group">
+            <button
+              type="button"
+              class="server-menu-item"
+              :class="{ active: server.id === selectedServerId }"
+              :aria-expanded="isServerExpanded(server.id)"
+              @click="toggleServer(server.id)"
+            >
+              <span class="menu-chevron" :class="{ expanded: isServerExpanded(server.id) }">›</span>
+              <span class="server-menu-main">
+                <span class="server-menu-name">{{ server.name }}</span>
+                <span class="server-menu-address">{{ server.ip_address }}</span>
+              </span>
+              <span class="server-menu-side">
+                <span class="server-state" :class="`status-${server.status}`">
+                  {{ serverStatusLabel(server) }}
+                </span>
+                <span>{{ serverServiceCount(server.id) }} 个服务</span>
+              </span>
+            </button>
+
+            <div v-if="isServerExpanded(server.id)" class="service-submenu">
+              <p v-if="visibleServicesForServer(server).length === 0" class="submenu-empty">
+                该服务器还没有登记服务
+              </p>
+              <button
+                v-for="service in visibleServicesForServer(server)"
+                :key="service.id"
+                type="button"
+                class="service-submenu-item"
+                :class="{
+                  active: service.id === selectedId && server.id === selectedServerId,
+                }"
+                @click="openServiceForServer(service.id, server.id)"
+              >
+                <span class="submenu-service-heading">
+                  <span class="service-name">{{ service.name }}</span>
+                  <span class="environment-badge">{{ service.environment }}</span>
+                </span>
+                <span class="service-owner">{{ service.owner || '未设置负责人' }}</span>
+                <span class="service-counts">
+                  {{ serviceInstanceCountOnServer(service.id, server.id) }} 个实例 ·
+                  {{ dependencyCount(service.id) }} 条关系
+                </span>
+              </button>
+            </div>
+          </section>
+        </nav>
       </aside>
 
       <main v-if="selectedService" class="service-detail">
@@ -520,7 +694,16 @@ function safeExternalUrl(value: string | null): string | null {
 
         <section class="detail-section">
           <div class="section-heading">
-            <div><h3>部署实例</h3><p>将逻辑服务映射到服务器、Prometheus 和 Loki 标签</p></div>
+            <div>
+              <h3>{{ selectedServer ? `${selectedServer.name} 的部署实例` : '部署实例' }}</h3>
+              <p>
+                {{
+                  selectedServer
+                    ? `这里只展示当前服务器上的实例；该逻辑服务共 ${allSelectedInstances.length} 个实例`
+                    : '将逻辑服务映射到服务器、Prometheus 和 Loki 标签'
+                }}
+              </p>
+            </div>
             <button type="button" class="btn-secondary" @click="openCreateInstance">+ 添加实例</button>
           </div>
           <p v-if="selectedInstances.length === 0" class="section-empty">还没有部署实例。</p>
@@ -591,8 +774,8 @@ function safeExternalUrl(value: string | null): string | null {
 
       <main v-else class="service-placeholder">
         <div>
-          <h2>{{ services.length ? '选择一个服务查看详情' : '还没有服务' }}</h2>
-          <p>服务目录把服务器、监控标签、变更记录和依赖关系连接到同一个逻辑实体。</p>
+          <h2>从左侧菜单选择一个服务</h2>
+          <p>点击服务器名称展开二级服务菜单，再点击服务查看详情。</p>
           <button v-if="services.length === 0" type="button" class="btn-primary" @click="openCreateService">
             新增第一个服务
           </button>
@@ -700,7 +883,7 @@ function safeExternalUrl(value: string | null): string | null {
 <style scoped>
 .services-view {
   width: 100%;
-  max-width: 1400px;
+  max-width: 1600px;
   margin: 0 auto;
   padding: 2rem;
 }
@@ -799,12 +982,12 @@ button:disabled {
 
 .directory-layout {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-columns: 320px minmax(0, 1fr);
   gap: 1rem;
   align-items: start;
 }
 
-.service-list-panel,
+.directory-menu-panel,
 .service-detail,
 .service-placeholder {
   border: 1px solid var(--color-border);
@@ -813,20 +996,145 @@ button:disabled {
   box-shadow: var(--shadow-sm);
 }
 
-.service-list-panel {
+.directory-menu-panel {
   position: sticky;
   top: 1rem;
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: 0.65rem;
   max-height: calc(100vh - 4rem);
   overflow-y: auto;
   padding: 0.75rem;
 }
 
-.service-search {
+.panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.55rem;
+  padding: 0.15rem 0.15rem 0.45rem;
+}
+
+.panel-heading h2 {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.panel-count {
+  min-width: 1.65rem;
+  border-radius: 999px;
+  padding: 0.15rem 0.4rem;
+  color: var(--color-text-muted);
+  background: var(--color-bg);
+  font-size: 0.7rem;
+  text-align: center;
+}
+
+.directory-search {
   width: 100%;
-  margin-bottom: 0.35rem;
+}
+
+.server-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.server-menu-group {
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+}
+
+.server-menu-item {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 0.7rem 0.65rem;
+  color: var(--color-text);
+  background: transparent;
+  text-align: left;
+}
+
+.server-menu-item:hover {
+  background: var(--color-bg);
+}
+
+.server-menu-item.active {
+  color: var(--color-accent);
+}
+
+.menu-chevron {
+  color: var(--color-text-muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  transition: transform 0.15s ease;
+}
+
+.menu-chevron.expanded {
+  transform: rotate(90deg);
+}
+
+.server-menu-main,
+.server-menu-side {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.server-menu-main {
+  gap: 0.12rem;
+}
+
+.server-menu-side {
+  align-items: flex-end;
+  gap: 0.18rem;
+  color: var(--color-text-muted);
+  font-size: 0.62rem;
+}
+
+.server-menu-name,
+.server-menu-address {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-menu-name {
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.server-menu-address {
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+}
+
+.server-state {
+  border-radius: 999px;
+  padding: 0.1rem 0.35rem;
+  color: var(--color-text-muted);
+  background: var(--color-bg);
+  font-size: 0.6rem;
+  white-space: nowrap;
+}
+
+.server-state.status-active {
+  color: #067647;
+  background: #ecfdf3;
+}
+
+.server-state.status-unreachable {
+  color: #b42318;
+  background: #fef3f2;
+}
+
+.server-state.status-unconfigured {
+  color: #b54708;
+  background: #fffaeb;
 }
 
 .list-empty {
@@ -835,26 +1143,50 @@ button:disabled {
   text-align: center;
 }
 
-.service-list-item {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.2rem 0.5rem;
+.service-submenu {
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+  margin: 0 0.4rem 0.35rem 1.1rem;
+  padding: 0.2rem 0 0.15rem 0.65rem;
+  border-left: 1px solid var(--color-border);
+}
+
+.submenu-empty {
+  margin: 0;
+  padding: 0.55rem 0.6rem;
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+}
+
+.service-submenu-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
   width: 100%;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  padding: 0.7rem;
+  padding: 0.55rem 0.65rem;
   color: var(--color-text);
   background: transparent;
   text-align: left;
 }
 
-.service-list-item:hover {
+.service-submenu-item:hover {
   background: var(--color-bg);
 }
 
-.service-list-item.active {
+.service-submenu-item.active {
   border-color: color-mix(in srgb, var(--color-accent) 35%, var(--color-border));
   background: #eef2ff;
+}
+
+.submenu-service-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
 }
 
 .service-name {
@@ -875,12 +1207,12 @@ button:disabled {
 
 .service-owner,
 .service-counts {
-  grid-column: 1 / -1;
   color: var(--color-text-muted);
-  font-size: 0.72rem;
+  font-size: 0.68rem;
 }
 
 .service-detail {
+  grid-column: auto / -1;
   min-width: 0;
   padding: 1.25rem;
 }
@@ -1081,6 +1413,7 @@ button:disabled {
 }
 
 .service-placeholder {
+  grid-column: auto / -1;
   display: grid;
   min-height: 480px;
   place-items: center;
@@ -1170,16 +1503,14 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
-  .service-list-panel {
+  .directory-menu-panel {
     position: static;
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
     max-height: none;
   }
 
-  .service-search,
-  .list-empty {
-    grid-column: 1 / -1;
+  .service-detail,
+  .service-placeholder {
+    grid-column: auto;
   }
 }
 
@@ -1188,7 +1519,6 @@ button:disabled {
     padding: 1.25rem;
   }
 
-  .service-list-panel,
   .instance-grid,
   .dependency-columns,
   .service-meta {

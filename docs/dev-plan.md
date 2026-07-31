@@ -26,6 +26,7 @@
   - 提供服务管理与依赖图页面，以及 `query_service_dependencies`、`query_impacted_services`、`query_upstream_candidates` 只读工具
   - 已实现 `services`、`service_instances`、`service_dependencies` 三张规范化表与完整 CRUD；事件和自动 triage 优先按实例解析服务，旧 `monitor_labels` 兼容回退
   - 已实现可点击 SVG 拓扑和服务详情 URL；代码、后端测试和前端构建完成后仍保持未勾选，等用户运行时验收
+  - 服务目录左侧改为树形菜单：服务器是一级菜单，展开后显示该服务器的服务二级菜单，右侧保留服务详情；代码与前端构建完成后保持未勾选，等用户运行时验收
 - [ ] **对话发现并注册服务器服务**：用户可要求 Agent 扫描已纳管服务器，把 systemd 服务、Docker 容器或监听端口的未纳管长期进程登记到服务目录
   - 新增只读 `discover_server_services` 和写入 `register_server_services` Tool；发现按 systemd / Docker / socket 监听三层结构化返回，写入复用 LangGraph 人工审批门
   - 第三层只对监听 socket 返回的 PID 定点查询详情，并保留运行至少 60 秒、又不属于 systemd service / Docker scope 的进程；启动命令先做密钥参数脱敏，候选仍需人工判断是否具备业务意义
