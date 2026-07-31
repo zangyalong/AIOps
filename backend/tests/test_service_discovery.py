@@ -42,16 +42,15 @@ class _FakeConnection:
             return SimpleNamespace(
                 exit_status=0,
                 stdout=(
-                    "CONTAINER ID   IMAGE           COMMAND       STATUS       NAMES\n"
-                    'abc123         example/api:1   "/start"      Up 2 hours   orders-api\n'
+                    "orders-api\texample/api:1\tUp 2 hours\t"
+                    "0.0.0.0:8080->8080/tcp\n"
                 ),
                 stderr="",
             )
-        if command == service_discovery._SS_COMMAND:
+        if command == service_discovery._INET_SOCKET_COMMAND:
             return SimpleNamespace(
                 exit_status=0,
                 stdout=(
-                    "Netid State Recv-Q Send-Q Local Address:Port Peer Address:Port Process\n"
                     'tcp LISTEN 0 128 0.0.0.0:80 0.0.0.0:* users:(("nginx",pid=101,fd=6))\n'
                     'tcp LISTEN 0 128 0.0.0.0:8010 0.0.0.0:* users:(("python",pid=301,fd=7))\n'
                     'tcp LISTEN 0 128 [::]:8080 [::]:* users:(("java",pid=401,fd=9))\n'
@@ -62,7 +61,18 @@ class _FakeConnection:
                 ),
                 stderr="",
             )
-        if command == service_discovery._PS_COMMAND:
+        if command == service_discovery._UNIX_SOCKET_COMMAND:
+            return SimpleNamespace(
+                exit_status=0,
+                stdout=(
+                    "u_str LISTEN 0 4096 /run/php/php-fpm.sock 12345 * 0 "
+                    'users:(("php-fpm8.2",pid=801,fd=8))\n'
+                ),
+                stderr="",
+            )
+        if command == service_discovery._process_details_command(
+            [101, 301, 401, 501, 601, 701, 801]
+        ):
             return SimpleNamespace(
                 exit_status=0,
                 stdout=(
@@ -74,6 +84,7 @@ class _FakeConnection:
                     "501 1 ops 20 session-5.scope node temp.js\n"
                     "601 1 root 12000 - /usr/sbin/sshd -D\n"
                     "701 1 root 8000 docker-abc123.scope /app/container-api\n"
+                    "801 1 www-data 4000 session-8.scope /usr/sbin/php-fpm8.2 -F\n"
                 ),
                 stderr="",
             )
@@ -162,8 +173,11 @@ class ServiceDiscoveryToolTest(unittest.IsolatedAsyncioTestCase):
             [
                 service_discovery._SYSTEMD_COMMAND,
                 service_discovery._DOCKER_COMMAND,
-                service_discovery._SS_COMMAND,
-                service_discovery._PS_COMMAND,
+                service_discovery._INET_SOCKET_COMMAND,
+                service_discovery._UNIX_SOCKET_COMMAND,
+                service_discovery._process_details_command(
+                    [101, 301, 401, 501, 601, 701, 801]
+                ),
             ],
         )
         candidates = {
@@ -172,12 +186,17 @@ class ServiceDiscoveryToolTest(unittest.IsolatedAsyncioTestCase):
         }
         self.assertTrue(candidates[("systemd", "nginx.service")]["registered"])
         self.assertEqual(candidates[("docker", "orders-api")]["image"], "example/api:1")
+        self.assertEqual(candidates[("docker", "orders-api")]["status"], "Up 2 hours")
+        self.assertEqual(
+            candidates[("docker", "orders-api")]["ports"],
+            ["0.0.0.0:8080->8080/tcp"],
+        )
         process_candidates = [
             item for item in payload["candidates"] if item["runtime_type"] == "process"
         ]
         self.assertEqual(
             {item["service_name"] for item in process_candidates},
-            {"uvicorn", "payments"},
+            {"uvicorn", "payments", "php-fpm8.2"},
         )
         uvicorn = next(
             item for item in process_candidates if item["service_name"] == "uvicorn"
@@ -200,6 +219,12 @@ class ServiceDiscoveryToolTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(
             any(item["service_name"] == "container-api" for item in process_candidates)
         )
+        php_fpm = next(
+            item
+            for item in process_candidates
+            if item["service_name"] == "php-fpm8.2"
+        )
+        self.assertEqual(php_fpm["ports"], ["unix:/run/php/php-fpm.sock"])
 
     async def test_listener_without_visible_pid_returns_permission_warning(
         self,
@@ -213,7 +238,7 @@ class ServiceDiscoveryToolTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(candidates, [])
-        self.assertTrue(any("无权查看" in warning for warning in warnings))
+        self.assertTrue(any("安全策略" in warning for warning in warnings))
 
     async def test_process_matching_systemd_name_is_not_duplicated_when_unit_missing(
         self,

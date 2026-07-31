@@ -60,6 +60,9 @@ class DiagnosticCommandValidationTest(unittest.TestCase):
             "docker logs --tail 100 web-01",
             "ps aux",
             "ss -lntup",
+            "ss -lxnp",
+            "ps -p 12345 -o pid,ppid,user,lstart,cmd",
+            "systemctl status 12345 --no-pager",
             "journalctl -u nginx.service -n 100 --no-pager",
             "kubectl get pods -A -o wide",
         ):
@@ -77,6 +80,10 @@ class DiagnosticCommandValidationTest(unittest.TestCase):
             "docker logs --tail 50 web-01",
             "kubectl get secrets -A -o yaml",
             "ps aux | grep nginx",
+            "ps -p abc -o pid,ppid,user,lstart,cmd",
+            "ps -p 12345 -o pid,cmd",
+            "systemctl status 12345 --no-pager --full",
+            "ss -K dst 127.0.0.1",
             "docker ps && touch /tmp/pwned",
             "df -h > /tmp/df.txt",
             "journalctl -u nginx.service -f",
@@ -95,7 +102,7 @@ class DiagnosticCommandValidationTest(unittest.TestCase):
     def test_docker_command_is_rewritten_to_noninteractive_sudo(self) -> None:
         self.assertEqual(
             commands._validated_command("docker ps"),
-            "sudo -n -- /usr/bin/docker ps",
+            "sudo -n -- /usr/local/sbin/aioms-docker-read ps",
         )
         self.assertEqual(
             commands._validated_command("docker logs --tail 100 web-01"),
@@ -104,6 +111,26 @@ class DiagnosticCommandValidationTest(unittest.TestCase):
         self.assertEqual(
             commands._validated_command("docker top web-01"),
             "sudo -n -- /usr/local/sbin/aioms-docker-read top web-01",
+        )
+
+    def test_socket_and_pid_queries_use_readonly_gateway(self) -> None:
+        self.assertEqual(
+            commands._validated_command("ss -lntup"),
+            "sudo -n -- /usr/local/sbin/aioms-service-read inet-sockets",
+        )
+        self.assertEqual(
+            commands._validated_command("ss -lxnp"),
+            "sudo -n -- /usr/local/sbin/aioms-service-read unix-sockets",
+        )
+        self.assertEqual(
+            commands._validated_command(
+                "ps -p 12345 -o pid,ppid,user,lstart,cmd"
+            ),
+            "sudo -n -- /usr/local/sbin/aioms-service-read process 12345",
+        )
+        self.assertEqual(
+            commands._validated_command("systemctl status 12345 --no-pager"),
+            "sudo -n -- /usr/local/sbin/aioms-service-read unit 12345",
         )
 
 

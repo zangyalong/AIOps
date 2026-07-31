@@ -1,0 +1,91 @@
+#!/bin/bash
+
+set -euo pipefail
+
+readonly CONTAINER_PATTERN='^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$'
+
+fail() {
+    echo "aioms-docker-read: $*" >&2
+    exit 64
+}
+
+find_docker() {
+    local candidate
+    for candidate in /usr/bin/docker /usr/local/bin/docker; do
+        if [[ -x "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return
+        fi
+    done
+    fail "没有找到 Docker CLI（检查过 /usr/bin/docker 和 /usr/local/bin/docker）"
+}
+
+require_no_extra_args() {
+    [[ $# -eq 0 ]] || fail "子命令不接受额外参数"
+}
+
+require_container() {
+    [[ $# -eq 1 ]] || fail "子命令必须提供且只能提供一个容器名"
+    [[ "$1" =~ $CONTAINER_PATTERN ]] || fail "容器名格式不合法"
+}
+
+run_docker() {
+    local docker_bin
+    docker_bin="$(find_docker)"
+    exec "$docker_bin" "$@"
+}
+
+readonly ACTION="${1:-}"
+[[ -n "$ACTION" ]] || fail "缺少子命令"
+shift
+
+case "$ACTION" in
+    ps)
+        require_no_extra_args "$@"
+        run_docker ps
+        ;;
+    ps-all)
+        require_no_extra_args "$@"
+        run_docker ps -a
+        ;;
+    inventory)
+        require_no_extra_args "$@"
+        run_docker ps \
+            --format '{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
+        ;;
+    images)
+        require_no_extra_args "$@"
+        run_docker images
+        ;;
+    stats)
+        require_no_extra_args "$@"
+        run_docker stats --no-stream
+        ;;
+    system-df)
+        require_no_extra_args "$@"
+        run_docker system df
+        ;;
+    version)
+        require_no_extra_args "$@"
+        run_docker version
+        ;;
+    network-ls)
+        require_no_extra_args "$@"
+        run_docker network ls
+        ;;
+    volume-ls)
+        require_no_extra_args "$@"
+        run_docker volume ls
+        ;;
+    top)
+        require_container "$@"
+        run_docker top "$1"
+        ;;
+    logs)
+        require_container "$@"
+        run_docker logs --tail 100 "$1"
+        ;;
+    *)
+        fail "不允许的子命令：$ACTION"
+        ;;
+esac

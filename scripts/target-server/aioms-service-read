@@ -1,0 +1,72 @@
+#!/bin/bash
+
+set -euo pipefail
+
+readonly MAX_PIDS=100
+readonly PID_PATTERN='^[1-9][0-9]{0,9}$'
+
+fail() {
+    echo "aioms-service-read: $*" >&2
+    exit 64
+}
+
+find_binary() {
+    local candidate
+    for candidate in "$@"; do
+        if [[ -x "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return
+        fi
+    done
+    fail "没有找到所需系统命令：$*"
+}
+
+require_no_extra_args() {
+    [[ $# -eq 0 ]] || fail "子命令不接受额外参数"
+}
+
+validate_pid() {
+    [[ "$1" =~ $PID_PATTERN ]] || fail "PID 必须是正整数"
+}
+
+readonly ACTION="${1:-}"
+[[ -n "$ACTION" ]] || fail "缺少子命令"
+shift
+
+case "$ACTION" in
+    inet-sockets)
+        require_no_extra_args "$@"
+        readonly SS_BIN="$(find_binary /usr/sbin/ss /usr/bin/ss)"
+        exec "$SS_BIN" -H -lntup
+        ;;
+    unix-sockets)
+        require_no_extra_args "$@"
+        readonly SS_BIN="$(find_binary /usr/sbin/ss /usr/bin/ss)"
+        exec "$SS_BIN" -H -lxnp
+        ;;
+    process)
+        [[ $# -eq 1 ]] || fail "process 必须提供且只能提供一个 PID"
+        validate_pid "$1"
+        readonly PS_BIN="$(find_binary /usr/bin/ps /bin/ps)"
+        exec "$PS_BIN" -p "$1" -o pid,ppid,user,lstart,cmd
+        ;;
+    processes)
+        [[ $# -ge 1 ]] || fail "processes 至少需要一个 PID"
+        [[ $# -le $MAX_PIDS ]] || fail "一次最多查询 $MAX_PIDS 个 PID"
+        for pid in "$@"; do
+            validate_pid "$pid"
+        done
+        readonly PS_BIN="$(find_binary /usr/bin/ps /bin/ps)"
+        readonly PID_LIST="$(IFS=,; printf '%s' "$*")"
+        exec "$PS_BIN" -p "$PID_LIST" -o pid=,ppid=,user=,etimes=,unit=,args=
+        ;;
+    unit)
+        [[ $# -eq 1 ]] || fail "unit 必须提供且只能提供一个 PID"
+        validate_pid "$1"
+        readonly SYSTEMCTL_BIN="$(find_binary /usr/bin/systemctl /bin/systemctl)"
+        exec "$SYSTEMCTL_BIN" status "$1" --no-pager
+        ;;
+    *)
+        fail "不允许的子命令：$ACTION"
+        ;;
+esac

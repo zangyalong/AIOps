@@ -28,7 +28,9 @@ _COMMAND_TIMEOUT_SECONDS = 20
 _MAX_OUTPUT_CHARS = 12_000
 _SAFE_RESOURCE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.@:-]{0,127}")
 _SAFE_CONTAINER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
+_SAFE_PID = re.compile(r"[1-9][0-9]{0,9}")
 _DOCKER_READ_WRAPPER = "/usr/local/sbin/aioms-docker-read"
+_SERVICE_READ_WRAPPER = "/usr/local/sbin/aioms-service-read"
 
 # key 是模型可以提交的命令，value 是真正交给远端 shell 的规范化命令。systemctl 的几个短写
 # 会被自动补成 --no-pager 和有限范围，避免分页器卡住或无界输出。
@@ -78,7 +80,20 @@ _EXACT_COMMANDS: dict[tuple[str, ...], tuple[str, ...]] = {
     # 网络
     ("ip", "addr", "show"): ("ip", "addr", "show"),
     ("ip", "route", "show"): ("ip", "route", "show"),
-    ("ss", "-lntup"): ("ss", "-lntup"),
+    ("ss", "-lntup"): (
+        "sudo",
+        "-n",
+        "--",
+        _SERVICE_READ_WRAPPER,
+        "inet-sockets",
+    ),
+    ("ss", "-lxnp"): (
+        "sudo",
+        "-n",
+        "--",
+        _SERVICE_READ_WRAPPER,
+        "unix-sockets",
+    ),
     ("ss", "-s"): ("ss", "-s"),
     # systemd 与系统日志
     ("systemctl", "list-units"): (
@@ -134,61 +149,56 @@ _EXACT_COMMANDS: dict[tuple[str, ...], tuple[str, ...]] = {
         "100",
         "--no-pager",
     ),
-    # Docker：模型仍使用普通 docker 命令；真正执行时改写成 sudoers 精确授权的绝对路径。
-    ("docker", "ps"): ("sudo", "-n", "--", "/usr/bin/docker", "ps"),
+    # Docker：模型仍使用普通 docker 命令；真正执行时统一进入目标机只读参数网关。
+    ("docker", "ps"): ("sudo", "-n", "--", _DOCKER_READ_WRAPPER, "ps"),
     ("docker", "ps", "-a"): (
         "sudo",
         "-n",
         "--",
-        "/usr/bin/docker",
-        "ps",
-        "-a",
+        _DOCKER_READ_WRAPPER,
+        "ps-all",
     ),
     ("docker", "images"): (
         "sudo",
         "-n",
         "--",
-        "/usr/bin/docker",
+        _DOCKER_READ_WRAPPER,
         "images",
     ),
     ("docker", "stats", "--no-stream"): (
         "sudo",
         "-n",
         "--",
-        "/usr/bin/docker",
+        _DOCKER_READ_WRAPPER,
         "stats",
-        "--no-stream",
     ),
     ("docker", "system", "df"): (
         "sudo",
         "-n",
         "--",
-        "/usr/bin/docker",
-        "system",
-        "df",
+        _DOCKER_READ_WRAPPER,
+        "system-df",
     ),
     ("docker", "version"): (
         "sudo",
         "-n",
         "--",
-        "/usr/bin/docker",
+        _DOCKER_READ_WRAPPER,
         "version",
     ),
     ("docker", "network", "ls"): (
         "sudo",
         "-n",
         "--",
-        "/usr/bin/docker",
-        "network",
-        "ls",
+        _DOCKER_READ_WRAPPER,
+        "network-ls",
     ),
     ("docker", "volume", "ls"): (
         "sudo",
         "-n",
         "--",
-        "/usr/bin/docker",
-        "volume",
-        "ls",
+        _DOCKER_READ_WRAPPER,
+        "volume-ls",
     ),
     ("crictl", "ps"): ("crictl", "ps"),
     ("crictl", "pods"): ("crictl", "pods"),
@@ -233,7 +243,9 @@ _COMMAND_HELP = (
     "主机资源：uptime / date / hostname / hostnamectl / uname -a / whoami / id / "
     "id -nG / who / w / last -n 20 / df -h / df -i / free -m / vmstat 1 5 / "
     "top -b -n 1 / ps aux / lsblk -f / mount；网络：ip addr show / "
-    "ip route show / ss -lntup / ss -s；systemd：systemctl list-units / "
+    "ip route show / ss -lntup / ss -lxnp / ss -s；进程定点调查："
+    "ps -p <PID> -o pid,ppid,user,lstart,cmd / systemctl status <PID> --no-pager；"
+    "systemd：systemctl list-units / "
     "systemctl --failed / "
     "systemctl status <unit> / systemctl is-active <unit> / "
     "systemctl is-enabled <unit>；日志：journalctl -p err -n 100 --no-pager / "
@@ -277,6 +289,26 @@ def _validated_command(command: str) -> str | None:
         )
 
     if (
+        len(tokens) == 5
+        and tokens[:2] == ("ps", "-p")
+        and _SAFE_PID.fullmatch(tokens[2])
+        and tokens[3:] == ("-o", "pid,ppid,user,lstart,cmd")
+    ):
+        return shlex.join(
+            ("sudo", "-n", "--", _SERVICE_READ_WRAPPER, "process", tokens[2])
+        )
+
+    if (
+        len(tokens) in {3, 4}
+        and tokens[:2] == ("systemctl", "status")
+        and _SAFE_PID.fullmatch(tokens[2])
+        and (len(tokens) == 3 or tokens[3] == "--no-pager")
+    ):
+        return shlex.join(
+            ("sudo", "-n", "--", _SERVICE_READ_WRAPPER, "unit", tokens[2])
+        )
+
+    if (
         len(tokens) == 3
         and tokens[:2]
         in {
@@ -307,12 +339,12 @@ async def run_diagnostic_command(server_name: str, command: str) -> str:
 
     支持主机资源、进程、网络、systemd、journal、Docker、crictl 和 Kubernetes 的常用只读
     命令。systemctl status、journalctl -u 的资源名经过严格校验；不允许管道、重定向、
-    命令拼接或任意额外参数。固定 Docker 查询会转换成 sudo -n + 绝对路径；带动态容器名的
-    logs/top 会转换成服务器上的 aioms-docker-read 参数校验包装脚本。只有 servers 表里配置了
-    SSH 连接信息的服务器才会连接执行。
+    命令拼接或任意额外参数。Docker、监听 socket 和按 PID 查询会转换成 sudo -n + 目标服务器
+    上的只读参数校验包装脚本。只有 servers 表里配置了 SSH 连接信息的服务器才会连接执行。
 
     常用命令包括 whoami、id、id -nG、uptime、df -h、free -m、top -b -n 1、
-    ps aux、ss -lntup、systemctl list-units、systemctl status <unit>、
+    ps aux、ss -lntup、ss -lxnp、ps -p <PID> -o pid,ppid,user,lstart,cmd、
+    systemctl list-units、systemctl status <unit>、
     journalctl -u <unit> -n 100 --no-pager、docker ps、docker images、
     docker stats --no-stream、docker network ls、docker top <container>、
     docker logs --tail 100 <container>、crictl ps 和
