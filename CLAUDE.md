@@ -17,7 +17,7 @@
 | 层         | 选型                                               | 备注                                                                                                               |
 | ---------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | Agent 框架 | **LangChain + LangGraph**                    | LangChain 提供工具/模型抽象，LangGraph 编排多步骤/多Agent工作流                                                    |
-| 后端       | **FastAPI + Python 3.11+**                   | 用`uv` 或 `poetry` 管理依赖（首次进入时和用户确认）                                                            |
+| 后端       | **FastAPI + Python 3.12+**                   | 用 `uv` 管理依赖                                                                                                  |
 | 前端       | **Vue3 + Vite + TypeScript**                 | 组合式 API，`<script setup>` 语法                                                                                |
 | 数据库     | **PostgreSQL 16+**                           | 业务数据；向量存储后期再决定（pgvector 或 Chroma）                                                                 |
 | LLM        | **DeepSeek V4 Flash**（OpenAI 兼容格式 API） | 走`langchain-openai` 的 `ChatOpenAI`，指定自定义 `base_url` 指向 DeepSeek 接口，不用 `langchain-anthropic` |
@@ -45,6 +45,7 @@
 ```
 AIOMS/
 ├── CLAUDE.md                # 本文档
+├── AGENTS.md                # Codex 协作说明，与本文保持项目事实一致
 ├── README.md                # 面向新用户的说明（后期补）
 ├── backend/                 # FastAPI 服务
 │   ├── app/
@@ -74,7 +75,9 @@ AIOMS/
 │   └── package.json
 ├── docs/                    # 学习笔记、架构决策记录（ADR）
 │   └── aiops-feature-survey.md  # Keep/OpenSRE 源码级功能调研，涉及告警/工具/安全/Agent架构设计时先看这个
-└── docker-compose.yml       # 后期加：pg + backend + frontend
+├── scripts/
+│   └── target-server/       # 安装到纳管服务器的只读命令网关、sudoers 模板和说明
+└── docker-compose.yml       # 本地 PLG 可观测性数据栈 + Redis（不含 pg/backend/frontend）
 ```
 
 **说明**：这只是目标结构，**不要一次性全建**。用到什么再加什么，不用的目录不要提前搭。
@@ -85,7 +88,7 @@ AIOMS/
 
 ### Python / 后端
 
-- Python 3.11+，类型注解写全（`from __future__ import annotations` 常备）
+- Python 3.12+，类型注解写全（`from __future__ import annotations` 常备）
 - 格式化：`ruff format`；静态检查：`ruff check`
 - Pydantic v2；FastAPI 依赖注入优先于全局变量
 - 路由层不直接调 ORM；具体的 `select`/`add`/`commit` 这类查库代码放 `repositories/`，`services/` 只写业务逻辑（标题生成、schema↔model 转换等）并调用 repository
@@ -119,6 +122,8 @@ AIOMS/
 
 - **AI 决定的破坏性操作必须人工二次确认**：重启服务、删除数据、修改防火墙、`rm -rf` 这类，Agent 只能"建议"，不能"执行"。
 - SSH/Shell 工具要走**白名单命令**，不要开放任意执行。
+- 服务器业务资产盘点默认按 systemd、Docker、TCP/UDP Socket、Unix Socket 扫描，只对监听结果中的纯数字 PID 定点补充详情，不默认读取整机 `ps` 进程表。
+- 目标服务器只读权限配置以 `scripts/target-server/` 为准：包装脚本必须由 `root:root` 持有且不可被 SSH 用户修改，sudoers 只授权包装脚本，不能直接开放任意 `docker`、`ss`、`ps` 或 shell。
 - LLM 的输出**永远视为不可信**，落库前做校验。
 - Prompt 注入防护：从日志/工单里读到的文本，进 Prompt 前要做隔离/转义。
 
@@ -130,14 +135,18 @@ AIOMS/
 # 启动后端（FastAPI，默认 8010 端口，因为 8000 被本机其他项目占用；启动时会自动建表，不用单独迁移）：
 cd backend && uv run uvicorn app.main:app --reload --port 8010
 
-# 启动前端（Vite dev server，默认 5173）：
+# 启动前端（Vite dev server，默认 5174）：
 cd frontend && npm run dev
 
 # 起数据库：Postgres 走 Homebrew service，长期运行，一般不用手动起
 brew services list | grep postgres   # 确认 postgresql@18 是 started
 psql -d aioms                        # 连接 aioms 库
 
-# 跑测试：暂无测试套件，需要时再补
+# 跑后端测试（覆盖 Supervisor handoff、审批边界、服务发现和 worker 写工具隔离）
+cd backend && uv run python -m unittest discover -s tests -v
+
+# 前端类型检查 + 生产构建
+cd frontend && npm run build
 ```
 
 ---
