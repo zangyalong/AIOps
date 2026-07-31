@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -18,9 +18,14 @@ class Message(Base, UUIDMixin):
     """
 
     __tablename__ = "messages"
+    __table_args__ = (Index("ix_messages_run_id_created_at", "run_id", "created_at"),)
 
     conversation_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    # 旧历史在迁移后允许为 NULL；新消息都绑定到产生它的 chat_run。
+    run_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("chat_runs.id", ondelete="SET NULL"), nullable=True
     )
     # "user" | "assistant" | "tool"——忠实对应 LangChain 的 HumanMessage/AIMessage/ToolMessage
     role: Mapped[str] = mapped_column(String(20), nullable=False)

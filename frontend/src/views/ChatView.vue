@@ -11,14 +11,15 @@ import {
 import { fetchConversationDetail } from '../api/conversations'
 import ConversationList from '../components/ConversationList.vue'
 import MarkdownContent from '../components/MarkdownContent.vue'
-import type { ChatMessage } from '../types/chat'
+import type { ChatMessage, ChatRunHistory } from '../types/chat'
 
 // 会话时间线：消息、工具行、写操作审批行按发生顺序混在一个数组里，这样它们能显示在实际
 // 发生的那个位置（夹在文本流中间）。工具行和审批行都会随历史重建：工具行来自 assistant 的
 // tool_calls；审批行来自写工具的 tool_call + 它配对的返回（据此还原当初是执行了还是被拒）。
 type TimelineItem =
   | { kind: 'message'; key: string; role: 'user' | 'assistant'; content: string }
-  | { kind: 'tool'; key: string; id: string; tool: string; done: boolean }
+  | { kind: 'tool'; key: string; id: string; tool: string; done: boolean; failed?: boolean }
+  | { kind: 'run-error'; key: string; content: string }
   | {
       // 写操作审批行：pending 时右侧带执行/不执行按钮；裁决后翻成 approved（已批准）/rejected（已拒绝）
       kind: 'approval'
@@ -27,7 +28,7 @@ type TimelineItem =
       command: string // 展示的命令 / 动作摘要
       label: string // 副标题（在哪台执行等），可空
       riskLevel?: 'medium' | 'high' | 'critical'
-      status: 'pending' | 'approved' | 'rejected'
+      status: 'pending' | 'approved' | 'rejected' | 'failed'
     }
 
 const timeline = ref<TimelineItem[]>([])
@@ -318,24 +319,43 @@ function onConversationDeleted(id: string) {
   if (id === conversationId.value) void newConversation()
 }
 
-function buildTimeline(messages: ChatMessage[]): TimelineItem[] {
+function buildTimeline(
+  messages: ChatMessage[],
+  runs: ChatRunHistory[],
+  replayRunId: string | null,
+): TimelineItem[] {
+  const runById = new Map(runs.map((run) => [run.id, run]))
+  // 当前内存 Run 会从 seq=0 重放 SSE；它已逐步落库的 assistant/tool 暂不从历史画，避免重复。
+  // 用户消息不在 SSE 中，始终保留。
+  const visibleMessages = messages.filter(
+    (message) => message.role === 'user' || !replayRunId || message.run_id !== replayRunId,
+  )
   const toolResultById = new Map<string, string>()
-  for (const message of messages) {
+  const resultKey = (runId: string | null | undefined, toolCallId: string) =>
+    `${runId ?? 'legacy'}:${toolCallId}`
+  const lastMessageIndexByRun = new Map<string, number>()
+  visibleMessages.forEach((message, index) => {
+    if (message.run_id) lastMessageIndexByRun.set(message.run_id, index)
+  })
+  for (const message of visibleMessages) {
     if (message.role === 'tool' && message.tool_call_id) {
-      toolResultById.set(message.tool_call_id, message.content)
+      toolResultById.set(resultKey(message.run_id, message.tool_call_id), message.content)
     }
   }
 
-  return messages.flatMap((message): TimelineItem[] => {
-    if (message.role === 'tool') return []
+  return visibleMessages.flatMap((message, index): TimelineItem[] => {
     const items: TimelineItem[] = []
+    const run = message.run_id ? runById.get(message.run_id) : undefined
     if (message.role === 'assistant' && message.tool_calls?.length) {
       if (message.content) {
         items.push({ kind: 'message', key: uid(), role: 'assistant', content: message.content })
       }
       for (const toolCall of message.tool_calls) {
+        const toolResultKey = toolCall.id
+          ? resultKey(message.run_id, toolCall.id)
+          : ''
         if (WRITE_TOOLS.has(toolCall.name)) {
-          const result = (toolCall.id && toolResultById.get(toolCall.id)) || ''
+          const result = (toolResultKey && toolResultById.get(toolResultKey)) || ''
           const args = (toolCall.args ?? {}) as Record<string, unknown>
           items.push({
             kind: 'approval',
@@ -349,22 +369,40 @@ function buildTimeline(messages: ChatMessage[]): TimelineItem[] {
                 : toolCall.name === 'restart_service'
                   ? 'high'
                   : undefined,
-            status: result.startsWith('用户拒绝执行') ? 'rejected' : 'approved',
+            status: !result
+              ? run?.status === 'failed'
+                ? 'failed'
+                : 'pending'
+              : result.startsWith('用户拒绝执行')
+                ? 'rejected'
+                : 'approved',
           })
         } else {
+          const done = Boolean(toolResultKey && toolResultById.has(toolResultKey))
           items.push({
             kind: 'tool',
             key: uid(),
             id: uid(),
             tool: toolCall.name,
-            done: true,
+            done,
+            failed: !done && run?.status === 'failed',
           })
         }
       }
-      return items
-    }
-    if (message.content) {
+    } else if (message.role !== 'tool' && message.content) {
       items.push({ kind: 'message', key: uid(), role: message.role, content: message.content })
+    }
+
+    if (
+      message.run_id &&
+      run?.status === 'failed' &&
+      lastMessageIndexByRun.get(message.run_id) === index
+    ) {
+      items.push({
+        kind: 'run-error',
+        key: uid(),
+        content: run.error_message || '本轮执行失败，未生成完整回答。',
+      })
     }
     return items
   })
@@ -388,14 +426,15 @@ async function loadConversation(id: string) {
     if (!run) detail = await fetchConversationDetail(id)
     if (version !== loadVersion) return
 
-    timeline.value = buildTimeline(detail.messages)
-    nextTick(scrollToBottom)
     // 完整一轮的最后一条一定是无 tool_calls 的最终 assistant。极小概率下数据库已经落完，
     // 但 Chat Run 尚未来得及从 active 索引移除；此时直接使用历史，避免再重放一遍造成重复。
     const lastMessage = detail.messages.at(-1)
     const alreadyPersisted =
       lastMessage?.role === 'assistant' && !lastMessage.tool_calls?.length
-    if (run && !alreadyPersisted) void attachRun(run.run_id)
+    const replayRunId = run && !alreadyPersisted ? run.run_id : null
+    timeline.value = buildTimeline(detail.messages, detail.runs, replayRunId)
+    nextTick(scrollToBottom)
+    if (replayRunId) void attachRun(replayRunId)
   } catch (e) {
     if (version === loadVersion) {
       error.value = e instanceof Error ? e.message : String(e)
@@ -456,16 +495,24 @@ onBeforeUnmount(() => {
             />
             <span v-else class="plain-message">{{ item.content }}</span>
           </div>
-          <div v-else-if="item.kind === 'tool'" class="tool-line" :class="{ done: item.done }">
-            {{ item.done ? '✓' : '›' }} {{ item.done ? '已' : '正在' }}{{ toolLabel(item.tool) }}{{ item.done ? '' : '…' }}
+          <div v-else-if="item.kind === 'tool'" class="tool-line" :class="{ done: item.done, failed: item.failed }">
+            {{ item.failed ? '✕' : item.done ? '✓' : '›' }}
+            {{ item.failed ? '调用失败：' : item.done ? '已' : '正在' }}{{ toolLabel(item.tool) }}{{ item.done || item.failed ? '' : '…' }}
           </div>
+          <p v-else-if="item.kind === 'run-error'" class="run-error">本轮失败：{{ item.content }}</p>
           <div v-else-if="item.kind === 'approval'" class="approval-line" :class="item.status">
             <span class="approval-icon">{{
               item.status === 'pending' ? '›' : item.status === 'approved' ? '✓' : '✕'
             }}</span>
             <span class="approval-text">
               <span class="approval-verb">{{
-                item.status === 'pending' ? '待确认' : item.status === 'approved' ? '已批准' : '已拒绝'
+                item.status === 'pending'
+                  ? '待确认'
+                  : item.status === 'approved'
+                    ? '已批准'
+                    : item.status === 'failed'
+                      ? '未完成'
+                      : '已拒绝'
               }}</span>
               <span v-if="item.riskLevel" class="approval-risk">{{ riskLevelLabel(item.riskLevel) }}</span>
               <code class="approval-cmd">{{ item.command }}</code>
@@ -597,6 +644,11 @@ h1 {
   animation: none;
 }
 
+.tool-line.failed {
+  color: var(--color-status-unreachable);
+  animation: none;
+}
+
 @keyframes blink {
   50% {
     opacity: 0.5;
@@ -626,7 +678,8 @@ h1 {
   color: var(--color-accent);
 }
 
-.approval-line.rejected .approval-icon {
+.approval-line.rejected .approval-icon,
+.approval-line.failed .approval-icon {
   color: var(--color-status-unreachable);
 }
 
@@ -699,6 +752,15 @@ h1 {
 
 .error {
   color: var(--color-status-unreachable);
+}
+
+.run-error {
+  margin: 0;
+  padding: 0.45rem 0.65rem;
+  border-left: 3px solid var(--color-status-unreachable);
+  background: color-mix(in srgb, var(--color-status-unreachable) 8%, transparent);
+  color: var(--color-status-unreachable);
+  font-size: 0.85rem;
 }
 
 .input-row {

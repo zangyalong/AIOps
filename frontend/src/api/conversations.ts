@@ -1,4 +1,4 @@
-import type { ChatMessage, ConversationSummary } from '../types/chat'
+import type { ChatMessage, ChatRunHistory, ConversationSummary } from '../types/chat'
 
 export async function fetchConversations(): Promise<ConversationSummary[]> {
   const res = await fetch('/api/conversations')
@@ -10,7 +10,11 @@ export async function fetchConversations(): Promise<ConversationSummary[]> {
 
 export async function fetchConversationDetail(
   conversationId: string,
-): Promise<{ conversation: ConversationSummary; messages: ChatMessage[] }> {
+): Promise<{
+  conversation: ConversationSummary
+  runs: ChatRunHistory[]
+  messages: ChatMessage[]
+}> {
   const res = await fetch(`/api/conversations/${conversationId}`)
   if (!res.ok) {
     throw new Error(`获取对话内容失败：${res.status}`)

@@ -7,7 +7,7 @@ AIOMS 的 FastAPI 后端，负责业务 API、LangGraph 多 Agent 工作流、�
 ## 当前能力
 
 - 服务器管理与 SSH 连通性测试
-- 多轮流式对话和会话历史；Agent 运行与浏览器 SSE 连接解耦，切页或关闭页面后继续生成
+- 多轮流式对话和会话历史；`chat_runs` 持久化每轮状态，消息正文只存在 `messages`
 - 工具调用旁白、工具状态与最终回答实时展示，刷新后按同一轨迹重建
 - Supervisor 调度四个专业 Agent
 - Prometheus 指标、Loki 日志、Alertmanager 告警查询；指标工具可按服务器名/IP 自动解析 instance
@@ -39,9 +39,11 @@ Alertmanager webhook → PostgreSQL → Redis/arq → Supervisor 自动诊断
 
 四个专家是共享状态的独立 LangGraph 子图，不是包装成普通工具的函数。Supervisor 可以连续委派多个专家，最后由综合节点基于本轮真实工具证据生成一次用户回答并直接返回。
 
-聊天请求先返回 `run_id`，前端再通过 `GET /chat/runs/{run_id}/events` 订阅 SSE。LangGraph
+聊天请求先创建数据库 `chat_runs` 记录并写入带 `run_id` 的用户消息，再返回 `run_id`；前端通过
+`GET /chat/runs/{run_id}/events` 订阅 SSE。LangGraph
 运行在独立后台任务中，SSE 断开只会移除订阅者，不会取消 Agent；重新打开同一对话时可以查询
-活跃运行并重放当前进度，完成后完整消息统一落库。
+活跃运行并重放当前进度。Tool 调用、Tool 结果和最终回答按 Run 逐步落库；失败 Run 保留现场，
+但再次喂给模型的历史只包含完整配对的 tool calls / tool results。
 
 ## 环境要求
 
@@ -83,6 +85,16 @@ psql -d aioms -c "select current_database();"
 ```
 
 应用启动时会执行 `Base.metadata.create_all()`，自动创建缺失的表，但不会修改已有表结构。开发期修改已有字段时仍需手工执行 `ALTER TABLE` 或删除本地表后重建。
+
+本次从旧版本升级需要给已有 `messages` 表增加 `run_id`：
+
+```bash
+cd backend
+uv run python scripts/migrate_chat_runs.py
+```
+
+方案 B 仍使用内存 LangGraph checkpointer：后端重启后不能从审批断点继续，启动时会把遗留的
+`running` / `waiting_approval` Run 标成 `failed`；跨重启恢复留给后续持久化 checkpointer。
 
 ## 配置项
 

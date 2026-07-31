@@ -9,7 +9,11 @@ from fastapi.responses import StreamingResponse
 
 from app.dependencies import DBSession
 from app.schemas.chat import ChatRequest, ChatRunOut, ResumeApprovalRequest
-from app.services import chat_service, conversation_service
+from app.services import (
+    chat_run_record_service,
+    chat_service,
+    conversation_service,
+)
 from app.services.chat_run_service import ChatRun, ChatRunManager
 
 router = APIRouter(tags=["chat"])
@@ -64,8 +68,17 @@ async def chat(data: ChatRequest, request: Request, db: DBSession) -> ChatRunOut
                 prepared,
                 new_title=new_title,
             ),
+            run_id=str(prepared.run_id),
         )
     except ValueError as exc:
+        chat_run = await chat_run_record_service.get_chat_run(db, prepared.run_id)
+        if chat_run is not None:
+            await chat_run_record_service.set_status(
+                db,
+                chat_run,
+                "failed",
+                error_message=str(exc),
+            )
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _run_out(run, title=new_title)
 
@@ -123,6 +136,7 @@ async def chat_resume(
             producer=lambda: chat_service.resume_chat_turn(
                 graph,
                 conversation.id,
+                uuid.UUID(run.id),
                 data.thread_id,
                 data.approved,
                 data.reason,

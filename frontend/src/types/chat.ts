@@ -8,9 +8,18 @@ export interface ToolCall {
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'tool'
   content: string
+  run_id?: string | null
   // assistant 调工具时带上它的 tool_calls；tool 消息带它回应的 tool_call_id。刷新后据此重建过程。
   tool_calls?: ToolCall[] | null
   tool_call_id?: string | null
+}
+
+export interface ChatRunHistory {
+  id: string
+  status: 'running' | 'waiting_approval' | 'completed' | 'failed'
+  error_message: string | null
+  started_at: string
+  finished_at: string | null
 }
 
 export interface ConversationSummary {

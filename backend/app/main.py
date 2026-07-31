@@ -18,10 +18,11 @@ from app.api import (
     services,
 )
 from app.core.config import settings
-from app.db.session import engine
+from app.db.session import AsyncSessionLocal, engine
 from app.models import (  # noqa: F401  # 注册模型到 Base.metadata
     alert_event,
     change_record,
+    chat_run,
     conversation,
     incident,
     message,
@@ -29,6 +30,7 @@ from app.models import (  # noqa: F401  # 注册模型到 Base.metadata
     service_catalog,
 )
 from app.models.base import Base
+from app.services import chat_run_record_service
 from app.services.chat_run_service import ChatRunManager
 
 
@@ -37,6 +39,12 @@ async def lifespan(app: FastAPI):
     # 项目早期没有迁移工具，缺的表在启动时自动建出来；已存在的表不会被改动。
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    async with AsyncSessionLocal() as db:
+        stale_runs = await chat_run_record_service.fail_incomplete_runs(db)
+    if stale_runs:
+        print(
+            f"[startup] 已把 {stale_runs} 个失去内存 checkpoint 的 Chat Run 标记为失败"
+        )
 
     # arq 连接池：webhook 用它往队列塞诊断作业。Redis 没起时也别让后端崩——置 None，
     # webhook 会跳过入队（只是暂时没有自动诊断，落库照常）。

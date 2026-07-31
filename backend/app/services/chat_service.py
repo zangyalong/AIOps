@@ -13,7 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.tools.catalog import TOOLS_BY_NAME, WRITE_TOOL_NAMES
 from app.db.session import AsyncSessionLocal
-from app.services import conversation_service, message_service
+from app.models.message import Message
+from app.services import (
+    chat_run_record_service,
+    conversation_service,
+    message_service,
+)
 
 
 class ChatStreamEvent(TypedDict, total=False):
@@ -38,6 +43,7 @@ class PreparedChatTurn:
 
     graph_input: dict
     thread_id: str
+    run_id: uuid.UUID
 
 
 def _business_tool_names(message_or_chunk: object) -> set[str]:
@@ -58,60 +64,224 @@ def _business_tool_names(message_or_chunk: object) -> set[str]:
 async def _load_history_messages(
     db: AsyncSession, conversation_id: uuid.UUID
 ) -> list[BaseMessage]:
-    """把历史消息行还原成 LangChain 消息序列（完整轨迹），直接喂回图。
+    """把历史消息行还原成可安全喂给模型的 LangChain 消息序列。
 
-    现在历史里 assistant 是带 tool_calls 的、后面跟着 tool 结果——是"调了工具才回答"的好样例，
-    不会再造成"不调工具直接吐数据"的坏样例（那正是当初改用摘要的原因，现在 tool_calls 落库了、
-    这条障碍没了）。数据新鲜度靠 PERSONA 铁律兜（上文历史里的工具结果是旧快照、不能当本轮结果）。
-
-    注意配对：带 tool_calls 的 AIMessage 后面必须紧跟对应 tool_call_id 的 ToolMessage，否则
-    DeepSeek 会 400。历史行是按调用顺序落库的，逐行还原即保持这个配对，不用额外处理。
+    前端会拿到全部消息，包括失败 Run 的现场；这里的模型历史更严格：assistant 只要带
+    tool_calls，就必须在紧随其后的 tool 行中找到全部且唯一的 tool_call_id，否则整段调用及其
+    残留结果都跳过，避免旧失败现场再次触发 OpenAI 兼容接口的 400。
     """
     history = await message_service.list_messages(db, conversation_id)
+    return _safe_history_messages(history)
+
+
+def _safe_history_messages(history: list[Message]) -> list[BaseMessage]:
+    """将数据库消息转换成协议完整的模型历史；不修改前端可见历史。"""
     messages: list[BaseMessage] = []
-    for m in history:
-        if m.role == "user":
-            messages.append(HumanMessage(m.content))
-        elif m.role == "assistant":
-            messages.append(
-                AIMessage(content=m.content, tool_calls=(m.tool_calls or []))
+    index = 0
+    while index < len(history):
+        message = history[index]
+        if message.role == "user":
+            messages.append(HumanMessage(message.content))
+            index += 1
+            continue
+
+        if message.role == "assistant" and not message.tool_calls:
+            messages.append(AIMessage(content=message.content))
+            index += 1
+            continue
+
+        if message.role == "assistant" and message.tool_calls:
+            call_ids = [
+                str(call.get("id") or "")
+                for call in message.tool_calls
+                if isinstance(call, dict)
+            ]
+            next_index = index + 1
+            tool_rows: list[Message] = []
+            while next_index < len(history) and history[next_index].role == "tool":
+                tool_rows.append(history[next_index])
+                next_index += 1
+
+            result_ids = [row.tool_call_id or "" for row in tool_rows]
+            complete = (
+                len(call_ids) == len(message.tool_calls)
+                and all(call_ids)
+                and len(set(call_ids)) == len(call_ids)
+                and len(result_ids) == len(call_ids)
+                and set(result_ids) == set(call_ids)
             )
-        elif m.role == "tool":
-            messages.append(
-                ToolMessage(content=m.content, tool_call_id=m.tool_call_id or "")
-            )
+            if complete:
+                messages.append(
+                    AIMessage(
+                        content=message.content,
+                        tool_calls=message.tool_calls,
+                    )
+                )
+                messages.extend(
+                    ToolMessage(
+                        content=row.content,
+                        tool_call_id=row.tool_call_id or "",
+                    )
+                    for row in tool_rows
+                )
+            index = next_index
+            continue
+
+        # 孤立 tool 行和未知角色都不进入模型历史。
+        index += 1
     return messages
 
 
-async def _persist_turn(
-    conversation_id: uuid.UUID, turn_messages: list[BaseMessage]
-) -> None:
-    """把本轮那段轨迹（最后一条 HumanMessage 之后的 assistant/tool 消息）逐条落库。
+def _current_turn_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
+    last_human = max(
+        (i for i, message in enumerate(messages) if isinstance(message, HumanMessage)),
+        default=-1,
+    )
+    return messages[last_human + 1 :]
 
-    turn_messages 已切在最后一条 HumanMessage 之后，只会是 assistant / tool——它之前都是历史、
-    库里已有，不能重复存。每条单独 commit，靠各自不同的 created_at 保证顺序（顺序 await、事务
-    开始时间递增）。最终综合回答只生成一次，因此图里的本轮轨迹可以直接按顺序保存。
+
+async def _persist_run_messages(
+    conversation_id: uuid.UUID,
+    run_id: uuid.UUID,
+    run_messages: list[BaseMessage],
+) -> None:
+    """幂等保存某一 Run 新产生的 assistant/tool 消息。
+
+    tool_call_id 是协议天然的幂等键；最终综合回答每个 Run 只有一条。审批恢复和终态快照都可再次
+    调用本函数，不会复制已经落库的消息。
     """
     async with AsyncSessionLocal() as db:
-        for msg in turn_messages:
-            if isinstance(msg, AIMessage):
+        existing = await message_service.list_run_messages(db, run_id)
+        persisted_call_ids = {
+            str(call.get("id") or "")
+            for row in existing
+            if row.role == "assistant"
+            for call in (row.tool_calls or [])
+            if isinstance(call, dict)
+        }
+        persisted_result_ids = {
+            row.tool_call_id
+            for row in existing
+            if row.role == "tool" and row.tool_call_id
+        }
+        has_final_answer = any(
+            row.role == "assistant" and not row.tool_calls for row in existing
+        )
+
+        for message in run_messages:
+            if isinstance(message, AIMessage) and message.tool_calls:
+                call_ids = {
+                    str(call.get("id") or "")
+                    for call in message.tool_calls
+                    if isinstance(call, dict) and call.get("id")
+                }
+                if call_ids and call_ids.issubset(persisted_call_ids):
+                    continue
                 await message_service.create_message(
                     db,
                     conversation_id,
+                    run_id=run_id,
                     role="assistant",
-                    content=str(msg.content),
-                    tool_calls=(msg.tool_calls or None),
+                    content=str(message.content),
+                    tool_calls=message.tool_calls,
                 )
-            elif isinstance(msg, ToolMessage):
+                persisted_call_ids.update(call_ids)
+            elif isinstance(message, ToolMessage):
+                if message.tool_call_id in persisted_result_ids:
+                    continue
                 await message_service.create_message(
                     db,
                     conversation_id,
+                    run_id=run_id,
                     role="tool",
-                    content=str(msg.content),
-                    tool_call_id=msg.tool_call_id,
+                    content=str(message.content),
+                    tool_call_id=message.tool_call_id,
                 )
-            # turn_messages 已切在最后一条 HumanMessage 之后，只会是 assistant / tool
+                persisted_result_ids.add(message.tool_call_id)
+            elif isinstance(message, AIMessage) and not has_final_answer:
+                await message_service.create_message(
+                    db,
+                    conversation_id,
+                    run_id=run_id,
+                    role="assistant",
+                    content=str(message.content),
+                )
+                has_final_answer = True
         await conversation_service.touch_conversation(db, conversation_id)
+
+
+async def _persist_checkpoint_messages(
+    graph: CompiledStateGraph,
+    config: dict,
+    conversation_id: uuid.UUID,
+    run_id: uuid.UUID,
+) -> object:
+    snapshot = await graph.aget_state(config)
+    all_messages = snapshot.values.get("messages", [])
+    await _persist_run_messages(
+        conversation_id,
+        run_id,
+        _current_turn_messages(all_messages),
+    )
+    return snapshot
+
+
+async def _set_run_status(
+    run_id: uuid.UUID,
+    status: chat_run_record_service.ChatRunStatus,
+    *,
+    error_message: str | None = None,
+) -> None:
+    async with AsyncSessionLocal() as db:
+        chat_run = await chat_run_record_service.get_chat_run(db, run_id)
+        if chat_run is None:
+            raise LookupError(f"chat run {run_id} not found")
+        await chat_run_record_service.set_status(
+            db,
+            chat_run,
+            status,
+            error_message=error_message,
+        )
+
+
+async def _persist_partial_answer(
+    conversation_id: uuid.UUID,
+    run_id: uuid.UUID,
+    chunks: list[str],
+) -> None:
+    content = "".join(chunks).strip()
+    if content:
+        await _persist_run_messages(
+            conversation_id,
+            run_id,
+            [AIMessage(content)],
+        )
+
+
+async def _mark_failed(
+    run_id: uuid.UUID,
+    error_message: str,
+) -> None:
+    try:
+        await _set_run_status(run_id, "failed", error_message=error_message)
+    except Exception as exc:  # noqa: BLE001 - 不让状态落库失败遮蔽原始模型/工具错误
+        print(f"[chat-run] 标记 {run_id} 失败时出错：{exc}")
+
+
+async def _persist_node_output(
+    conversation_id: uuid.UUID,
+    run_id: uuid.UUID,
+    output: object,
+) -> None:
+    """保存专家、工具或综合节点真正写回图状态的新消息，顺序与图节点一致。"""
+    if not isinstance(output, dict):
+        return
+    messages = output.get("messages")
+    if not isinstance(messages, list):
+        return
+    new_messages = [message for message in messages if isinstance(message, BaseMessage)]
+    if new_messages:
+        await _persist_run_messages(conversation_id, run_id, new_messages)
 
 
 async def _drive_graph(
@@ -119,14 +289,15 @@ async def _drive_graph(
     conversation_id: uuid.UUID,
     graph_input: object,
     thread_id: str,
+    run_id: uuid.UUID,
     new_title: str | None = None,
 ) -> AsyncIterator[ChatStreamEvent]:
     """驱动图跑一段，流式转发工具旁白、工具卡片和最终回答：
 
-    - 停在审批门（interrupt 挂起）：发 approval_required，带上 thread_id 和待批动作，本段到此为止、
-      不落库（这一轮还没走完，恢复请求会接着把它跑完）。
-    - 正常跑完：带业务工具调用的专家旁白会在工具卡片前显示；synthesize 生成的最终回答直接流给
-      前端。图结束后把完整轨迹落库并发 done，因此刷新前后的展示顺序一致。
+    - tool call / tool result 随运行逐步幂等落库，失败 Run 也能保留已经发生的完整现场；
+    - 停在审批门：同步当前 checkpoint，更新 Run 为 waiting_approval，再发审批事件；
+    - 正常结束：同步终态 checkpoint，更新 Run 为 completed，再发 done；
+    - 异常：尽量同步 checkpoint 和已流出的部分最终回答，更新 Run 为 failed。
 
     thread_id 决定用哪个 checkpoint 线程；初次和它的恢复共用同一个 thread_id 才能接上同一次挂起。
     这段不持有任何 db 连接（落库另开短事务），流式期间不占着连接。
@@ -137,13 +308,28 @@ async def _drive_graph(
     # on_chat_model_end 时直接丢弃，避免把它和最终 synthesize 回答重复展示。
     pending_narration: dict[str, list[str]] = {}
     visible_narration_runs: set[str] = set()
+    final_answer_chunks: list[str] = []
     try:
+        await _set_run_status(run_id, "running")
         async for event in graph.astream_events(
             graph_input, config=config, version="v2"
         ):
             kind = event["event"]
             event_name = event.get("name", "")
             node = event.get("metadata", {}).get("langgraph_node")
+
+            # 节点输出里的消息已经经过图内规范化：specialist 带 tool_calls，tools 带逐调用结果，
+            # synthesize 带最终回答。按节点结束顺序落库，比直接存底层模型原始输出更可靠。
+            if kind == "on_chain_end" and event_name in {
+                "specialist",
+                "tools",
+                "synthesize",
+            }:
+                await _persist_node_output(
+                    conversation_id,
+                    run_id,
+                    event.get("data", {}).get("output"),
+                )
 
             # 工具调用的开始/结束：只转发只读工具的 start/end 让前端画工具行（TOOLS_BY_NAME 兜底
             # 过滤）。写工具（WRITE_TOOL_NAMES）不发——它由前端那条带按钮的审批行代表自己
@@ -153,6 +339,12 @@ async def _drive_graph(
                 event_name in TOOLS_BY_NAME and event_name not in WRITE_TOOL_NAMES
             )
             if kind == "on_tool_start" and is_visible_tool:
+                await _persist_checkpoint_messages(
+                    graph,
+                    config,
+                    conversation_id,
+                    run_id,
+                )
                 yield {
                     "type": "tool_start",
                     "id": event["run_id"],
@@ -165,39 +357,46 @@ async def _drive_graph(
                 content = chunk.content if isinstance(chunk.content, str) else ""
                 if node == "synthesize":
                     if content:
+                        final_answer_chunks.append(content)
                         yield {"type": "token", "content": content}
                     continue
 
-                run_id = event["run_id"]
+                model_run_id = event["run_id"]
                 if content:
-                    pending_narration.setdefault(run_id, []).append(content)
+                    pending_narration.setdefault(model_run_id, []).append(content)
                 if _business_tool_names(chunk):
-                    visible_narration_runs.add(run_id)
-                    buffered = "".join(pending_narration.pop(run_id, []))
+                    visible_narration_runs.add(model_run_id)
+                    buffered = "".join(pending_narration.pop(model_run_id, []))
                     if buffered:
                         yield {"type": "token", "content": buffered}
-                elif run_id in visible_narration_runs and content:
+                elif model_run_id in visible_narration_runs and content:
                     # 极少数模型会在 tool_call chunk 后继续输出文字；确认可见后可以直接续流。
                     yield {"type": "token", "content": content}
             elif kind == "on_chat_model_end" and node != "synthesize":
-                run_id = event["run_id"]
+                model_run_id = event["run_id"]
                 output = event.get("data", {}).get("output")
                 # 某些 OpenAI 兼容服务不在 stream chunk 里给完整工具名，只在最终 AIMessage 给；
                 # 在模型结束事件再兜底识别一次，此时仍早于真正的 on_tool_start。
-                if run_id not in visible_narration_runs and _business_tool_names(
+                if model_run_id not in visible_narration_runs and _business_tool_names(
                     output
                 ):
-                    buffered = "".join(pending_narration.pop(run_id, []))
+                    buffered = "".join(pending_narration.pop(model_run_id, []))
                     if buffered:
                         yield {"type": "token", "content": buffered}
-                pending_narration.pop(run_id, None)
-                visible_narration_runs.discard(run_id)
+                pending_narration.pop(model_run_id, None)
+                visible_narration_runs.discard(model_run_id)
 
         # 图停下来了：先看是不是停在审批门。带了 checkpointer，挂起状态能被 aget_state 读出来；
         # snapshot.interrupts 非空即为挂起，其 value 就是 approval_node 里 interrupt(...) 的入参。
-        snapshot = await graph.aget_state(config)
+        snapshot = await _persist_checkpoint_messages(
+            graph,
+            config,
+            conversation_id,
+            run_id,
+        )
         if snapshot.interrupts:
             pending = snapshot.interrupts[0].value
+            await _set_run_status(run_id, "waiting_approval")
             approval_event: ChatStreamEvent = {
                 "type": "approval_required",
                 "thread_id": thread_id,
@@ -209,15 +408,7 @@ async def _drive_graph(
             yield approval_event
             return
 
-        # 正常跑完：从最终快照取干净轨迹落库（snapshot.values 就是终态通道值）。只取最后一条
-        # HumanMessage 之后的本轮部分——它之前都是历史、库里已有，不能重复存。
-        all_messages = snapshot.values.get("messages", [])
-        last_human = max(
-            (i for i, m in enumerate(all_messages) if isinstance(m, HumanMessage)),
-            default=-1,
-        )
-        await _persist_turn(conversation_id, all_messages[last_human + 1 :])
-
+        await _set_run_status(run_id, "completed")
         done_event: ChatStreamEvent = {
             "type": "done",
             "conversation_id": str(conversation_id),
@@ -226,12 +417,44 @@ async def _drive_graph(
             done_event["title"] = new_title
         yield done_event
     except StreamChunkTimeoutError:
+        message = "模型流式响应长时间没有返回新内容，请重试本次提问。"
+        try:
+            await _persist_checkpoint_messages(
+                graph,
+                config,
+                conversation_id,
+                run_id,
+            )
+            await _persist_partial_answer(
+                conversation_id,
+                run_id,
+                final_answer_chunks,
+            )
+        except Exception as exc:  # noqa: BLE001 - 继续记录原始超时
+            print(f"[chat-run] 保存 {run_id} 的超时现场时出错：{exc}")
+        await _mark_failed(run_id, message)
         yield {
             "type": "error",
-            "message": "模型流式响应长时间没有返回新内容，请重试本次提问。",
+            "message": message,
         }
     except Exception as exc:  # noqa: BLE001 - 流式响应里要把错误也发给前端，不能直接 500
-        yield {"type": "error", "message": str(exc)}
+        message = str(exc)
+        try:
+            await _persist_checkpoint_messages(
+                graph,
+                config,
+                conversation_id,
+                run_id,
+            )
+            await _persist_partial_answer(
+                conversation_id,
+                run_id,
+                final_answer_chunks,
+            )
+        except Exception as persist_exc:  # noqa: BLE001 - 继续记录原始异常
+            print(f"[chat-run] 保存 {run_id} 的失败现场时出错：{persist_exc}")
+        await _mark_failed(run_id, message)
+        yield {"type": "error", "message": message}
 
 
 async def prepare_chat_turn(
@@ -249,12 +472,31 @@ async def prepare_chat_turn(
     # 至少用户发过什么是有记录的。开完就关，不占着连接跑后面的流式。
     async with AsyncSessionLocal() as db:
         history_messages = await _load_history_messages(db, conversation_id)
-        await message_service.create_message(
-            db, conversation_id, role="user", content=user_message
+        chat_run = await chat_run_record_service.create_chat_run(
+            db,
+            conversation_id=conversation_id,
+            langgraph_thread_id=thread_id,
         )
+        try:
+            await message_service.create_message(
+                db,
+                conversation_id,
+                run_id=chat_run.id,
+                role="user",
+                content=user_message,
+            )
+        except Exception:
+            await chat_run_record_service.set_status(
+                db,
+                chat_run,
+                "failed",
+                error_message="用户消息落库失败，Chat Run 未启动。",
+            )
+            raise
 
     return PreparedChatTurn(
         thread_id=thread_id,
+        run_id=chat_run.id,
         graph_input={
             "messages": [*history_messages, HumanMessage(user_message)],
             "work_messages": [],
@@ -280,6 +522,7 @@ async def run_prepared_chat_turn(
         conversation_id,
         prepared.graph_input,
         prepared.thread_id,
+        prepared.run_id,
         new_title=new_title,
     ):
         yield event
@@ -288,6 +531,7 @@ async def run_prepared_chat_turn(
 async def resume_chat_turn(
     graph: CompiledStateGraph,
     conversation_id: uuid.UUID,
+    run_id: uuid.UUID,
     thread_id: str,
     approved: bool,
     reason: str | None = None,
@@ -298,6 +542,11 @@ async def resume_chat_turn(
     """
     decision = {"approved": approved, "reason": reason or ""}
     async for event in _drive_graph(
-        graph, conversation_id, Command(resume=decision), thread_id, new_title=None
+        graph,
+        conversation_id,
+        Command(resume=decision),
+        thread_id,
+        run_id,
+        new_title=None,
     ):
         yield event

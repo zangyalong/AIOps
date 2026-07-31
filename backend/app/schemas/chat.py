@@ -44,12 +44,24 @@ class ConversationSummary(BaseModel):
 class ChatMessageOut(BaseModel):
     role: str  # "user" | "assistant" | "tool"
     content: str
+    run_id: uuid.UUID | None = None
     # assistant 调工具时带上它的 tool_calls（[{name,args,id,type}]）；tool 消息带 tool_call_id。
     # 前端刷新后据此原样重建"旁白 → 工具行 → 答案"。
     tool_calls: list[dict] | None = None
     tool_call_id: str | None = None
 
 
+class ChatRunHistoryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    status: Literal["running", "waiting_approval", "completed", "failed"]
+    error_message: str | None
+    started_at: datetime
+    finished_at: datetime | None
+
+
 class ConversationDetail(BaseModel):
     conversation: ConversationSummary
+    runs: list[ChatRunHistoryOut]
     messages: list[ChatMessageOut]

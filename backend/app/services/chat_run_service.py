@@ -58,13 +58,22 @@ class ChatRunManager:
         self._active_by_conversation: dict[uuid.UUID, str] = {}
         self._max_finished_runs = max_finished_runs
 
-    def start(self, conversation_id: uuid.UUID, producer: EventProducer) -> ChatRun:
+    def start(
+        self,
+        conversation_id: uuid.UUID,
+        producer: EventProducer,
+        *,
+        run_id: str | None = None,
+    ) -> ChatRun:
         active = self.get_active(conversation_id)
         if active is not None:
             raise ValueError("该对话已有回复正在生成，请等待完成后再发送新消息")
 
         self._trim_finished_runs()
-        run = ChatRun(id=uuid.uuid4().hex, conversation_id=conversation_id)
+        run = ChatRun(
+            id=run_id or uuid.uuid4().hex,
+            conversation_id=conversation_id,
+        )
         self._runs[run.id] = run
         self._active_by_conversation[conversation_id] = run.id
         self._launch(run, producer)
@@ -121,7 +130,9 @@ class ChatRunManager:
         while True:
             async with run.condition:
                 await run.condition.wait_for(
-                    lambda: run.last_sequence > cursor or run.status in _CLOSED_STATUSES
+                    lambda cursor=cursor: (
+                        run.last_sequence > cursor or run.status in _CLOSED_STATUSES
+                    )
                 )
                 batch = [
                     event for event in run.events if int(event.get("seq", 0)) > cursor

@@ -5,8 +5,17 @@ import uuid
 from fastapi import APIRouter, HTTPException
 
 from app.dependencies import DBSession
-from app.schemas.chat import ChatMessageOut, ConversationDetail, ConversationSummary
-from app.services import conversation_service, message_service
+from app.schemas.chat import (
+    ChatMessageOut,
+    ChatRunHistoryOut,
+    ConversationDetail,
+    ConversationSummary,
+)
+from app.services import (
+    chat_run_record_service,
+    conversation_service,
+    message_service,
+)
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
@@ -26,13 +35,16 @@ async def get_conversation(
         raise HTTPException(status_code=404, detail="conversation not found")
 
     messages = await message_service.list_messages(db, conversation_id)
+    chat_runs = await chat_run_record_service.list_chat_runs(db, conversation_id)
 
     return ConversationDetail(
         conversation=ConversationSummary.model_validate(conversation),
+        runs=[ChatRunHistoryOut.model_validate(run) for run in chat_runs],
         messages=[
             ChatMessageOut(
                 role=m.role,
                 content=m.content,
+                run_id=m.run_id,
                 tool_calls=m.tool_calls,
                 tool_call_id=m.tool_call_id,
             )

@@ -30,6 +30,23 @@ class ChatRunManagerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(run.status, "completed")
         self.assertEqual([event["type"] for event in run.events], ["token", "done"])
 
+    async def test_start_uses_persisted_run_id(self) -> None:
+        manager = ChatRunManager()
+        persisted_run_id = str(uuid.uuid4())
+
+        async def producer():
+            yield {"type": "done", "conversation_id": "conversation"}
+
+        run = manager.start(
+            uuid.uuid4(),
+            producer,
+            run_id=persisted_run_id,
+        )
+        await run.task
+
+        self.assertEqual(run.id, persisted_run_id)
+        self.assertIs(manager.get(persisted_run_id), run)
+
     async def test_reconnect_replays_buffered_events_in_order(self) -> None:
         """页面重新订阅时可以从头重建生成中的消息，并继续等到完成。"""
         manager = ChatRunManager()
