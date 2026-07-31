@@ -22,6 +22,12 @@
   - 提供服务管理与依赖图页面，以及 `query_service_dependencies`、`query_impacted_services`、`query_upstream_candidates` 只读工具
   - 已实现 `services`、`service_instances`、`service_dependencies` 三张规范化表与完整 CRUD；事件和自动 triage 优先按实例解析服务，旧 `monitor_labels` 兼容回退
   - 已实现可点击 SVG 拓扑和服务详情 URL；代码、后端测试和前端构建完成后仍保持未勾选，等用户运行时验收
+- [ ] **对话发现并注册服务器服务**：用户可要求 Agent 扫描已纳管服务器，把 systemd 服务、Docker 容器或监听端口的未纳管长期进程登记到服务目录
+  - 新增只读 `discover_server_services` 和写入 `register_server_services` Tool；发现按 systemd / Docker / `ss + ps` 三层结构化返回，写入复用 LangGraph 人工审批门
+  - 第三层只保留监听端口且运行至少 60 秒、又不属于 systemd service / Docker scope 的进程；启动命令先做密钥参数脱敏，候选仍需人工判断是否具备业务意义
+  - 审批通过后会重新扫描并核对运行时对象，目录写入可重复执行且会跳过已有实例；默认环境与服务目录页面一致为 `prod`
+  - 工具协议按每个 `tool_call_id` 独立回填成功或失败结果，重复 ID 会先规范化，审批恢复前也会兜底补齐残缺尾部，避免一项异常破坏整轮对话
+  - 代码与静态检查完成后仍保持未勾选，等用户在真实 `web01` 对话中完成发现、拒绝/批准和目录页面验收
 - [ ] **值班报告与通知**：基于事件状态机生成确定性日报 / 周报，并为未认领、超时未解决和自动诊断完成事件发送通知
   - 复用 Redis / arq 调度任务；先接一个通知渠道，模型只负责基于统计事实生成摘要和建议
 

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.server import Server
 from app.models.service_catalog import Service, ServiceDependency, ServiceInstance
 from app.repositories import service_catalog_repository
 from app.schemas.service_catalog import (
@@ -45,6 +46,20 @@ class ServiceTopology:
 class ResolvedServiceInstance:
     service: Service
     instance: ServiceInstance
+
+
+@dataclass(frozen=True)
+class DiscoveredServiceRegistration:
+    service_name: str
+    instance_name: str
+    description: str | None = None
+
+
+@dataclass(frozen=True)
+class ServiceRegistrationResult:
+    created_services: int
+    created_instances: int
+    skipped_instances: int
 
 
 async def list_services(
@@ -141,6 +156,57 @@ async def create_instance(
         raise DirectoryConflict("该服务下已存在同名实例")
     return await service_catalog_repository.create_instance(
         db, ServiceInstance(**data.model_dump())
+    )
+
+
+async def register_discovered_services(
+    db: AsyncSession,
+    *,
+    server: Server,
+    environment: str,
+    registrations: list[DiscoveredServiceRegistration],
+) -> ServiceRegistrationResult:
+    """幂等地注册扫描结果；已有逻辑服务复用，已有标准实例名跳过。"""
+    created_services = 0
+    created_instances = 0
+    skipped_instances = 0
+
+    for registration in registrations:
+        service = await service_catalog_repository.get_service_by_identity(
+            db, registration.service_name, environment
+        )
+        if service is None:
+            service = await create_service(
+                db,
+                ServiceCreate(
+                    name=registration.service_name,
+                    environment=environment,
+                ),
+            )
+            created_services += 1
+
+        existing = await service_catalog_repository.get_instance_by_identity(
+            db, service.id, registration.instance_name
+        )
+        if existing is not None:
+            skipped_instances += 1
+            continue
+
+        await create_instance(
+            db,
+            ServiceInstanceCreate(
+                service_id=service.id,
+                server_id=server.id,
+                name=registration.instance_name,
+                description=registration.description,
+            ),
+        )
+        created_instances += 1
+
+    return ServiceRegistrationResult(
+        created_services=created_services,
+        created_instances=created_instances,
+        skipped_instances=skipped_instances,
     )
 
 

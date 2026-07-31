@@ -27,6 +27,10 @@ from app.agents.tools.metrics import (
     query_server_metrics,
 )
 from app.agents.tools.servers import query_servers
+from app.agents.tools.service_discovery import (
+    discover_server_services,
+    register_server_services,
+)
 from app.agents.tools.service_topology import (
     query_impacted_services,
     query_server_services,
@@ -34,7 +38,7 @@ from app.agents.tools.service_topology import (
     query_upstream_candidates,
 )
 
-RiskLevel = Literal["high", "critical"]
+RiskLevel = Literal["medium", "high", "critical"]
 ActionDetailsBuilder = Callable[[dict[str, Any]], dict[str, Any]]
 
 
@@ -70,6 +74,28 @@ def _restart_service_action(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _register_server_services_action(args: dict[str, Any]) -> dict[str, Any]:
+    server = str(args.get("server_name") or "?")
+    environment = str(args.get("environment") or "prod")
+    services = [item for item in (args.get("services") or []) if isinstance(item, dict)]
+    mappings = [
+        (
+            f"{item.get('service_name', '?')} ← "
+            f"{item.get('runtime_type', '?')}/{item.get('runtime_name', '?')}"
+        )
+        for item in services
+    ]
+    summary = "；".join(mappings) or "（没有服务明细）"
+    return {
+        "kind": "service_catalog_registration",
+        "title": f"注册 {len(services)} 个服务目录项",
+        "server_name": server,
+        "environment": environment,
+        "service_names": [str(item.get("service_name") or "?") for item in services],
+        "command": f"注册到 {environment} 环境：{summary}",
+    }
+
+
 READ_TOOLS: tuple[BaseTool, ...] = (
     query_servers,
     run_diagnostic_command,
@@ -86,9 +112,15 @@ READ_TOOLS: tuple[BaseTool, ...] = (
     query_service_dependencies,
     query_impacted_services,
     query_upstream_candidates,
+    discover_server_services,
 )
 
 _WRITE_SPECS = (
+    WriteToolSpec(
+        tool=register_server_services,
+        risk_level="medium",
+        build_action_details=_register_server_services_action,
+    ),
     WriteToolSpec(
         tool=restart_service,
         risk_level="high",

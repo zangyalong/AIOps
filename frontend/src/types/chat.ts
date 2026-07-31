@@ -30,6 +30,8 @@ export interface PendingAction {
   command?: string
   server_name?: string
   service_name?: string
-  risk_level?: 'high' | 'critical'
+  environment?: string
+  service_names?: string[]
+  risk_level?: 'medium' | 'high' | 'critical'
   args?: Record<string, unknown>
 }

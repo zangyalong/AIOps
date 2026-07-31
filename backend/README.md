@@ -229,7 +229,9 @@ tests/             # 不依赖外部服务的自动化测试
 
 - `catalog.py` 是唯一的工具分类入口；每个工具必须明确注册为读工具或写工具，两类不允许重叠。
 - `run_diagnostic_command` 是读工具，开放主机资源、进程、网络、systemd、journal、Docker、crictl 和 Kubernetes 的受控只读命令；固定命令精确匹配，带资源名的命令严格校验参数，并统一限制执行时间和输出长度，不进入人工审批。
+- `discover_server_services` 是分层只读发现工具：固定查询 systemd、Docker，并用 `ss -lntup` 的监听端口/PID 关联 `ps` 的运行时长、unit 和启动命令，第三层只保留运行至少 60 秒且不属于 systemd service / Docker scope 的进程。SSH 用户看不到其他用户 PID 时会明确提示结果可能不完整；机器发现的运行对象不等于业务服务。
 - Docker 只读命令在 SSH 端会改写为 `sudo -n -- /usr/bin/docker ...`，目标服务器必须为 SSH 用户配置参数完全一致的 `NOPASSWD` sudoers 规则；应用不会退化成任意 `sudo docker`。
+- `register_server_services` 是服务目录写工具：审批卡片列出准备登记的服务器、环境和运行时映射；批准后会重新扫描核对对象仍然存在，再幂等写入逻辑服务与部署实例。
 - `restart_service` 是高风险写工具，先经过 LangGraph `interrupt` 人工审批，执行时还必须命中 `SSH_RESTART_SERVICE_ALLOWLIST`；默认空白名单会拒绝全部重启。
 - 工具执行节点会再次校验审批决议，不能只靠模型是否正确路由；后台 worker 设置 `allow_write_tools=False`，从模型绑定和执行节点两层禁止写工具。
 - 本地 SSH 沙箱当前使用 `known_hosts=None`，只适用于一次性本地容器，不能直接用于生产服务器。

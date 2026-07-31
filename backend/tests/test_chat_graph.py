@@ -8,7 +8,7 @@ from langchain_core.runnables import RunnableLambda
 from langchain_core.tools import tool
 from langgraph.types import Command
 
-import app.agents.graphs.chat_graph as chat_graph
+from app.agents.graphs import chat_graph
 
 
 def _initial_state(*, allow_write_tools: bool) -> dict:
@@ -77,6 +77,7 @@ async def _fake_run_diagnostic_command(server_name: str, command: str) -> str:
 
 
 _write_calls: list[tuple[str, str]] = []
+_catalog_write_calls: list[tuple[str, int, str]] = []
 
 
 @tool("restart_service")
@@ -84,6 +85,23 @@ async def _fake_restart_service(server_name: str, service_name: str) -> str:
     """记录写工具是否真的越过审批门执行。"""
     _write_calls.append((server_name, service_name))
     return f"已重启 {server_name} 上的 {service_name}"
+
+
+@tool("discover_server_services")
+async def _fake_failing_discovery(server_name: str) -> str:
+    """模拟一个抛异常、但不能破坏同批其他工具协议的读 Tool。"""
+    raise RuntimeError(f"{server_name} discovery failed")
+
+
+@tool("register_server_services")
+async def _fake_register_server_services(
+    server_name: str,
+    services: list[dict],
+    environment: str = "prod",
+) -> str:
+    """记录审批后的批量目录写入是否继续执行。"""
+    _catalog_write_calls.append((server_name, len(services), environment))
+    return "目录注册完成"
 
 
 class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
@@ -98,6 +116,7 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
             "infrastructure_agent"
         ]
         _write_calls.clear()
+        _catalog_write_calls.clear()
 
     def tearDown(self) -> None:
         chat_graph._base_llm = self.original_base
@@ -191,6 +210,48 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
             )
         )
         self.assertEqual(_write_calls, [])
+
+    async def test_service_registration_interrupts_with_catalog_details(self) -> None:
+        """服务目录注册必须停在审批门，卡片要列出服务器、环境和运行时映射。"""
+        base = _FakeBaseLLM(["infrastructure_agent"])
+        chat_graph._base_llm = lambda: base
+        chat_graph._specialist_llm = _fake_specialist_factory(
+            [
+                AIMessage(
+                    "",
+                    tool_calls=[
+                        {
+                            "name": "register_server_services",
+                            "args": {
+                                "server_name": "web01",
+                                "environment": "prod",
+                                "services": [
+                                    {
+                                        "service_name": "uvicorn",
+                                        "runtime_type": "process",
+                                        "runtime_name": "uvicorn:tcp-8010",
+                                    }
+                                ],
+                            },
+                            "id": "catalog-registration",
+                            "type": "tool_call",
+                        }
+                    ],
+                )
+            ]
+        )
+
+        graph = chat_graph.build_chat_graph()
+        config = {"configurable": {"thread_id": "catalog-approval-test"}}
+        await graph.ainvoke(_initial_state(allow_write_tools=True), config=config)
+        snapshot = await graph.aget_state(config)
+
+        self.assertTrue(snapshot.interrupts)
+        action = snapshot.interrupts[0].value["actions"][0]
+        self.assertEqual(action["kind"], "service_catalog_registration")
+        self.assertEqual(action["server_name"], "web01")
+        self.assertEqual(action["environment"], "prod")
+        self.assertIn("uvicorn ← process/uvicorn:tcp-8010", action["command"])
 
     async def test_unattended_worker_cannot_reach_write_approval(self) -> None:
         """即使假模型越权提出 SSH，allow_write_tools=False 也会在工具层硬拒绝且不挂起。"""
@@ -340,3 +401,119 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("缺少人工审批决议", str(result["messages"][0].content))
         self.assertEqual(_write_calls, [])
+
+    async def test_tool_exception_still_completes_every_tool_call_id(self) -> None:
+        """同批某个 Tool 抛错时也要逐一回消息，不能留下 DeepSeek 无法接受的残缺协议。"""
+        chat_graph.SPECIALIST_READ_TOOLS["infrastructure_agent"] = [
+            _fake_failing_discovery
+        ]
+        chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"] = [
+            _fake_register_server_services
+        ]
+        result = await chat_graph.specialist_tools_node(
+            "infrastructure_agent",
+            {
+                "messages": [],
+                "work_messages": [
+                    AIMessage(
+                        "",
+                        tool_calls=[
+                            {
+                                "name": "discover_server_services",
+                                "args": {"server_name": "web01"},
+                                "id": "read-call",
+                                "type": "tool_call",
+                            },
+                            {
+                                "name": "register_server_services",
+                                "args": {
+                                    "server_name": "web01",
+                                    "environment": "prod",
+                                    "services": [
+                                        {
+                                            "service_name": "uvicorn",
+                                            "runtime_type": "process",
+                                            "runtime_name": "uvicorn:tcp-8010",
+                                        }
+                                    ],
+                                },
+                                "id": "write-call",
+                                "type": "tool_call",
+                            },
+                        ],
+                    )
+                ],
+                "reports": {},
+                "specialist_instruction": "",
+                "tool_iterations": 0,
+                "allow_write_tools": True,
+                "approval": {"approved": True, "reason": ""},
+            },
+        )
+
+        messages = result["messages"]
+        self.assertEqual(
+            [message.tool_call_id for message in messages],
+            ["read-call", "write-call"],
+        )
+        self.assertEqual([message.status for message in messages], ["error", "success"])
+        self.assertIn("RuntimeError", str(messages[0].content))
+        self.assertEqual(_catalog_write_calls, [("web01", 1, "prod")])
+
+    def test_duplicate_tool_call_ids_are_normalized(self) -> None:
+        message = AIMessage(
+            "",
+            tool_calls=[
+                {
+                    "name": "query_servers",
+                    "args": {},
+                    "id": "duplicate",
+                    "type": "tool_call",
+                },
+                {
+                    "name": "discover_server_services",
+                    "args": {"server_name": "web01"},
+                    "id": "duplicate",
+                    "type": "tool_call",
+                },
+            ],
+        )
+
+        normalized = chat_graph._normalize_tool_call_ids(message)
+
+        ids = [call["id"] for call in normalized.tool_calls]
+        self.assertEqual(ids[0], "duplicate")
+        self.assertNotEqual(ids[0], ids[1])
+
+    def test_missing_tail_tool_result_gets_failure_repair(self) -> None:
+        messages = [
+            AIMessage(
+                "",
+                tool_calls=[
+                    {
+                        "name": "query_servers",
+                        "args": {},
+                        "id": "complete-call",
+                        "type": "tool_call",
+                    },
+                    {
+                        "name": "register_server_services",
+                        "args": {},
+                        "id": "missing-call",
+                        "type": "tool_call",
+                    },
+                ],
+            ),
+            ToolMessage(
+                "查询完成",
+                tool_call_id="complete-call",
+                name="query_servers",
+            ),
+        ]
+
+        repairs = chat_graph._trailing_protocol_repairs(messages)
+
+        self.assertEqual(len(repairs), 1)
+        self.assertEqual(repairs[0].tool_call_id, "missing-call")
+        self.assertEqual(repairs[0].status, "error")
+        self.assertIn("不要假定操作成功", str(repairs[0].content))

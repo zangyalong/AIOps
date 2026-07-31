@@ -26,7 +26,7 @@ type TimelineItem =
       threadId: string // 挂起恢复用；历史重建的已决定项为 '' （无需也无法再恢复）
       command: string // 展示的命令 / 动作摘要
       label: string // 副标题（在哪台执行等），可空
-      riskLevel?: 'high' | 'critical'
+      riskLevel?: 'medium' | 'high' | 'critical'
       status: 'pending' | 'approved' | 'rejected'
     }
 
@@ -62,6 +62,8 @@ const TOOL_LABELS: Record<string, string> = {
   search_logs: '检索日志',
   query_alerts: '查询告警',
   query_server_services: '查询服务器上的服务',
+  discover_server_services: '发现服务器运行服务',
+  register_server_services: '注册服务目录',
   run_diagnostic_command: '执行只读诊断',
   restart_service: '重启服务',
   run_whitelisted_command: '执行远程命令（旧记录）',
@@ -70,14 +72,35 @@ function toolLabel(name: string): string {
   return TOOL_LABELS[name] ?? name
 }
 
-// restart_service 是当前写工具；旧名称仅用于正确还原已有历史会话，不会再绑定给 Agent。
-const WRITE_TOOLS = new Set(['restart_service', 'run_whitelisted_command'])
+// 目录注册和服务重启是当前写工具；旧名称仅用于正确还原已有历史会话，不会再绑定给 Agent。
+const WRITE_TOOLS = new Set([
+  'register_server_services',
+  'restart_service',
+  'run_whitelisted_command',
+])
 
 function historyApprovalCommand(name: string, args: Record<string, unknown>): string {
   if (name === 'restart_service') {
     return `重启服务 ${String(args.service_name ?? '?')}`
   }
+  if (name === 'register_server_services') {
+    const services = Array.isArray(args.services) ? args.services : []
+    const names = services
+      .map((item) =>
+        item && typeof item === 'object' && 'service_name' in item
+          ? String(item.service_name)
+          : '?',
+      )
+      .join('、')
+    return `注册到 ${String(args.environment ?? 'prod')} 环境：${names || '（无服务明细）'}`
+  }
   return String(args.command ?? name)
+}
+
+function riskLevelLabel(level: 'medium' | 'high' | 'critical'): string {
+  if (level === 'medium') return '目录写入'
+  if (level === 'critical') return '严重风险'
+  return '高风险'
 }
 
 function scrollToBottom() {
@@ -146,7 +169,7 @@ async function consume(stream: AsyncGenerator<ChatStreamEvent>) {
           key: uid(),
           threadId: event.thread_id,
           command: a.command ?? (a.args ? JSON.stringify(a.args) : a.title),
-          label: a.server_name ?? '',
+          label: [a.server_name, a.environment].filter(Boolean).join(' · '),
           riskLevel: a.risk_level,
           status: 'pending',
         })
@@ -319,8 +342,13 @@ function buildTimeline(messages: ChatMessage[]): TimelineItem[] {
             key: uid(),
             threadId: '',
             command: historyApprovalCommand(toolCall.name, args),
-            label: String(args.server_name ?? ''),
-            riskLevel: toolCall.name === 'restart_service' ? 'high' : undefined,
+            label: [args.server_name, args.environment].filter(Boolean).map(String).join(' · '),
+            riskLevel:
+              toolCall.name === 'register_server_services'
+                ? 'medium'
+                : toolCall.name === 'restart_service'
+                  ? 'high'
+                  : undefined,
             status: result.startsWith('用户拒绝执行') ? 'rejected' : 'approved',
           })
         } else {
@@ -439,7 +467,7 @@ onBeforeUnmount(() => {
               <span class="approval-verb">{{
                 item.status === 'pending' ? '待确认' : item.status === 'approved' ? '已批准' : '已拒绝'
               }}</span>
-              <span v-if="item.riskLevel" class="approval-risk">高风险</span>
+              <span v-if="item.riskLevel" class="approval-risk">{{ riskLevelLabel(item.riskLevel) }}</span>
               <code class="approval-cmd">{{ item.command }}</code>
               <span v-if="item.label" class="approval-loc">· {{ item.label }}</span>
             </span>

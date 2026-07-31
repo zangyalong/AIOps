@@ -41,8 +41,9 @@ class _ConnectionContext:
 
 class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
     def test_catalog_has_disjoint_read_and_write_tools(self) -> None:
-        """目录必须把诊断命令归为读、服务重启归为写，且写工具带审批元数据。"""
+        """目录必须把发现归为读、目录注册/服务重启归为写，且写工具带审批元数据。"""
         self.assertIn("run_diagnostic_command", catalog.READ_TOOLS_BY_NAME)
+        self.assertIn("discover_server_services", catalog.READ_TOOLS_BY_NAME)
         self.assertIn("query_recent_changes", catalog.READ_TOOLS_BY_NAME)
         self.assertIn("query_server_services", catalog.READ_TOOLS_BY_NAME)
         self.assertIn("query_service_dependencies", catalog.READ_TOOLS_BY_NAME)
@@ -51,6 +52,7 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("run_diagnostic_command", catalog.WRITE_TOOLS_BY_NAME)
         self.assertNotIn("query_recent_changes", catalog.WRITE_TOOLS_BY_NAME)
         self.assertIn("restart_service", catalog.WRITE_TOOLS_BY_NAME)
+        self.assertIn("register_server_services", catalog.WRITE_TOOLS_BY_NAME)
         self.assertFalse(
             set(catalog.READ_TOOLS_BY_NAME) & set(catalog.WRITE_TOOLS_BY_NAME)
         )
@@ -59,6 +61,20 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
             {
                 tool.name
                 for tool in chat_graph.SPECIALIST_READ_TOOLS["infrastructure_agent"]
+            },
+        )
+        self.assertIn(
+            "discover_server_services",
+            {
+                tool.name
+                for tool in chat_graph.SPECIALIST_READ_TOOLS["infrastructure_agent"]
+            },
+        )
+        self.assertIn(
+            "register_server_services",
+            {
+                tool.name
+                for tool in chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"]
             },
         )
 
@@ -72,6 +88,27 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(action["risk_level"], "high")
         self.assertEqual(action["kind"], "service_restart")
         self.assertEqual(action["server_name"], "demo")
+
+        registration_action = catalog.describe_write_action(
+            {
+                "id": "register-1",
+                "name": "register_server_services",
+                "args": {
+                    "server_name": "web01",
+                    "environment": "prod",
+                    "services": [
+                        {
+                            "service_name": "orders-api",
+                            "runtime_type": "docker",
+                            "runtime_name": "orders-api",
+                        }
+                    ],
+                },
+            }
+        )
+        self.assertEqual(registration_action["risk_level"], "medium")
+        self.assertEqual(registration_action["kind"], "service_catalog_registration")
+        self.assertIn("orders-api ← docker/orders-api", registration_action["command"])
 
     async def test_restart_service_rejects_empty_allowlist_before_ssh(self) -> None:
         """默认空白名单时，即使审批层误放行，工具自身也不能连接 SSH。"""
