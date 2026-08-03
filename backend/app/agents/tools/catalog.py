@@ -27,6 +27,10 @@ from app.agents.tools.metrics import (
     query_server_metrics,
 )
 from app.agents.tools.servers import query_servers
+from app.agents.tools.server_log_config import (
+    apply_server_log_config,
+    preview_server_log_config,
+)
 from app.agents.tools.service_discovery import (
     discover_server_services,
     register_server_services,
@@ -96,6 +100,30 @@ def _register_server_services_action(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _apply_server_log_config_action(args: dict[str, Any]) -> dict[str, Any]:
+    server = str(args.get("server_name") or "?")
+    mappings = [item for item in (args.get("mappings") or []) if isinstance(item, dict)]
+    sources = [
+        (
+            f"{item.get('service_name', '?')} ← "
+            f"{item.get('runtime_type', '?')}/{item.get('runtime_name', '?')} "
+            f"({item.get('log_source', '?')})"
+        )
+        for item in mappings
+        if item.get("log_source") != "none"
+    ]
+    return {
+        "kind": "server_log_config_apply",
+        "title": f"应用 {server} 的 {len(sources)} 个日志源并重载 Alloy",
+        "server_name": server,
+        "service_names": [
+            str(item.get("service_name") or "?") for item in mappings
+        ],
+        "command": "；".join(sources) or "（没有启用的日志源）",
+        "preview_hash": str(args.get("preview_hash") or ""),
+    }
+
+
 READ_TOOLS: tuple[BaseTool, ...] = (
     query_servers,
     run_diagnostic_command,
@@ -113,6 +141,7 @@ READ_TOOLS: tuple[BaseTool, ...] = (
     query_impacted_services,
     query_upstream_candidates,
     discover_server_services,
+    preview_server_log_config,
 )
 
 _WRITE_SPECS = (
@@ -125,6 +154,11 @@ _WRITE_SPECS = (
         tool=restart_service,
         risk_level="high",
         build_action_details=_restart_service_action,
+    ),
+    WriteToolSpec(
+        tool=apply_server_log_config,
+        risk_level="high",
+        build_action_details=_apply_server_log_config_action,
     ),
 )
 

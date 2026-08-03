@@ -15,9 +15,8 @@ usage() {
 
 默认读取脚本所在目录的 deploy.conf。先执行：
   cp deploy.conf.example deploy.conf
-  cp alloy/services.map.example alloy/services.map
 
-然后按目标服务器的实际情况修改这两个文件。
+首次安装只修改 deploy.conf，不需要预先填写服务清单。
 EOF
 }
 
@@ -45,12 +44,13 @@ done
 [[ -f "$CONFIG_PATH" ]] || fail "找不到配置文件：$CONFIG_PATH（请先复制 deploy.conf.example）"
 
 AIOMS_SSH_USER=""
+AIOMS_DEPLOY_USER="aioms-deploy"
 ENABLE_ALLOY="true"
 SERVER_NAME=""
 LOKI_PUSH_URL=""
-ALLOY_SERVICE_MAP="alloy/services.map"
+ALLOY_SERVICE_MAP=""
 ALLOW_DOCKER_SOCKET="false"
-START_ALLOY="true"
+START_ALLOY="false"
 ENVIRONMENT="prod"
 ENABLE_NODE_EXPORTER="false"
 NODE_EXPORTER_IMAGE=""
@@ -89,6 +89,7 @@ set_config_value() {
 
     case "$key" in
         AIOMS_SSH_USER) AIOMS_SSH_USER="$value" ;;
+        AIOMS_DEPLOY_USER) AIOMS_DEPLOY_USER="$value" ;;
         ENABLE_ALLOY) ENABLE_ALLOY="$value" ;;
         SERVER_NAME) SERVER_NAME="$value" ;;
         LOKI_PUSH_URL) LOKI_PUSH_URL="$value" ;;
@@ -147,6 +148,8 @@ validate_boolean() {
 }
 
 [[ -n "$AIOMS_SSH_USER" ]] || fail "AIOMS_SSH_USER 不能为空"
+[[ "$AIOMS_DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] ||
+    fail "AIOMS_DEPLOY_USER 格式不合法"
 validate_boolean "ENABLE_ALLOY" "$ENABLE_ALLOY"
 validate_boolean "ALLOW_DOCKER_SOCKET" "$ALLOW_DOCKER_SOCKET"
 validate_boolean "START_ALLOY" "$START_ALLOY"
@@ -164,28 +167,35 @@ alloy_args=()
 if [[ "$ENABLE_ALLOY" == "true" ]]; then
     [[ -n "$SERVER_NAME" ]] || fail "ENABLE_ALLOY=true 时 SERVER_NAME 不能为空"
     [[ -n "$LOKI_PUSH_URL" ]] || fail "ENABLE_ALLOY=true 时 LOKI_PUSH_URL 不能为空"
-    [[ -n "$ALLOY_SERVICE_MAP" ]] || fail "ENABLE_ALLOY=true 时 ALLOY_SERVICE_MAP 不能为空"
-
-    if [[ "$ALLOY_SERVICE_MAP" == /* ]]; then
-        service_map_path="$ALLOY_SERVICE_MAP"
-    else
-        service_map_path="$SCRIPT_DIR/$ALLOY_SERVICE_MAP"
-    fi
-
-    [[ -f "$service_map_path" ]] || fail "找不到 Alloy 服务映射：$service_map_path"
     [[ -x "$SCRIPT_DIR/alloy/install.sh" ]] ||
         fail "缺少可执行的 Alloy 安装器：$SCRIPT_DIR/alloy/install.sh"
+    [[ -x "$SCRIPT_DIR/alloy/aioms-alloy-apply" ]] ||
+        fail "缺少固定 Alloy 配置应用器：$SCRIPT_DIR/alloy/aioms-alloy-apply"
 
     alloy_args=(
         --server "$SERVER_NAME"
         --loki-url "$LOKI_PUSH_URL"
-        --map "$service_map_path"
+        --deploy-user "$AIOMS_DEPLOY_USER"
     )
+
+    if [[ -n "$ALLOY_SERVICE_MAP" ]]; then
+        if [[ "$ALLOY_SERVICE_MAP" == /* ]]; then
+            service_map_path="$ALLOY_SERVICE_MAP"
+        else
+            service_map_path="$SCRIPT_DIR/$ALLOY_SERVICE_MAP"
+        fi
+        [[ -f "$service_map_path" ]] || fail "找不到 Alloy 服务映射：$service_map_path"
+        alloy_args+=(--map "$service_map_path")
+    else
+        [[ "$START_ALLOY" == "false" ]] ||
+            fail "没有 ALLOY_SERVICE_MAP 时 START_ALLOY 必须为 false"
+        alloy_args+=(--install-only)
+    fi
 
     if [[ "$ALLOW_DOCKER_SOCKET" == "true" ]]; then
         alloy_args+=(--allow-docker-socket)
     fi
-    if [[ "$START_ALLOY" != "true" ]]; then
+    if [[ -n "$ALLOY_SERVICE_MAP" && "$START_ALLOY" != "true" ]]; then
         alloy_args+=(--no-start)
     fi
 fi
@@ -290,7 +300,11 @@ echo "[1/3] 安装 AIOMS 只读服务发现网关"
 "$SCRIPT_DIR/discovery/install.sh" "$AIOMS_SSH_USER"
 
 if [[ "$ENABLE_ALLOY" == "true" ]]; then
-    echo "[2/3] 安装并配置 Alloy 日志采集"
+    if [[ -n "$ALLOY_SERVICE_MAP" ]]; then
+        echo "[2/3] 安装并配置 Alloy 日志采集"
+    else
+        echo "[2/3] 安装 Alloy 基础组件，等待服务发现后生成配置"
+    fi
     "$SCRIPT_DIR/alloy/install.sh" "${alloy_args[@]}"
 else
     echo "[2/3] 已按配置跳过 Alloy"

@@ -41,6 +41,10 @@ from app.agents.tools.metrics import (
     query_server_metrics,
 )
 from app.agents.tools.servers import query_servers
+from app.agents.tools.server_log_config import (
+    apply_server_log_config,
+    preview_server_log_config,
+)
 from app.agents.tools.service_discovery import (
     discover_server_services,
     register_server_services,
@@ -89,6 +93,7 @@ SPECIALIST_READ_TOOLS: dict[AgentName, list[BaseTool]] = {
         query_servers,
         query_server_services,
         discover_server_services,
+        preview_server_log_config,
         run_diagnostic_command,
     ],
 }
@@ -97,7 +102,11 @@ SPECIALIST_WRITE_TOOLS: dict[AgentName, list[BaseTool]] = {
     "metrics_agent": [],
     "logs_agent": [],
     "incident_agent": [],
-    "infrastructure_agent": [register_server_services, restart_service],
+    "infrastructure_agent": [
+        register_server_services,
+        restart_service,
+        apply_server_log_config,
+    ],
 }
 
 # 启动导入阶段就校验每个专家的工具归类，防止以后把写工具误塞进读工具列表绕过审批。
@@ -156,6 +165,11 @@ SPECIALIST_PROMPTS: dict[AgentName, str] = {
         "register_server_services 是目录写操作，必须等待人工审批；提出调用时只能说明“准备提交"
         "审批”，不能提前声称用户已经确认或操作正在执行。只有拿到该 Tool 的成功结果后，才能"
         "声称已经注册。"
+        "用户要求根据服务目录生成 Alloy 日志采集配置时，先调用 preview_server_log_config。"
+        "预览只读取已经登记且带 runtime_type/runtime_name 的实例：systemd 映射 journal，Docker "
+        "映射容器日志，process 标记 none。只有用户明确要求应用、启用或更新配置时，才把预览"
+        "返回的 preview_hash 和 mappings 原样传给 apply_server_log_config；它是高风险写工具，"
+        "会上传固定映射并启动或重载 Alloy，必须单独提交人工审批，不能和其他 Tool 同批调用。"
         "只有用户明确要求重启服务时才能调用 "
         "restart_service；它是高风险写工具，必须等待人工审批，不能用诊断工具替代或拼接写命令。"
         "完成调查后输出一份给 Supervisor 的简短证据报告，不要假装直接回复最终用户。"
@@ -168,7 +182,7 @@ SUPERVISOR_PROMPT = """你是 AIOMS 的 Supervisor，只负责拆解问题和把
 - metrics_agent：Prometheus 指标、实例发现、指标图表链接
 - logs_agent：Loki 日志、服务发现、日志图表链接
 - incident_agent：当前告警、变更记录、服务目录、按服务器查询已登记服务、拓扑、影响范围和事件关联
-- infrastructure_agent：服务器清单、实时服务发现、服务目录注册、SSH 只读诊断和受控服务重启
+- infrastructure_agent：服务器清单、实时服务发现、服务目录注册、Alloy 配置预览/审批应用、SSH 只读诊断和受控服务重启
 
 每次只选择一个专家。专家完成后你会再次拿到控制权，可以继续委派另一个专家；证据已经足够，或用户只是闲聊、解释概念时选择 finish。
 涉及“当前/最新”的服务器状态、指标、日志、告警或命令输出时，不能在没有对应专家真实调查结果的情况下 finish。

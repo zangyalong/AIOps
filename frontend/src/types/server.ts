@@ -9,6 +9,8 @@ export interface Server {
   ssh_port: number | null
   ssh_user: string | null
   ssh_key_filename: string | null
+  deploy_ssh_user: string | null
+  deploy_ssh_key_filename: string | null
   status: ServerStatus
   created_at: string
   updated_at: string
@@ -21,6 +23,8 @@ export interface ServerCreateInput {
   ssh_port?: number | null
   ssh_user?: string | null
   ssh_key_filename?: string | null
+  deploy_ssh_user?: string | null
+  deploy_ssh_key_filename?: string | null
 }
 
 // 测试连接接口的返回：只会是这三种（后端探测的真实结果），不含 unknown

@@ -14,13 +14,20 @@ class Server(Base, UUIDMixin, TimestampMixin):
     ip_address: Mapped[str] = mapped_column(String(45), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # 三个都可空：不是每台 server 都要能真的 SSH 上去，纯记录用的服务器可以不填。
+    # 日常连接三个字段都可空：不是每台 server 都要能真的 SSH 上去，纯记录可以不填。
     # 都填了才会被当成"可执行白名单命令"的目标，见 app/agents/tools/commands.py。
     ssh_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
     ssh_user: Mapped[str | None] = mapped_column(String(50), nullable=True)
     # 只存文件名，不存路径——实际私钥路径是 settings.ssh_key_dir / ssh_key_filename 拼出来的，
     # 密钥内容本身放仓库根目录 ssh/ 下，不进数据库、不进仓库。
     ssh_key_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # 服务器写 Tool 使用独立部署身份，不能复用上面的日常只读密钥。SSH 端口与主机地址仍
+    # 复用本服务器记录；只有经过审批的部署 Tool 会读取这两个字段。
+    deploy_ssh_user: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    deploy_ssh_key_filename: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
 
     # 最近一次"测试连接"的结果，持久化下来，刷新页面不丢：
     # unknown（还没测过）/ active / unreachable / unconfigured

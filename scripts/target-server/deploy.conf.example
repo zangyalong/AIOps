@@ -5,6 +5,9 @@
 # 部署脚本不会创建该用户，也不会修改 authorized_keys。
 AIOMS_SSH_USER=aioms
 
+# bootstrap 创建的独立部署用户，只用于审批后的配置写 Tool。
+AIOMS_DEPLOY_USER=aioms-deploy
+
 # 是否在目标服务器安装 Alloy 并采集日志：true / false
 ENABLE_ALLOY=true
 
@@ -14,16 +17,16 @@ SERVER_NAME=web01
 # ENABLE_ALLOY=true 时必填：目标服务器能够访问的中央 Loki 推送地址。
 LOKI_PUSH_URL=http://monitor.example.com:3100/loki/api/v1/push
 
-# 相对于 scripts/target-server/ 的 Alloy 服务映射文件，也可以写绝对路径。
-# 请先把 alloy/services.map.example 复制为 alloy/services.map 并按实际服务修改。
-ALLOY_SERVICE_MAP=alloy/services.map
+# 首次安装留空：先安装 discovery 和 Alloy 基础组件，服务注册后由 AI 自动生成并审批应用。
+# 管理员已有审核过的映射时，也可以填写相对路径或绝对路径直接部署。
+ALLOY_SERVICE_MAP=
 
 # 映射中存在 log_source=docker 时必须为 true。
 # Docker socket 权限很高，请只在确实需要采集容器日志时开启。
 ALLOW_DOCKER_SOCKET=false
 
-# true：安装后启用并重启 Alloy；false：只安装和校验配置，不启动服务。
-START_ALLOY=true
+# 首次无映射时必须为 false。AI 审批应用服务映射后会校验配置并启动或重载 Alloy。
+START_ALLOY=false
 
 # 服务目录和 Prometheus 标签使用的环境名。
 ENVIRONMENT=prod

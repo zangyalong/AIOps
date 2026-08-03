@@ -4,3 +4,5 @@ alloy/services.map
 metrics/mysql-exporter.my.cnf
 metrics/postgres-exporter.password
 metrics/redis-exporter.password
+bootstrap/generated/
+dist/

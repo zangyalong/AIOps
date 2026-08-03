@@ -1,13 +1,14 @@
-# web01 Alloy 日志采集快速配置
+# 目标服务器 Alloy 日志采集
 
-这套文件安装在目标 Linux 服务器上。Alloy 从登记过的 systemd、Docker 或文件日志读取数据，
-添加 AIOMS 统一标签后，主动推送到中央 Loki；它不会安装 Prometheus、Loki 或 Grafana。
+Alloy 安装在目标服务器，从已经登记的 systemd 或 Docker 运行对象读取日志并推送中央 Loki。
+首次部署不需要手填服务列表：先安装基础组件，AI 发现并注册服务后再生成配置预览，审批通过
+才安装配置并启动或重载 Alloy。
 
-统一标签是：
+统一标签：
 
 ```text
 service
-service_name    # 迁移期兼容现有 AIOMS search_logs
+service_name    # 兼容现有 AIOMS 日志查询
 environment
 server
 runtime_type
@@ -15,151 +16,124 @@ runtime_name
 log_source
 ```
 
-## 先确认网络
+## 1. 首次基础安装
 
-`--loki-url` 必须是 **web01 能访问到的中央 Loki push URL**：
+顶层 `deploy.conf` 保持：
+
+```ini
+ENABLE_ALLOY=true
+SERVER_NAME=web01
+LOKI_PUSH_URL=http://监控服务器:3100/loki/api/v1/push
+ALLOY_SERVICE_MAP=
+ALLOW_DOCKER_SOCKET=false
+START_ALLOY=false
+```
+
+然后执行顶层 `sudo ./deploy.sh`。它会安装 Alloy、journald 读取组、固定生成器和固定配置应用器，
+但因为还没有服务映射，不会启动 Alloy。
+
+`LOKI_PUSH_URL` 必须是目标服务器能访问的中央 Loki 地址，不能误写目标机自己的
+`localhost:3100`。如果明确需要 Docker stdout/stderr，应由管理员理解权限风险后把
+`ALLOW_DOCKER_SOCKET=true`；AI Tool 不能自行改变这项 root 策略。
+
+## 2. 通过对话发现和注册服务
+
+基础部署完成后对 AIOMS 说：
 
 ```text
-http://监控服务器内网地址:3100/loki/api/v1/push
+发现 web01 上的服务，并注册到服务目录。
 ```
 
-不能写 `localhost:3100`，因为在 web01 上它表示 web01 自己。当前 AIOMS Docker Compose 的
-Loki 没有内建认证，不要把 3100 直接暴露到公网；测试时至少用防火墙只允许 web01，正式使用
-应在 Loki 前放带 TLS/鉴权的反向代理。
+AI 先调用只读 `discover_server_services`，再把选中的 systemd、Docker 和长期监听进程提交服务
+目录审批。批准后，服务实例会保存稳定的 `runtime_type` / `runtime_name`。
 
-## 1. 准备服务映射
+## 3. 预览并审批应用日志配置
 
-```bash
-cd /tmp/aioms-target-server/alloy
-cp services.map.example services.map
-vi services.map
-```
-
-一行对应一个服务实例：
+继续说：
 
 ```text
-service|environment|runtime_type|runtime_name|log_source|log_path
+预览 web01 的日志采集配置。
 ```
 
-| log_source  | 适用场景                           | 填法                                      |
-| ----------- | ---------------------------------- | ----------------------------------------- |
-| `journal` | systemd 服务写 journald            | `runtime_name` 填准确的 `.service` 名 |
-| `docker`  | Docker stdout/stderr               | `runtime_name` 填容器名，不填容器 ID    |
-| `file`    | MySQL/PHP/FTP 或未纳管进程文件日志 | `log_path` 填绝对路径或 glob            |
-| `none`    | 先登记但暂不采集日志               | 不生成日志源                              |
+只读 `preview_server_log_config` 根据服务目录自动映射：
 
-服务名、环境、运行类型和运行对象应与 AIOMS 服务目录完全一致。不要把 PID、容器 ID 或请求
-ID 填成稳定身份。
+| 运行类型 | 自动日志源 | 说明 |
+| --- | --- | --- |
+| `systemd` | `journal` | 使用准确的 `.service` 单元过滤 journald |
+| `docker` | `docker` | 使用稳定容器名过滤 stdout/stderr |
+| `process` | `none` | 无法仅凭 PID/命令可靠推断日志文件 |
 
-## 2. 只生成配置预览
+预览返回结构化 mappings、`services.map` 内容和 SHA-256 摘要，不连接目标服务器。确认后说：
 
-这一步不需要 root，也不会修改 `/etc/alloy`：
-
-```bash
-./generate-config.sh \
-  ./services.map \
-  web01 \
-  http://监控服务器:3100/loki/api/v1/push \
-  /tmp/web01.config.alloy
-
-less /tmp/web01.config.alloy
+```text
+应用刚才预览的 web01 日志配置。
 ```
 
-如果服务器已经安装 Alloy，可以进一步做语法检查：
+高风险写 Tool `apply_server_log_config` 会：
 
-```bash
-alloy validate /tmp/web01.config.alloy
-```
+1. 重新读取服务目录，核对摘要和每项映射，变化时拒绝应用并要求重新预览。
+2. 使用服务器记录中的独立 `deploy_ssh_user` / `deploy_ssh_key_filename`。
+3. 只把自动生成的映射上传到 `/var/lib/aioms-deploy/incoming/services.map`。
+4. 只执行 `sudo /usr/local/sbin/aioms-target-deploy apply-alloy`。
+5. root 应用器再次校验文件所有者、权限、大小和格式，运行 `alloy validate`，备份旧配置后
+   启动或重载 Alloy；失败时尝试恢复旧配置。
 
-## 3. 安装
+自动应用不接受 `file` 日志源，不能指定脚本路径、目标路径或 Loki 地址。
 
-只有 systemd 和文件日志时：
+## 4. Docker 与文件日志边界
+
+Docker socket 通常赋予接近 root 的容器控制能力。服务目录中存在 Docker 实例时，预览会提示
+需要该权限，但目标服务器只有在管理员首次设置 `ALLOW_DOCKER_SOCKET=true` 后才会实际应用。
+
+未纳管进程、MySQL、PHP、FTP 等文件日志路径无法仅靠进程可靠判断。需要文件日志时，管理员
+使用 `services.map.example` 人工准备映射和最小 ACL，然后直接运行安装器：
 
 ```bash
 sudo ./install.sh \
   --server web01 \
   --loki-url http://监控服务器:3100/loki/api/v1/push \
-  --map ./services.map
-```
-
-映射中包含 Docker 日志时，必须显式确认 Docker socket 权限：
-
-```bash
-sudo ./install.sh \
-  --server web01 \
-  --loki-url http://监控服务器:3100/loki/api/v1/push \
+  --deploy-user aioms-deploy \
   --map ./services.map \
   --allow-docker-socket
 ```
 
-Docker Unix socket 不是普通“只读日志权限”；能访问它的用户通常具有接近 root 的容器控制
-能力。这个参数只表示你已经理解并接受该风险，脚本不会静默授权。
-
-想先安装文件但不启动：
-
-```bash
-sudo ./install.sh \
-  --server web01 \
-  --loki-url http://监控服务器:3100/loki/api/v1/push \
-  --map ./services.map \
-  --allow-docker-socket \
-  --no-start
-```
-
-安装器支持 Debian/Ubuntu 的 `apt` 和 RHEL/Fedora 的 `dnf`。它会：
-
-1. 从 Grafana 官方仓库安装 Alloy（已经安装则跳过）。
-2. 给 `alloy` 用户添加 journald 读取组。
-3. 在显式允许时添加 Docker socket 所属组。
-4. 生成并执行 `alloy validate`。
-5. 备份已有 `/etc/alloy/config.alloy`。
-6. 安装新配置并启动或重启 `alloy.service`。
-
-## 4. 文件日志权限
-
-安装器不会自动扩大任意日志目录权限。对每个 `file` 日志源，以实际目录为单位授权，例如：
+文件目录按实际范围授予 Alloy，不要开放整个 `/var/log`：
 
 ```bash
 sudo setfacl -R -m u:alloy:rx /var/log/mysql
 sudo setfacl -R -d -m u:alloy:rx /var/log/mysql
-sudo systemctl restart alloy
 ```
 
-目录需要 `x` 权限才能遍历，文件需要 `r` 权限。不要直接把整个 `/var/log` 开放给 Alloy。
+## 5. 安装后的固定文件
 
-## 5. 检查
+```text
+/etc/aioms/alloy-target.conf                 # root 确定的服务器/Loki/Docker 策略
+/etc/aioms/alloy-services.map                # 最近一次成功应用的服务映射
+/etc/alloy/config.alloy                      # Alloy 实际运行配置
+/usr/local/libexec/aioms/generate-alloy-config
+/usr/local/libexec/aioms/apply-alloy-config
+/var/lib/aioms-deploy/incoming/               # 仅部署用户可写的暂存目录
+```
+
+## 6. 检查与排错
+
+配置应用成功后：
 
 ```bash
 sudo ./check.sh
-```
-
-然后在能访问中央 Loki 的机器检查统一标签：
-
-```bash
-curl -fsS http://localhost:3100/loki/api/v1/label/service/values
-curl -fsS http://localhost:3100/loki/api/v1/label/server/values
-```
-
-AIOMS 对话验证示例：
-
-```text
-查询 pixel-forge-backend 最近 10 分钟日志
-```
-
-## 排错
-
-```bash
 sudo alloy validate /etc/alloy/config.alloy
 sudo systemctl status alloy --no-pager
 sudo journalctl -u alloy -n 100 --no-pager
-id alloy
-getent group systemd-journal
-ls -l /var/run/docker.sock
 ```
 
-- Alloy 正常但 Loki 没日志：检查 web01 到 Loki 的地址、防火墙和 push URL。
-- journald 没日志：检查 `alloy` 是否在 `adm`/`systemd-journal` 组，以及 unit 名是否准确。
-- Docker 报 permission denied：检查 socket 所属组和 `id alloy`，然后重启 Alloy。
-- 文件日志 permission denied：给具体日志目录设置 ACL，不要改成全局可读。
-- `process` 服务没有日志：仅发现进程和端口无法推断日志路径；需要手工填写 `file` 路径，
-  或把重要进程改为 systemd 后采集 journald。
+中央 Loki 可检查：
+
+```logql
+{server="web01", service="pixel-forge-backend", environment="prod"}
+```
+
+- 提示没有服务映射：先完成服务发现和目录注册。
+- 提示预览不一致：服务目录在预览后发生变化，重新预览并审批。
+- Docker 未授权：由管理员更新 `ALLOW_DOCKER_SOCKET` 并重新执行基础部署。
+- journald 没日志：检查 `id alloy` 是否包含 `adm` 或 `systemd-journal`。
+- Alloy 正常但 Loki 没日志：检查目标服务器到中央 Loki 的地址、防火墙和认证代理。

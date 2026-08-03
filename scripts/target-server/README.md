@@ -1,28 +1,72 @@
 # AIOMS 目标服务器配置指南
 
-把整个 `scripts/target-server/` 目录复制到目标 Linux 服务器，准备配置文件后执行
-一次 `sudo ./deploy.sh`，即可完成：
+推荐在 AIOMS 本地生成单服务器安装包，目标服务器解压后只执行一次 `sudo ./install.sh`。
+也可以把整个 `scripts/target-server/` 目录复制到目标 Linux 服务器，按底层步骤分别执行。
+首次安装可以完成：
 
 1. 安装 AIOMS 服务发现所需的只读命令网关和精确 sudoers 权限。
-2. 按需安装 Grafana Alloy，采集本机 systemd、Docker 或指定文件日志并推送中央 Loki。
+2. 按需安装 Grafana Alloy 基础组件；服务发现并注册后由 AI 生成日志配置并审批启用。
 3. 按独立开关部署 node_exporter、cAdvisor、MySQL、PostgreSQL 和 Redis exporter。
+
+如果目标服务器还没有 AIOMS 专用 SSH 用户，先使用 `bootstrap/prepare-client.sh` 在客户端
+生成两组密钥和一个独立角色包。服务器管理员只需接收两个公钥和角色配置脚本，不需要接收
+完整运行包，也不需要把 root 密码或私钥交给 AIOMS。
 
 ## 先分清目标服务器和中央监控服务器
 
 | 位置                      | 本配置包负责                                                | 本配置包不负责                                                                |
 | ------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| 目标服务器（如`web01`） | 只读发现网关、sudoers、可选 Alloy、可选 Prometheus exporter | 不创建 SSH 用户，不配置 SSH 私钥/公钥，不自动创建数据库监控账号，不修改防火墙 |
+| 目标服务器（如`web01`） | 首次 bootstrap 可创建两个 SSH 用户并安装公钥；日常包负责发现网关、可选 Alloy 和 exporter | 不接收管理员私钥，不自动创建数据库监控账号，不修改防火墙 |
 | 中央监控服务器            | 无                                                          | Loki、Prometheus、Alertmanager、Grafana 仍按中央监控栈单独部署                |
 
 Alloy 和全部 exporter 都是可选组件。只做服务发现时关闭所有采集开关；需要日志时启用
 Alloy，需要哪类指标就单独启用对应 exporter。
 
+## 推荐：一个安装包、服务器一条命令
+
+首次只填写服务器级配置，不填写服务列表：
+
+```bash
+cd scripts/target-server
+cp deploy.conf.example deploy.conf
+# 编辑 deploy.conf：服务器名、Loki 地址、组件开关和可选数据库凭据
+
+./make-bundle.sh \
+  --server web01 \
+  --host 服务器地址
+```
+
+本地生成：
+
+```text
+ssh/web01-aioms                         # 私钥，只留在 AIOMS 后端机器
+ssh/web01-aioms-deploy
+scripts/target-server/dist/aioms-web01.tar.gz
+```
+
+把压缩包复制到目标服务器后，管理员只执行：
+
+```bash
+tar -xzf aioms-web01.tar.gz
+cd aioms-web01
+sudo ./install.sh
+```
+
+这一条命令内部依次配置两种 SSH 角色、安装 discovery、按开关安装基础指标和未配置服务映射的
+Alloy。完成后即可回到 AIOMS 对话中发现、注册服务，再预览并审批应用日志配置。压缩包不含
+私钥；如果启用了数据库 exporter，会包含配置引用的监控凭据，因此仍要通过受控渠道传输。
+
 ## 目录说明
 
 ```text
 target-server/
+├── make-bundle.sh               # 本地生成单服务器首次安装包
 ├── deploy.sh                    # 一键部署总入口
 ├── deploy.conf.example          # 每台服务器的部署参数模板
+├── bootstrap/
+│   ├── prepare-client.sh        # 客户端生成两组密钥和独立角色包
+│   ├── server-bootstrap.sh      # 角色包中 configure-roles.sh 的源文件
+│   └── README.md                # 首次引导的完整操作流程
 ├── discovery/
 │   ├── install.sh               # 只读发现网关安装器，由 deploy.sh 调用
 │   ├── aioms-service-read       # socket、指定 PID 和 systemd unit 只读查询网关
@@ -30,11 +74,12 @@ target-server/
 │   ├── aioms-readonly.sudoers   # 最小 sudo 权限模板
 │   └── README.md                # 发现命令与权限边界
 ├── alloy/
-    ├── install.sh               # Alloy 安装器，由 deploy.sh 按需调用
-    ├── generate-config.sh       # 根据服务映射生成 Alloy 配置
-    ├── check.sh                 # Alloy 安装后检查
-    ├── services.map.example     # 服务与日志来源映射模板
-    └── README.md                # Alloy 字段、权限和排错细节
+│   ├── install.sh               # Alloy 基础组件/管理员配置安装器
+│   ├── aioms-alloy-apply        # root 所有的固定 AI 配置应用器
+│   ├── generate-config.sh       # 根据服务映射生成 Alloy 配置
+│   ├── check.sh                 # Alloy 安装后检查
+│   ├── services.map.example     # 管理员手工配置时的映射模板
+│   └── README.md                # 自动生成流程、权限和排错细节
 └── metrics/
     ├── install.sh               # 可选 exporter 的 Docker Compose 安装器
     ├── check.sh                 # 容器和 /metrics 端点检查
@@ -52,12 +97,49 @@ target-server/
 目标服务器需要满足：
 
 - Linux 使用 systemd，并有 Bash、sudo、`visudo` 和 `ss`（iproute2）。
-- AIOMS 用于 SSH 登录的普通用户已经存在，例如 `aioms`。
-- 该用户的 SSH 公钥已经按现有流程写入 `~/.ssh/authorized_keys`。
+- AIOMS 用于 SSH 登录的普通用户已经存在并安装公钥，例如 `aioms`；没有时先执行下一节的
+  首次 SSH 初始化。
 - 启用 Alloy 时，目标服务器能访问中央 Loki 的 HTTP 推送地址。
 - Docker 是可选的；启用任一指标 exporter 时必须已有 Docker 和 Docker Compose。
 
-部署脚本不会创建 SSH 用户、写入公钥、修改 `sshd_config`，也不保存任何密码或私钥。
+日常 `deploy.sh` 不会创建 SSH 用户或写入公钥；只有管理员主动执行首次 bootstrap 才会做这两
+件事。两个流程都不会修改 `sshd_config`，服务器包永远不包含客户端私钥。
+
+## 零、首次 SSH 初始化（每台服务器只做一次）
+
+在 AIOMS 项目根目录生成只读和部署两组密钥：
+
+```bash
+scripts/target-server/bootstrap/prepare-client.sh \
+  --server web01 \
+  --host 服务器地址 \
+  --port 22
+```
+
+私钥保存在项目根目录 `ssh/`，不会进入角色包。可单独复制的角色包生成在
+`scripts/target-server/bootstrap/generated/web01/`，内容只有两个公钥、`configure-roles.sh`、
+连接说明和 SHA-256 清单。把这个 `web01` 目录复制给服务器管理员即可，不需要同时打包完整
+`target-server` 目录或部署凭据。
+
+管理员在目标服务器核对脚本和 SHA-256 后执行：
+
+```bash
+cd /tmp/aioms-role-web01
+sha256sum -c SHA256SUMS
+sudo ./configure-roles.sh \
+  --readonly-user aioms \
+  --deploy-user aioms-deploy
+```
+
+bootstrap 创建或复用：
+
+- `aioms`：日常只读 SSH 身份；发现网关和对应 sudoers 在后续部署运行包时安装。
+- `aioms-deploy`：只能触发 root 所有的固定部署入口，不能指定任意脚本或配置路径。
+
+角色脚本还会生成 `/usr/local/sbin/aioms-target-deploy` 和
+`/etc/sudoers.d/aioms-deploy`，并预留 root 所有的 `/opt/aioms-target-server/`。它不会复制运行
+包、安装发现网关、启动 Alloy 或 exporter。完整文件位置、验证命令和密钥边界见
+[`bootstrap/README.md`](bootstrap/README.md)。
 
 ## 二、在打包前填写配置
 
@@ -65,10 +147,9 @@ target-server/
 
 ```bash
 cp deploy.conf.example deploy.conf
-cp alloy/services.map.example alloy/services.map
 ```
 
-第二行只在 `ENABLE_ALLOY=true` 时需要。数据库 exporter 的凭据文件也只复制已启用的组件：
+首次安装不需要填写服务清单。数据库 exporter 的凭据文件只复制已启用的组件：
 
 ```bash
 cp metrics/mysql-exporter.my.cnf.example metrics/mysql-exporter.my.cnf
@@ -80,12 +161,13 @@ cp metrics/redis-exporter.password.example metrics/redis-exporter.password
 
 ```ini
 AIOMS_SSH_USER=aioms
+AIOMS_DEPLOY_USER=aioms-deploy
 ENABLE_ALLOY=true
 SERVER_NAME=web01
 LOKI_PUSH_URL=http://监控服务器:3100/loki/api/v1/push
-ALLOY_SERVICE_MAP=alloy/services.map
-ALLOW_DOCKER_SOCKET=true
-START_ALLOY=true
+ALLOY_SERVICE_MAP=
+ALLOW_DOCKER_SOCKET=false
+START_ALLOY=false
 ENVIRONMENT=prod
 
 ENABLE_NODE_EXPORTER=true
@@ -99,12 +181,13 @@ START_EXPORTERS=true
 | 配置项                             | 何时需要                | 说明                                                             |
 | ---------------------------------- | ----------------------- | ---------------------------------------------------------------- |
 | `AIOMS_SSH_USER`                 | 始终必填                | 已存在的目标服务器 SSH 用户，应与 AIOMS`servers.ssh_user` 一致 |
-| `ENABLE_ALLOY`                   | 始终必填                | `true` 安装日志采集，`false` 只安装发现网关                  |
+| `AIOMS_DEPLOY_USER`              | 启用 Alloy              | bootstrap 创建的部署用户，应与 `servers.deploy_ssh_user` 一致 |
+| `ENABLE_ALLOY`                   | 始终必填                | `true` 安装 Alloy 基础组件，`false` 只安装发现和指标组件     |
 | `SERVER_NAME`                    | 启用 Alloy              | 稳定服务器标签，如`web01`                                      |
 | `LOKI_PUSH_URL`                  | 启用 Alloy              | 从目标服务器可访问的中央 Loki 地址                               |
-| `ALLOY_SERVICE_MAP`              | 启用 Alloy              | 相对本目录或绝对路径的服务映射文件                               |
-| `ALLOW_DOCKER_SOCKET`            | 采集 Docker 日志        | 映射包含`log_source=docker` 时必须显式设为 `true`            |
-| `START_ALLOY`                    | 启用 Alloy              | `false` 时只安装并校验配置，不启动/重启 Alloy                  |
+| `ALLOY_SERVICE_MAP`              | 可选                    | 首次留空；管理员已有审核映射时可填写相对或绝对路径               |
+| `ALLOW_DOCKER_SOCKET`            | 需要 Docker 日志时      | root 侧权限策略；AI 不能自行从 `false` 改为 `true`            |
+| `START_ALLOY`                    | 有手工映射时            | 首次无映射必须为 `false`；AI 审批应用后会启动或重载            |
 | `ENVIRONMENT`                    | 启用任一 exporter       | Prometheus 统一环境标签，如`prod`                              |
 | `ENABLE_NODE_EXPORTER`           | 可选                    | 宿主机 CPU、内存、磁盘和网络，端口 9100                          |
 | `ENABLE_CADVISOR`                | 可选                    | Docker 容器资源指标，端口 8080                                   |
@@ -120,17 +203,22 @@ START_EXPORTERS=true
 配置文件只允许模板中的白名单字段，布尔值只允许 `true` 或 `false`，值两侧不要加引号。
 部署脚本不会通过 `source` 把配置当成 root Shell 命令执行。
 
-如果启用 Alloy，再编辑 `alloy/services.map`。每行代表一个服务实例：
+首次不要编辑 `alloy/services.map`。基础部署完成后，直接在 AIOMS 对话中说：
 
 ```text
-# service|environment|runtime_type|runtime_name|log_source|log_path
-pixel-forge-backend|prod|systemd|pixel-forge-backend.service|journal|-
-sub2api|prod|docker|sub2api|docker|-
-vsftpd|prod|systemd|vsftpd.service|file|/var/log/vsftpd.log
+发现 web01 上的服务，并注册到服务目录。
 ```
 
-支持的 `log_source` 是 `journal`、`docker`、`file`、`none`。完整字段规则和文件日志 ACL
-见 [`alloy/README.md`](alloy/README.md)。
+批准注册后再说：
+
+```text
+预览并应用 web01 的日志采集配置。
+```
+
+AI 会从服务目录生成映射：systemd 使用 journald、Docker 使用容器 stdout/stderr、未纳管进程
+标记为 `none`。预览不修改服务器；应用会显示第二张高风险审批卡片，批准后才上传固定映射、
+校验并启动或重载 Alloy。文件日志路径无法从进程可靠推断，仍由管理员人工配置。完整规则见
+[`alloy/README.md`](alloy/README.md)。
 
 如果只需要服务发现，不需要日志采集，只需设置：
 
@@ -138,7 +226,7 @@ vsftpd|prod|systemd|vsftpd.service|file|/var/log/vsftpd.log
 ENABLE_ALLOY=false
 ```
 
-此时不需要创建 `alloy/services.map`，也不会安装 Alloy。
+此时不会安装 Alloy，但 discovery 和已启用的指标组件仍会安装。
 
 ## 三、打包并上传
 
@@ -181,7 +269,8 @@ sudo ./deploy.sh --config /etc/aioms/web01.conf
 
 1. 校验部署配置。
 2. 调用 `discovery/install.sh` 安装两个 root 所有的只读网关和 sudoers。
-3. 若 `ENABLE_ALLOY=true`，调用 `alloy/install.sh` 安装软件、生成并校验配置。
+3. 若 `ENABLE_ALLOY=true` 且没有映射，安装 Alloy 与固定应用器但保持未启动；有管理员映射时
+   才直接生成配置。
 4. 按五个 exporter 开关生成 `/etc/aioms-exporters/compose.yaml` 并安全复制凭据。
 5. 若 `START_EXPORTERS=true`，拉取镜像并更新 `aioms-exporters` Compose 项目。
 
@@ -220,13 +309,14 @@ sudo -u aioms sudo -n -- /usr/local/sbin/aioms-service-read process 12345
 sudo -u aioms sudo -n -- /usr/local/sbin/aioms-service-read unit 12345
 ```
 
-### 2. 验证 Alloy（仅启用时）
+### 2. 验证 Alloy（应用服务映射后）
 
 ```bash
 sudo ./alloy/check.sh
 ```
 
-如果配置了 `START_ALLOY=false`，检查配置后由管理员启动：
+首次无服务映射时 Alloy 处于未启动状态，这是预期结果。先通过对话完成服务发现、注册、配置
+预览和审批应用，再运行检查。管理员手工安装映射时也可以启动：
 
 ```bash
 sudo systemctl enable --now alloy
@@ -264,6 +354,23 @@ sudoers 不直接开放任意 `docker`、`ss`、`ps`、`systemctl` 或 Shell，�
 /usr/local/sbin/aioms-service-read
 ```
 
+部署用户另有一个精确入口：
+
+```text
+/usr/local/sbin/aioms-target-deploy apply
+/usr/local/sbin/aioms-target-deploy apply-alloy
+```
+
+`apply` 只能调用 `/opt/aioms-target-server/deploy.sh`，并且只能读取同目录下由 root 持有且
+group/other 不可写的 `deploy.conf`。固定部署目录本身也必须由 root 持有且 group/other 不可
+写；在管理员尚未安装这两个文件时，入口会拒绝执行。部署账号不能把上传目录中的脚本交给
+root 执行。
+
+`apply-alloy` 不接受路径或配置参数，只调用 root 所有的固定应用器。部署 Tool 只能把自动生成的
+`services.map` 上传到 `/var/lib/aioms-deploy/incoming/`；应用器重新校验文件所有者、权限、大小
+和映射格式，从 `/etc/aioms/alloy-target.conf` 读取管理员确定的服务器名、Loki 地址和 Docker
+socket 策略。自动流程拒绝 `file` 日志源，不能借 Alloy 读取任意文件。
+
 网关内部只接受固定子命令，并校验容器名和纯数字 PID。安装后的网关必须保持 `root:root`
 和 `0755`，sudoers 必须保持 `root:root` 和 `0440`；绝不能让 `aioms` 用户修改这些文件或
 它们的上级目录。
@@ -284,13 +391,15 @@ Socket，只对监听结果中的纯数字 PID 定点读取进程详情，不读
 
 ### `用户 aioms 不存在`
 
-先按服务器账号管理流程创建专用普通用户并配置 SSH 公钥，再重新部署。本脚本不会替你决定
-账号、Shell、用户组或密钥策略。
+先按“零、首次 SSH 初始化”生成角色包，由服务器管理员执行 `configure-roles.sh`，再重新部署
+完整运行包。日常 `deploy.sh` 不负责创建账号或写入 SSH 公钥。
 
 ### 映射包含 Docker 日志，但没有授权
 
 确认确实需要容器 stdout/stderr，并了解 Docker socket 权限后，把
-`ALLOW_DOCKER_SOCKET=true`。不需要容器日志时，把对应映射改为 `none` 或删除该行。
+`deploy.conf` 中的 `ALLOW_DOCKER_SOCKET=true`，由管理员重新执行基础部署更新 root 侧策略，
+然后重新发起 AI 配置审批。不需要容器日志时保持为 `false`；自动预览会列出 Docker 来源，
+但目标网关会拒绝实际应用。
 
 ### Alloy 启动失败
 

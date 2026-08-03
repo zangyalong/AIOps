@@ -44,6 +44,7 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         """目录必须把发现归为读、目录注册/服务重启归为写，且写工具带审批元数据。"""
         self.assertIn("run_diagnostic_command", catalog.READ_TOOLS_BY_NAME)
         self.assertIn("discover_server_services", catalog.READ_TOOLS_BY_NAME)
+        self.assertIn("preview_server_log_config", catalog.READ_TOOLS_BY_NAME)
         self.assertIn("query_recent_changes", catalog.READ_TOOLS_BY_NAME)
         self.assertIn("query_server_services", catalog.READ_TOOLS_BY_NAME)
         self.assertIn("query_service_dependencies", catalog.READ_TOOLS_BY_NAME)
@@ -53,6 +54,7 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("query_recent_changes", catalog.WRITE_TOOLS_BY_NAME)
         self.assertIn("restart_service", catalog.WRITE_TOOLS_BY_NAME)
         self.assertIn("register_server_services", catalog.WRITE_TOOLS_BY_NAME)
+        self.assertIn("apply_server_log_config", catalog.WRITE_TOOLS_BY_NAME)
         self.assertFalse(
             set(catalog.READ_TOOLS_BY_NAME) & set(catalog.WRITE_TOOLS_BY_NAME)
         )
@@ -72,6 +74,13 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn(
             "register_server_services",
+            {
+                tool.name
+                for tool in chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"]
+            },
+        )
+        self.assertIn(
+            "apply_server_log_config",
             {
                 tool.name
                 for tool in chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"]
@@ -109,6 +118,29 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(registration_action["risk_level"], "medium")
         self.assertEqual(registration_action["kind"], "service_catalog_registration")
         self.assertIn("orders-api ← docker/orders-api", registration_action["command"])
+
+        log_action = catalog.describe_write_action(
+            {
+                "id": "alloy-1",
+                "name": "apply_server_log_config",
+                "args": {
+                    "server_name": "web01",
+                    "preview_hash": "a" * 64,
+                    "mappings": [
+                        {
+                            "service_name": "orders-api",
+                            "environment": "prod",
+                            "runtime_type": "docker",
+                            "runtime_name": "orders-api",
+                            "log_source": "docker",
+                        }
+                    ],
+                },
+            }
+        )
+        self.assertEqual(log_action["risk_level"], "high")
+        self.assertEqual(log_action["kind"], "server_log_config_apply")
+        self.assertIn("orders-api ← docker/orders-api", log_action["command"])
 
     async def test_restart_service_rejects_empty_allowlist_before_ssh(self) -> None:
         """默认空白名单时，即使审批层误放行，工具自身也不能连接 SSH。"""

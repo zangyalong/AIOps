@@ -116,6 +116,14 @@ uv run python scripts/migrate_chat_runs.py
 | `SSH_RESTART_SERVICE_ALLOWLIST` | 空                  | 允许重启的 systemd 服务名，逗号分隔；空值表示全部禁止 |
 
 SSH 私钥目录固定为仓库根目录的 `ssh/`，数据库只保存私钥文件名。具体测试方法见 [`docs/local-ssh-sandbox.md`](../docs/local-ssh-sandbox.md)。
+日常只读连接使用 `ssh_user` / `ssh_key_filename`；审批后的目标配置写 Tool 使用独立的
+`deploy_ssh_user` / `deploy_ssh_key_filename`，不会回退复用只读密钥。已有数据库先执行：
+
+```bash
+psql -d aioms -v ON_ERROR_STOP=1 \
+  -f scripts/database/20260803_add_server_deploy_ssh_identity.sql
+```
+
 真实目标服务器需要安装只读 Docker / 业务资产发现网关和 sudoers，文件、安装位置、参数及
 验证方法见 [`scripts/target-server/README.md`](../scripts/target-server/README.md)。
 
@@ -246,6 +254,7 @@ tests/             # 不依赖外部服务的自动化测试
 - `discover_server_services` 是业务资产盘点工具：固定查询 systemd、Docker、TCP/UDP 和 Unix Socket，只对监听结果中的纯数字 PID 补充运行时长、unit 和启动命令，不再读取整机进程表；第三层只保留运行至少 60 秒且不属于 systemd service / Docker scope 的进程。机器发现的运行对象不等于业务服务。
 - Docker、监听 socket 和按 PID 只读查询在 SSH 端会改写为 `sudo -n -- /usr/local/sbin/aioms-*-read ...`；目标服务器的 root 所有包装脚本会再次校验子命令、容器名和 PID，sudoers 只授权这两个网关，不开放任意 `sudo docker/ss/ps`。
 - `register_server_services` 是服务目录写工具：审批卡片列出准备登记的服务器、环境和运行时映射；批准后会重新扫描核对对象仍然存在，再幂等写入逻辑服务与部署实例。
+- `preview_server_log_config` 是只读 Tool，只从服务目录生成 systemd/Docker 日志映射、摘要和警告，不连接目标服务器；`apply_server_log_config` 是高风险写 Tool，审批后重新计算并核对摘要，只用独立部署密钥上传到固定暂存路径，再调用固定 `apply-alloy` 网关校验、安装并重载 Alloy。
 - `restart_service` 是高风险写工具，先经过 LangGraph `interrupt` 人工审批，执行时还必须命中 `SSH_RESTART_SERVICE_ALLOWLIST`；默认空白名单会拒绝全部重启。
 - 工具执行节点会再次校验审批决议，不能只靠模型是否正确路由；后台 worker 设置 `allow_write_tools=False`，从模型绑定和执行节点两层禁止写工具。
 - 本地 SSH 沙箱当前使用 `known_hosts=None`，只适用于一次性本地容器，不能直接用于生产服务器。

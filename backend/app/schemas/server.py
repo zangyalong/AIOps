@@ -15,6 +15,8 @@ class ServerBase(BaseModel):
     ssh_port: int | None = None
     ssh_user: str | None = None
     ssh_key_filename: str | None = None
+    deploy_ssh_user: str | None = None
+    deploy_ssh_key_filename: str | None = None
 
 
 class ServerCreate(ServerBase):
@@ -28,6 +30,8 @@ class ServerUpdate(BaseModel):
     ssh_port: int | None = None
     ssh_user: str | None = None
     ssh_key_filename: str | None = None
+    deploy_ssh_user: str | None = None
+    deploy_ssh_key_filename: str | None = None
 
 
 class ServerRead(ServerBase):

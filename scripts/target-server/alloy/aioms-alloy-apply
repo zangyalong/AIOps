@@ -1,0 +1,159 @@
+#!/bin/bash
+
+set -euo pipefail
+
+fail() {
+    echo "aioms-alloy-apply: $*" >&2
+    exit 1
+}
+
+[[ $EUID -eq 0 ]] || fail "该应用器只能由固定 sudo 网关以 root 运行"
+[[ $# -eq 0 ]] || fail "该应用器不接受参数"
+
+readonly TARGET_CONFIG="/etc/aioms/alloy-target.conf"
+readonly GENERATOR="/usr/local/libexec/aioms/generate-alloy-config"
+readonly STATE_DIR="/var/lib/aioms-deploy"
+readonly INCOMING_DIR="$STATE_DIR/incoming"
+readonly INCOMING_MAP="$INCOMING_DIR/services.map"
+readonly ALLOY_CONFIG_DIR="/etc/alloy"
+readonly ALLOY_CONFIG="$ALLOY_CONFIG_DIR/config.alloy"
+readonly INSTALLED_MAP="/etc/aioms/alloy-services.map"
+readonly MAX_MAP_BYTES=262144
+
+for required_command in alloy awk getent id install mktemp stat systemctl usermod; do
+    command -v "$required_command" >/dev/null 2>&1 || fail "服务器缺少命令：$required_command"
+done
+
+verify_root_file() {
+    local path="$1"
+    local label="$2"
+    local owner mode
+    [[ -f "$path" && ! -L "$path" ]] || fail "$label 不存在或是符号链接：$path"
+    owner="$(stat -c '%U' "$path")"
+    mode="$(stat -c '%a' "$path")"
+    [[ "$owner" == "root" ]] || fail "$label 必须由 root 持有"
+    (( (8#$mode & 0022) == 0 )) || fail "$label 不能允许 group/other 写入"
+}
+
+verify_root_file "$TARGET_CONFIG" "Alloy 目标配置"
+verify_root_file "$GENERATOR" "Alloy 配置生成器"
+
+SERVER_NAME=""
+LOKI_PUSH_URL=""
+ALLOW_DOCKER_SOCKET="false"
+DEPLOY_USER=""
+SEEN_KEYS="|"
+
+trim() {
+    local value="$1"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    printf '%s' "$value"
+}
+
+line_number=0
+while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
+    ((line_number += 1))
+    line="${raw_line%$'\r'}"
+    [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" == *=* ]] || fail "目标配置第 $line_number 行不是 KEY=VALUE"
+    key="$(trim "${line%%=*}")"
+    value="$(trim "${line#*=}")"
+    [[ "$SEEN_KEYS" != *"|$key|"* ]] || fail "目标配置项重复：$key"
+    case "$key" in
+        SERVER_NAME) SERVER_NAME="$value" ;;
+        LOKI_PUSH_URL) LOKI_PUSH_URL="$value" ;;
+        ALLOW_DOCKER_SOCKET) ALLOW_DOCKER_SOCKET="$value" ;;
+        DEPLOY_USER) DEPLOY_USER="$value" ;;
+        *) fail "目标配置项不受支持：$key" ;;
+    esac
+    SEEN_KEYS+="$key|"
+done <"$TARGET_CONFIG"
+
+readonly USER_PATTERN='^[a-z_][a-z0-9_-]*[$]?$'
+[[ "$SERVER_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$ ]] ||
+    fail "目标配置中的 SERVER_NAME 不合法"
+[[ "$LOKI_PUSH_URL" =~ ^https?://[^[:space:]]+/loki/api/v1/push$ ]] ||
+    fail "目标配置中的 LOKI_PUSH_URL 不合法"
+[[ "$ALLOW_DOCKER_SOCKET" == "true" || "$ALLOW_DOCKER_SOCKET" == "false" ]] ||
+    fail "目标配置中的 ALLOW_DOCKER_SOCKET 只能是 true 或 false"
+[[ "$DEPLOY_USER" =~ $USER_PATTERN ]] || fail "目标配置中的 DEPLOY_USER 不合法"
+id "$DEPLOY_USER" >/dev/null 2>&1 || fail "部署用户不存在：$DEPLOY_USER"
+id alloy >/dev/null 2>&1 || fail "Alloy 用户不存在，请先完成基础安装"
+
+[[ -d "$STATE_DIR" && ! -L "$STATE_DIR" ]] || fail "部署状态目录不存在"
+[[ "$(stat -c '%U' "$STATE_DIR")" == "root" ]] || fail "部署状态目录必须由 root 持有"
+(( (8#$(stat -c '%a' "$STATE_DIR") & 0022) == 0 )) ||
+    fail "部署状态目录不能允许 group/other 写入"
+[[ -d "$INCOMING_DIR" && ! -L "$INCOMING_DIR" ]] || fail "部署暂存目录不存在"
+[[ "$(stat -c '%U' "$INCOMING_DIR")" == "$DEPLOY_USER" ]] ||
+    fail "部署暂存目录必须由 $DEPLOY_USER 持有"
+(( (8#$(stat -c '%a' "$INCOMING_DIR") & 0022) == 0 )) ||
+    fail "部署暂存目录不能允许 group/other 写入"
+
+[[ -f "$INCOMING_MAP" && ! -L "$INCOMING_MAP" ]] || fail "没有待应用的 services.map"
+[[ "$(stat -c '%U' "$INCOMING_MAP")" == "$DEPLOY_USER" ]] ||
+    fail "待应用 services.map 必须由 $DEPLOY_USER 上传"
+(( (8#$(stat -c '%a' "$INCOMING_MAP") & 0022) == 0 )) ||
+    fail "待应用 services.map 不能允许 group/other 写入"
+map_size="$(stat -c '%s' "$INCOMING_MAP")"
+((map_size > 0 && map_size <= MAX_MAP_BYTES)) ||
+    fail "待应用 services.map 大小必须在 1 到 $MAX_MAP_BYTES 字节之间"
+
+map_uses_source() {
+    local source_type="$1"
+    awk -F'|' -v source_type="$source_type" '
+        $0 !~ /^[[:space:]]*#/ && NF >= 5 && $5 == source_type { found = 1 }
+        END { exit(found ? 0 : 1) }
+    ' "$INCOMING_MAP"
+}
+
+# AI 自动生成流程不能配置任意文件读取；文件日志必须由管理员审核后走人工部署。
+map_uses_source file && fail "自动应用不接受 file 日志源，请由管理员人工配置文件 ACL 和映射"
+
+if map_uses_source docker; then
+    [[ "$ALLOW_DOCKER_SOCKET" == "true" ]] ||
+        fail "映射包含 Docker 日志，但目标服务器未授权 ALLOW_DOCKER_SOCKET=true"
+    [[ -S /var/run/docker.sock ]] || fail "映射需要 Docker，但 docker.sock 不存在"
+    docker_group="$(stat -c '%G' /var/run/docker.sock)"
+    [[ -n "$docker_group" && "$docker_group" != "UNKNOWN" ]] ||
+        fail "无法确定 Docker socket 所属组"
+    getent group "$docker_group" >/dev/null 2>&1 ||
+        fail "Docker socket 所属组 $docker_group 不存在"
+    usermod -aG "$docker_group" alloy
+fi
+
+generated_config="$(mktemp /tmp/aioms-alloy-config.XXXXXX)"
+cleanup() {
+    rm -f -- "$generated_config"
+}
+trap cleanup EXIT
+
+"$GENERATOR" "$INCOMING_MAP" "$SERVER_NAME" "$LOKI_PUSH_URL" "$generated_config"
+alloy validate "$generated_config"
+
+install -d -o root -g alloy -m 0750 "$ALLOY_CONFIG_DIR"
+backup_path=""
+if [[ -f "$ALLOY_CONFIG" ]]; then
+    backup_path="$ALLOY_CONFIG.backup.$(date +%Y%m%d%H%M%S)"
+    cp -a -- "$ALLOY_CONFIG" "$backup_path"
+fi
+install -o root -g alloy -m 0640 "$generated_config" "$ALLOY_CONFIG"
+
+systemctl enable alloy
+if ! systemctl restart alloy; then
+    if [[ -n "$backup_path" ]]; then
+        cp -a -- "$backup_path" "$ALLOY_CONFIG"
+        systemctl restart alloy || true
+        fail "Alloy 重启失败，已恢复并尝试重启旧配置：$backup_path"
+    fi
+    rm -f -- "$ALLOY_CONFIG"
+    fail "Alloy 首次启动失败，请查看 journalctl -u alloy -n 100 --no-pager"
+fi
+systemctl is-active --quiet alloy || fail "Alloy 未处于 active 状态"
+install -o root -g root -m 0644 "$INCOMING_MAP" "$INSTALLED_MAP"
+
+echo "Alloy 配置已校验、安装并重载。"
+echo "服务映射：$INSTALLED_MAP"
+echo "运行配置：$ALLOY_CONFIG"
