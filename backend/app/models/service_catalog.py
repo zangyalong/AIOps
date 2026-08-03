@@ -32,6 +32,16 @@ class ServiceInstance(Base, UUIDMixin, TimestampMixin):
         UniqueConstraint(
             "service_id", "name", name="uq_service_instances_service_name"
         ),
+        UniqueConstraint(
+            "server_id",
+            "runtime_type",
+            "runtime_name",
+            name="uq_service_instances_server_runtime",
+        ),
+        CheckConstraint(
+            "runtime_type IS NULL OR runtime_type IN ('systemd', 'docker', 'process')",
+            name="ck_service_instances_runtime_type",
+        ),
     )
 
     service_id: Mapped[uuid.UUID] = mapped_column(
@@ -41,6 +51,12 @@ class ServiceInstance(Base, UUIDMixin, TimestampMixin):
         ForeignKey("servers.id", ondelete="SET NULL"), nullable=True, index=True
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
+    runtime_type: Mapped[str | None] = mapped_column(
+        String(20), nullable=True, index=True
+    )
+    runtime_name: Mapped[str | None] = mapped_column(
+        String(200), nullable=True, index=True
+    )
     metric_instance: Mapped[str | None] = mapped_column(
         String(255), nullable=True, index=True
     )

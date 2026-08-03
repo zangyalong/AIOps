@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from app.agents.tools import service_topology
+from app.schemas.service_catalog import ServiceInstanceCreate
 from app.services import service_catalog_service
 
 
@@ -79,13 +80,13 @@ class ServiceTopologyTraversalTest(unittest.IsolatedAsyncioTestCase):
 
 class ServiceTopologyToolsTest(unittest.IsolatedAsyncioTestCase):
     async def test_server_services_lists_registered_instances(self) -> None:
-        server = SimpleNamespace(
-            id=uuid.uuid4(), name="web-01", ip_address="10.0.0.11"
-        )
+        server = SimpleNamespace(id=uuid.uuid4(), name="web-01", ip_address="10.0.0.11")
         service = _service("web")
         instance = SimpleNamespace(
             service_id=service.id,
             name="web-01-main",
+            runtime_type="systemd",
+            runtime_name="web.service",
             metric_instance="10.0.0.11:9100",
             log_service="web",
         )
@@ -118,6 +119,7 @@ class ServiceTopologyToolsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(list_instances.await_args.kwargs, {"server_id": server.id})
         self.assertIn("web/prod", result)
         self.assertIn("实例=web-01-main", result)
+        self.assertIn("runtime=systemd/web.service", result)
         self.assertIn("不代表实时进程或容器运行状态", result)
 
     async def test_impacted_services_walks_reverse_dependencies(self) -> None:
@@ -206,6 +208,24 @@ class ServiceTopologyToolsTest(unittest.IsolatedAsyncioTestCase):
 
 
 class ServiceInstanceResolutionTest(unittest.IsolatedAsyncioTestCase):
+    async def test_runtime_identity_requires_bound_server(self) -> None:
+        with self.assertRaises(ValueError):
+            ServiceInstanceCreate(
+                service_id=uuid.uuid4(),
+                name="orders-api",
+                runtime_type="docker",
+                runtime_name="orders-api",
+            )
+
+    async def test_runtime_identity_pair_is_required(self) -> None:
+        with self.assertRaises(ValueError):
+            ServiceInstanceCreate(
+                service_id=uuid.uuid4(),
+                server_id=uuid.uuid4(),
+                name="orders-api",
+                runtime_type="docker",
+            )
+
     async def test_metric_instance_resolves_unique_service_instance(self) -> None:
         service = _service("orders")
         instance = SimpleNamespace(service_id=service.id)

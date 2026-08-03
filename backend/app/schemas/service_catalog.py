@@ -7,6 +7,7 @@ from typing import Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 DependencyType = Literal["service", "database", "cache", "queue", "external"]
+RuntimeType = Literal["systemd", "docker", "process"]
 
 
 def _required_text(value: str) -> str:
@@ -14,6 +15,13 @@ def _required_text(value: str) -> str:
     if not value:
         raise ValueError("不能为空")
     return value
+
+
+def _optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None
 
 
 class ServiceBase(BaseModel):
@@ -64,11 +72,22 @@ class ServiceInstanceBase(BaseModel):
     service_id: uuid.UUID
     server_id: uuid.UUID | None = None
     name: str = Field(max_length=200)
+    runtime_type: RuntimeType | None = None
+    runtime_name: str | None = Field(default=None, max_length=200)
     metric_instance: str | None = Field(default=None, max_length=255)
     log_service: str | None = Field(default=None, max_length=255)
     description: str | None = None
 
     _clean_name = field_validator("name")(_required_text)
+    _clean_runtime_name = field_validator("runtime_name")(_optional_text)
+
+    @model_validator(mode="after")
+    def validate_runtime_identity(self) -> Self:
+        if bool(self.runtime_type) != bool(self.runtime_name):
+            raise ValueError("runtime_type 和 runtime_name 必须同时填写")
+        if self.runtime_type and self.server_id is None:
+            raise ValueError("填写运行时身份时必须绑定服务器")
+        return self
 
 
 class ServiceInstanceCreate(ServiceInstanceBase):
@@ -79,14 +98,16 @@ class ServiceInstanceUpdate(BaseModel):
     service_id: uuid.UUID | None = None
     server_id: uuid.UUID | None = None
     name: str | None = Field(default=None, max_length=200)
+    runtime_type: RuntimeType | None = None
+    runtime_name: str | None = Field(default=None, max_length=200)
     metric_instance: str | None = Field(default=None, max_length=255)
     log_service: str | None = Field(default=None, max_length=255)
     description: str | None = None
 
-    @field_validator("name")
+    @field_validator("name", "runtime_name")
     @classmethod
-    def clean_name(cls, value: str | None) -> str | None:
-        return _required_text(value) if value is not None else None
+    def clean_optional_names(cls, value: str | None) -> str | None:
+        return _optional_text(value)
 
     @model_validator(mode="after")
     def reject_null_required_fields(self) -> Self:

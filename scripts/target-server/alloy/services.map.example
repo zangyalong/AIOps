@@ -1,0 +1,17 @@
+# AIOMS Alloy 服务映射，一行六列，用 | 分隔：
+# service|environment|runtime_type|runtime_name|log_source|log_path
+#
+# log_source 允许 journal/docker/file/none：
+# - journal：runtime_type 必须是 systemd，runtime_name 是准确的 .service 单元名。
+# - docker：runtime_type 必须是 docker，runtime_name 是准确的容器名（不是容器 ID）。
+# - file：log_path 必须是绝对路径或绝对 glob；适合文件日志和未纳管进程。
+# - none：暂不采集该服务日志。
+#
+# 下面只是格式示例。复制为 services.map 后，只保留 web01 上实际登记的服务。
+
+pixel-forge-backend|prod|systemd|pixel-forge-backend.service|journal|-
+sub2api|prod|docker|sub2api|docker|-
+sub2api-postgres|prod|docker|sub2api-postgres|docker|-
+sub2api-redis|prod|docker|sub2api-redis|docker|-
+mysqld|prod|systemd|mysql.service|file|/var/log/mysql/*.log
+unmanaged-uvicorn|prod|process|uvicorn:tcp-8010|file|/opt/app/logs/*.log

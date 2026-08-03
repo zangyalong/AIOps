@@ -284,11 +284,7 @@ def _parse_unix_listening_pids(
         if not protocol.startswith("u_"):
             continue
         path = next(
-            (
-                token
-                for token in columns[4:]
-                if token.startswith("/") or token.startswith("@")
-            ),
+            (token for token in columns[4:] if token.startswith(("/", "@"))),
             "",
         )
         if not path:
@@ -537,15 +533,13 @@ async def _discover_runtime_services(server: Server) -> DiscoveryResult:
 
     if inet_socket_result.exit_status != 0:
         raw_detail = (
-            f"{inet_socket_result.stdout or ''}"
-            f"{inet_socket_result.stderr or ''}"
+            f"{inet_socket_result.stdout or ''}{inet_socket_result.stderr or ''}"
         )
         detail = raw_detail.strip()
         warnings.append(f"TCP/UDP 监听端口扫描失败：{detail or '无输出'}")
     if unix_socket_result.exit_status != 0:
         raw_detail = (
-            f"{unix_socket_result.stdout or ''}"
-            f"{unix_socket_result.stderr or ''}"
+            f"{unix_socket_result.stdout or ''}{unix_socket_result.stderr or ''}"
         )
         detail = raw_detail.strip()
         warnings.append(f"Unix Socket 扫描失败：{detail or '无输出'}")
@@ -555,9 +549,7 @@ async def _discover_runtime_services(server: Server) -> DiscoveryResult:
             f"{_MAX_LISTENER_PIDS} 个进程详情。"
         )
     if process_result is not None and process_result.exit_status != 0:
-        detail = (
-            f"{process_result.stdout or ''}{process_result.stderr or ''}".strip()
-        )
+        detail = f"{process_result.stdout or ''}{process_result.stderr or ''}".strip()
         warnings.append(f"监听 PID 详情查询失败：{detail or '无输出'}")
     else:
         managed_service_names = frozenset(
@@ -632,11 +624,19 @@ async def discover_server_services(server_name: str) -> str:
         return str(exc)
 
     existing_names = {item.name for item in existing_instances}
+    existing_runtime_identities = {
+        (runtime_type, runtime_name)
+        for item in existing_instances
+        if (runtime_type := getattr(item, "runtime_type", None))
+        and (runtime_name := getattr(item, "runtime_name", None))
+    }
     candidates = [
         {
             **asdict(candidate),
             "registered": (
-                _instance_name(
+                (candidate.runtime_type, candidate.runtime_name)
+                in existing_runtime_identities
+                or _instance_name(
                     server.name, candidate.runtime_type, candidate.runtime_name
                 )
                 in existing_names
@@ -719,6 +719,8 @@ async def register_server_services(
                 instance_name=_instance_name(
                     server.name, item.runtime_type, item.runtime_name
                 ),
+                runtime_type=item.runtime_type,
+                runtime_name=item.runtime_name,
                 description=description,
             )
         )

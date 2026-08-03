@@ -1,0 +1,6 @@
+# 每台目标服务器的实际部署参数和资产映射由示例复制生成，不提交到仓库。
+deploy.conf
+alloy/services.map
+metrics/mysql-exporter.my.cnf
+metrics/postgres-exporter.password
+metrics/redis-exporter.password

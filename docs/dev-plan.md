@@ -33,8 +33,15 @@
   - 审批通过后会重新扫描并核对运行时对象，目录写入可重复执行且会跳过已有实例；默认环境与服务目录页面一致为 `prod`
   - 工具协议按每个 `tool_call_id` 独立回填成功或失败结果，重复 ID 会先规范化，审批恢复前也会兜底补齐残缺尾部，避免一项异常破坏整轮对话
   - 代码与静态检查完成后仍保持未勾选，等用户在真实 `web01` 对话中完成发现、拒绝/批准和目录页面验收
+- [ ] **服务运行时身份与 web01 Alloy 日志接入**：把发现结果中的运行类型/运行对象正式存入服务实例，并提供目标服务器 Alloy 快速配置包
+  - `service_instances` 增加 `runtime_type` / `runtime_name`，发现注册、CRUD API 和前端实例详情使用同一份身份；已有数据库通过随附 SQL 手动加列
+  - `scripts/target-server/alloy/` 提供安装、配置模板、服务映射和检查说明；Alloy 部署在目标服务器，从 journald、Docker 和已明确登记的文件读取日志并推送中央 Loki
+  - Loki 新日志统一使用 `service/environment/server/runtime_type/runtime_name`，迁移期兼容旧 `service_name` 查询
+  - 代码和静态检查完成后保持未勾选，等用户在真实 `web01` 安装 Alloy 并从 AIOMS 查询到日志后再验收
 - [ ] **业务资产扫描与目标服务器配置包**：默认盘点 systemd、Docker、TCP/UDP/Unix Socket 服务，只对监听 PID 补充进程详情，不再读取整机进程表
   - 提供目标服务器只读 Docker / 服务发现包装脚本、精确 sudoers 模板、安装脚本和逐项参数说明
+  - 根目录新增白名单解析的 `deploy.conf` 与一键 `deploy.sh`，统一安装只读发现网关和可选 Alloy，并提供从打包、上传到验证的目标服务器配置指南
+  - 同一配置通过独立开关部署 node_exporter、cAdvisor、MySQL/PostgreSQL/Redis exporter；数据库凭据使用被忽略的独立文件，中央 Prometheus 抓取使用随附模板手工接入
   - 代码和静态检查完成后保持未勾选，等用户在真实服务器安装配置包并完成资产扫描验收
 - [ ] **值班报告与通知**：基于事件状态机生成确定性日报 / 周报，并为未认领、超时未解决和自动诊断完成事件发送通知
   - 复用 Redis / arq 调度任务；先接一个通知渠道，模型只负责基于统计事实生成摘要和建议

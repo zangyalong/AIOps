@@ -1,15 +1,15 @@
 """日志检索工具（方向一·任务2）：查 Loki。
 
-用 LogQL 查最近一段时间的日志。选择器用 service_name 标签（promtail 采集容器日志时，Loki 会把
-容器名同时映射成 container 和 service_name，取值一致，这里统一用 service_name）。级别和关键词
-都用行过滤（|~ 正则，大小写不敏感）实现，不依赖 Loki 3.x 的 detected_level 自动识别——换一个
-没开该特性的 Loki 也能用。
+新 Alloy 节点使用 ``service`` 作为统一身份标签，并在迁移期同时写 ``service_name``。这里兼容
+旧 ``service_name`` 以及本地 Promtail 只有 ``container`` 的历史流，合并时按完整标签、时间戳和
+日志正文去重。级别和关键词都用行过滤实现，不依赖 detected_level 自动识别。
 """
 
 from __future__ import annotations
 
+import asyncio
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from langchain_core.tools import tool
 
@@ -35,26 +35,42 @@ async def search_logs(
     - level：只看某个级别，取 error / warn / info 之一（按日志文本匹配）。
     - minutes：往前查多少分钟，默认 60。
     """
-    # 1. 选择器：指定 service 就精确匹配，否则匹配所有非空 service_name
+    # 1. 同时查新旧三种服务标签。Alloy 迁移期会让同一条日志命中 service/service_name，
+    # 展平时按完整 stream 标签 + 时间戳 + 正文去重。
     if service:
-        selector = f'{{service_name="{_escape_label(service)}"}}'
+        escaped_service = _escape_label(service)
+        selectors = [
+            f'{{service="{escaped_service}"}}',
+            f'{{service_name="{escaped_service}"}}',
+            f'{{container="{escaped_service}"}}',
+        ]
     else:
-        selector = '{service_name=~".+"}'
+        selectors = [
+            '{service=~".+"}',
+            '{service_name=~".+"}',
+            '{container=~".+"}',
+        ]
 
     # 2. 行过滤：级别 + 关键词都用 |~ 正则（大小写不敏感）。关键词转义，防用户输入里的正则元字符。
-    logql = selector
+    suffix = ""
     if level:
-        logql += f' |~ "(?i){re.escape(level)}"'
+        suffix += f' |~ "(?i){re.escape(level)}"'
     if keyword:
-        logql += f' |~ "(?i){re.escape(keyword)}"'
+        suffix += f' |~ "(?i){re.escape(keyword)}"'
+    logql_queries = [selector + suffix for selector in selectors]
 
     # 3. 时间窗：最近 minutes 分钟。Loki 时间戳用纳秒。查询边界用带时区的 UTC（正确），
     #    展示时再转本地时间（对用户直观）。
-    end_ns = int(datetime.now(timezone.utc).timestamp() * 1e9)
+    end_ns = int(datetime.now(UTC).timestamp() * 1e9)
     start_ns = end_ns - minutes * 60 * 10**9
 
     try:
-        streams = await loki_query_range(logql, start_ns, end_ns, limit=_LINE_LIMIT)
+        stream_groups = await asyncio.gather(
+            *(
+                loki_query_range(logql, start_ns, end_ns, limit=_LINE_LIMIT)
+                for logql in logql_queries
+            )
+        )
     except Exception as exc:  # noqa: BLE001 —— 网络/超时/查询语法错都转成给 LLM 读的文本
         return (
             f"查询 Loki 失败：{exc}。"
@@ -64,11 +80,26 @@ async def search_logs(
     # 4. 跨 stream 展平成 (纳秒时间戳, 服务名, 行)，按时间倒序。Loki 每个 stream 内有序，
     #    但多个 stream（比如按 detected_level 拆开的）之间不保证有序，必须重排。
     rows: list[tuple[int, str, str]] = []
-    for s in streams:
-        labels = s.get("stream", {})
-        svc = labels.get("service_name") or labels.get("container") or "?"
-        for ts, line in s.get("values", []):
-            rows.append((int(ts), svc, line))
+    seen_rows: set[tuple[int, str, tuple[tuple[str, str], ...]]] = set()
+    for streams in stream_groups:
+        for stream in streams:
+            labels = stream.get("stream", {})
+            svc = (
+                labels.get("service")
+                or labels.get("service_name")
+                or labels.get("container")
+                or "?"
+            )
+            label_key = tuple(
+                sorted((str(key), str(value)) for key, value in labels.items())
+            )
+            for ts, line in stream.get("values", []):
+                timestamp = int(ts)
+                dedup_key = (timestamp, line, label_key)
+                if dedup_key in seen_rows:
+                    continue
+                seen_rows.add(dedup_key)
+                rows.append((timestamp, svc, line))
     rows.sort(key=lambda r: r[0], reverse=True)
 
     if not rows:
@@ -86,7 +117,9 @@ async def search_logs(
     show_svc = not service
     lines: list[str] = []
     for ts, svc, line in rows:
-        clock = datetime.fromtimestamp(ts / 1e9).strftime("%H:%M:%S")  # 本地时间，直观
+        clock = (
+            datetime.fromtimestamp(ts / 1e9, tz=UTC).astimezone().strftime("%H:%M:%S")
+        )
         text = _clean(line)
         lines.append(f"[{clock}] {svc} | {text}" if show_svc else f"[{clock}] {text}")
 
@@ -104,20 +137,27 @@ async def list_log_services() -> str:
     不确定要查哪个服务、或用户报的名字拿不准时，先调这个看有哪些服务，再去 search_logs 查。
     """
     try:
-        services = await loki_label_values("service_name")
+        label_groups = await asyncio.gather(
+            loki_label_values("service"),
+            loki_label_values("service_name"),
+            loki_label_values("container"),
+        )
     except Exception as exc:  # noqa: BLE001 —— 转成给 LLM 读的文本
         return (
             f"查询 Loki 服务列表失败：{exc}。"
             "请确认 Loki 在跑（默认 http://localhost:3100）。"
         )
+    services = {value for group in label_groups for value in group if value}
     if not services:
         return "Loki 里当前没有任何服务的日志（可能采集还没上来，或近期窗口内无日志）。"
     lines = "\n".join(f"- {s}" for s in sorted(services))
-    return "当前 Loki 里有日志可查的服务（可作为 search_logs 的 service 参数）：\n" + lines
+    return (
+        "当前 Loki 里有日志可查的服务（可作为 search_logs 的 service 参数）：\n" + lines
+    )
 
 
 def _escape_label(value: str) -> str:
-    """转义标签值里的反斜杠/双引号，避免拼进 {service_name="..."} 时破坏 LogQL。"""
+    """转义标签值里的反斜杠/双引号，避免拼进 LogQL 选择器时破坏语法。"""
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 

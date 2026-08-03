@@ -28,6 +28,7 @@ import type {
   ServiceInstanceInput,
   ServiceRecord,
   ServiceTopology as ServiceTopologyData,
+  RuntimeType,
 } from '../types/service'
 
 const route = useRoute()
@@ -62,6 +63,8 @@ const editingInstance = ref<ServiceInstance | null>(null)
 const instanceForm = reactive({
   name: '',
   server_id: '',
+  runtime_type: '' as RuntimeType | '',
+  runtime_name: '',
   metric_instance: '',
   log_service: '',
   description: '',
@@ -374,6 +377,8 @@ function resetInstanceForm() {
   editingInstance.value = null
   instanceForm.name = ''
   instanceForm.server_id = ''
+  instanceForm.runtime_type = ''
+  instanceForm.runtime_name = ''
   instanceForm.metric_instance = ''
   instanceForm.log_service = ''
   instanceForm.description = ''
@@ -390,6 +395,8 @@ function openEditInstance(instance: ServiceInstance) {
   editingInstance.value = instance
   instanceForm.name = instance.name
   instanceForm.server_id = instance.server_id ?? ''
+  instanceForm.runtime_type = instance.runtime_type ?? ''
+  instanceForm.runtime_name = instance.runtime_name ?? ''
   instanceForm.metric_instance = instance.metric_instance ?? ''
   instanceForm.log_service = instance.log_service ?? ''
   instanceForm.description = instance.description ?? ''
@@ -402,10 +409,21 @@ async function submitInstance() {
     formError.value = '实例名称是必填项'
     return
   }
+  const runtimeName = instanceForm.runtime_name.trim()
+  if (Boolean(instanceForm.runtime_type) !== Boolean(runtimeName)) {
+    formError.value = '运行类型和运行对象必须同时填写'
+    return
+  }
+  if (instanceForm.runtime_type && !instanceForm.server_id) {
+    formError.value = '填写运行时身份时必须绑定服务器'
+    return
+  }
   const payload: ServiceInstanceInput = {
     service_id: selectedService.value.id,
     server_id: instanceForm.server_id || null,
     name: instanceForm.name.trim(),
+    runtime_type: instanceForm.runtime_type || null,
+    runtime_name: runtimeName || null,
     metric_instance: instanceForm.metric_instance.trim() || null,
     log_service: instanceForm.log_service.trim() || null,
     description: instanceForm.description.trim() || null,
@@ -718,6 +736,16 @@ function safeExternalUrl(value: string | null): string | null {
               </div>
               <p>{{ serverLabel(instance.server_id) }}</p>
               <dl>
+                <div>
+                  <dt>运行时</dt>
+                  <dd>
+                    {{
+                      instance.runtime_type && instance.runtime_name
+                        ? `${instance.runtime_type}/${instance.runtime_name}`
+                        : '未配置'
+                    }}
+                  </dd>
+                </div>
                 <div><dt>Prometheus</dt><dd>{{ instance.metric_instance || '未配置' }}</dd></div>
                 <div><dt>Loki</dt><dd>{{ instance.log_service || '未配置' }}</dd></div>
               </dl>
@@ -825,8 +853,26 @@ function safeExternalUrl(value: string | null): string | null {
             </select>
           </label>
           <div class="form-row">
+            <label>
+              运行类型
+              <select v-model="instanceForm.runtime_type">
+                <option value="">未配置</option>
+                <option value="systemd">systemd</option>
+                <option value="docker">Docker</option>
+                <option value="process">未纳管进程</option>
+              </select>
+            </label>
+            <label>
+              运行对象
+              <input
+                v-model="instanceForm.runtime_name"
+                placeholder="例如 orders-api.service"
+              />
+            </label>
+          </div>
+          <div class="form-row">
             <label>Prometheus instance<input v-model="instanceForm.metric_instance" placeholder="host:9100" /></label>
-            <label>Loki service_name<input v-model="instanceForm.log_service" placeholder="orders-api" /></label>
+            <label>Loki 服务标签<input v-model="instanceForm.log_service" placeholder="orders-api" /></label>
           </div>
           <label>实例说明<textarea v-model="instanceForm.description" rows="3" /></label>
           <p v-if="formError" class="error">{{ formError }}</p>

@@ -52,6 +52,8 @@ class ResolvedServiceInstance:
 class DiscoveredServiceRegistration:
     service_name: str
     instance_name: str
+    runtime_type: str
+    runtime_name: str
     description: str | None = None
 
 
@@ -145,10 +147,53 @@ async def _validate_instance_references(
         raise DirectoryNotFound("server not found")
 
 
+def _validate_runtime_identity(
+    *,
+    server_id: uuid.UUID | None,
+    runtime_type: str | None,
+    runtime_name: str | None,
+) -> None:
+    if bool(runtime_type) != bool(runtime_name):
+        raise ValueError("runtime_type 和 runtime_name 必须同时填写")
+    if runtime_type and server_id is None:
+        raise ValueError("填写运行时身份时必须绑定服务器")
+
+
+async def _ensure_runtime_identity_available(
+    db: AsyncSession,
+    *,
+    server_id: uuid.UUID | None,
+    runtime_type: str | None,
+    runtime_name: str | None,
+    current_instance_id: uuid.UUID | None = None,
+) -> None:
+    _validate_runtime_identity(
+        server_id=server_id,
+        runtime_type=runtime_type,
+        runtime_name=runtime_name,
+    )
+    if server_id is None or runtime_type is None or runtime_name is None:
+        return
+    existing = await service_catalog_repository.get_instance_by_runtime_identity(
+        db,
+        server_id=server_id,
+        runtime_type=runtime_type,
+        runtime_name=runtime_name,
+    )
+    if existing is not None and existing.id != current_instance_id:
+        raise DirectoryConflict("该服务器上的运行时对象已经登记到服务目录")
+
+
 async def create_instance(
     db: AsyncSession, data: ServiceInstanceCreate
 ) -> ServiceInstance:
     await _validate_instance_references(db, data.service_id, data.server_id)
+    await _ensure_runtime_identity_available(
+        db,
+        server_id=data.server_id,
+        runtime_type=data.runtime_type,
+        runtime_name=data.runtime_name,
+    )
     existing = await service_catalog_repository.get_instance_by_identity(
         db, data.service_id, data.name
     )
@@ -172,6 +217,18 @@ async def register_discovered_services(
     skipped_instances = 0
 
     for registration in registrations:
+        existing_runtime = (
+            await service_catalog_repository.get_instance_by_runtime_identity(
+                db,
+                server_id=server.id,
+                runtime_type=registration.runtime_type,
+                runtime_name=registration.runtime_name,
+            )
+        )
+        if existing_runtime is not None:
+            skipped_instances += 1
+            continue
+
         service = await service_catalog_repository.get_service_by_identity(
             db, registration.service_name, environment
         )
@@ -189,6 +246,11 @@ async def register_discovered_services(
             db, service.id, registration.instance_name
         )
         if existing is not None:
+            if existing.runtime_type is None and existing.runtime_name is None:
+                existing.runtime_type = registration.runtime_type
+                existing.runtime_name = registration.runtime_name
+                existing.log_service = existing.log_service or registration.service_name
+                await service_catalog_repository.save_instance(db, existing)
             skipped_instances += 1
             continue
 
@@ -198,6 +260,9 @@ async def register_discovered_services(
                 service_id=service.id,
                 server_id=server.id,
                 name=registration.instance_name,
+                runtime_type=registration.runtime_type,
+                runtime_name=registration.runtime_name,
+                log_service=registration.service_name,
                 description=registration.description,
             ),
         )
@@ -217,7 +282,16 @@ async def update_instance(
     service_id = values.get("service_id", instance.service_id)
     server_id = values.get("server_id", instance.server_id)
     name = values.get("name", instance.name)
+    runtime_type = values.get("runtime_type", instance.runtime_type)
+    runtime_name = values.get("runtime_name", instance.runtime_name)
     await _validate_instance_references(db, service_id, server_id)
+    await _ensure_runtime_identity_available(
+        db,
+        server_id=server_id,
+        runtime_type=runtime_type,
+        runtime_name=runtime_name,
+        current_instance_id=instance.id,
+    )
     existing = await service_catalog_repository.get_instance_by_identity(
         db, service_id, name
     )

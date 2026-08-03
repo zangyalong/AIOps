@@ -24,6 +24,8 @@ export interface ServiceInstance {
   service_id: string
   server_id: string | null
   name: string
+  runtime_type: RuntimeType | null
+  runtime_name: string | null
   metric_instance: string | null
   log_service: string | null
   description: string | null
@@ -35,10 +37,14 @@ export interface ServiceInstanceInput {
   service_id: string
   server_id?: string | null
   name: string
+  runtime_type?: RuntimeType | null
+  runtime_name?: string | null
   metric_instance?: string | null
   log_service?: string | null
   description?: string | null
 }
+
+export type RuntimeType = 'systemd' | 'docker' | 'process'
 
 export type DependencyType = 'service' | 'database' | 'cache' | 'queue' | 'external'
 

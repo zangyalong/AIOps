@@ -1,0 +1,70 @@
+# AIOMS 目标服务器一键部署配置
+# 复制为 deploy.conf 后修改；不要在值两侧添加引号。
+
+# 必填：AIOMS 后端通过 SSH 登录目标服务器时使用的现有 Linux 用户。
+# 部署脚本不会创建该用户，也不会修改 authorized_keys。
+AIOMS_SSH_USER=aioms
+
+# 是否在目标服务器安装 Alloy 并采集日志：true / false
+ENABLE_ALLOY=true
+
+# ENABLE_ALLOY=true 时必填：服务目录中登记的服务器名称。
+SERVER_NAME=web01
+
+# ENABLE_ALLOY=true 时必填：目标服务器能够访问的中央 Loki 推送地址。
+LOKI_PUSH_URL=http://monitor.example.com:3100/loki/api/v1/push
+
+# 相对于 scripts/target-server/ 的 Alloy 服务映射文件，也可以写绝对路径。
+# 请先把 alloy/services.map.example 复制为 alloy/services.map 并按实际服务修改。
+ALLOY_SERVICE_MAP=alloy/services.map
+
+# 映射中存在 log_source=docker 时必须为 true。
+# Docker socket 权限很高，请只在确实需要采集容器日志时开启。
+ALLOW_DOCKER_SOCKET=false
+
+# true：安装后启用并重启 Alloy；false：只安装和校验配置，不启动服务。
+START_ALLOY=true
+
+# 服务目录和 Prometheus 标签使用的环境名。
+ENVIRONMENT=prod
+
+# -------------------- Prometheus 指标 exporter --------------------
+# 指标组件以 Docker Compose 运行。每个组件独立开关，镜像可手工升级或固定 digest。
+
+# 宿主机 CPU、内存、磁盘、网络等指标，默认端口 9100。
+ENABLE_NODE_EXPORTER=true
+NODE_EXPORTER_IMAGE=quay.io/prometheus/node-exporter:v1.11.1
+
+# Docker 容器 CPU、内存、网络、OOM 等指标，默认端口 8080。
+# cAdvisor 使用 privileged 和多个宿主机只读挂载，启用前请阅读 metrics/README.md。
+ENABLE_CADVISOR=true
+CADVISOR_IMAGE=ghcr.io/google/cadvisor:0.57.0
+DOCKER_ROOT_DIR=/var/lib/docker
+
+# MySQL/MariaDB 指标，默认端口 9104。
+# 启用前复制并填写 metrics/mysql-exporter.my.cnf.example。
+ENABLE_MYSQL_EXPORTER=false
+MYSQL_EXPORTER_IMAGE=prom/mysqld-exporter:v0.19.0
+MYSQL_EXPORTER_CONFIG=metrics/mysql-exporter.my.cnf
+# host 表示连接宿主机数据库；也可填写数据库容器所在的已有 Docker 网络名。
+MYSQL_EXPORTER_NETWORK=host
+
+# PostgreSQL 指标，默认端口 9187。URI 不包含用户名和密码。
+# 密码单独放在 POSTGRES_EXPORTER_PASSWORD_FILE 指定的文件中。
+ENABLE_POSTGRES_EXPORTER=false
+POSTGRES_EXPORTER_IMAGE=quay.io/prometheuscommunity/postgres-exporter:v0.19.1
+POSTGRES_EXPORTER_URI=127.0.0.1:5432/postgres?sslmode=disable
+POSTGRES_EXPORTER_USER=aioms_exporter
+POSTGRES_EXPORTER_PASSWORD_FILE=metrics/postgres-exporter.password
+POSTGRES_EXPORTER_NETWORK=host
+
+# Redis/Valkey 指标，默认端口 9121。无认证时用户名和密码文件可留空。
+ENABLE_REDIS_EXPORTER=false
+REDIS_EXPORTER_IMAGE=quay.io/oliver006/redis_exporter:v1.88.0
+REDIS_EXPORTER_ADDRESS=redis://127.0.0.1:6379
+REDIS_EXPORTER_USER=aioms_exporter
+REDIS_EXPORTER_PASSWORD_FILE=metrics/redis-exporter.password
+REDIS_EXPORTER_NETWORK=host
+
+# true：拉取镜像并启动/更新已启用 exporter；false：只生成并校验 Compose 配置。
+START_EXPORTERS=true

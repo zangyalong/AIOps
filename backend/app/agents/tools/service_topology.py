@@ -37,6 +37,8 @@ async def query_server_services(server: str) -> str:
             continue
         lines.append(
             f"- {_label(service)}：实例={instance.name}，"
+            f"runtime={instance.runtime_type or '未配置'}/"
+            f"{instance.runtime_name or '未配置'}，"
             f"metric_instance={instance.metric_instance or '未配置'}，"
             f"log_service={instance.log_service or '未配置'}"
         )
@@ -88,7 +90,9 @@ async def query_service_dependencies(service: str, environment: str = "") -> str
         and edge.upstream_service_id in services
     ]
     instance_lines = [
-        f"- {item.name}：metric_instance={item.metric_instance or '未配置'}，"
+        f"- {item.name}：runtime={item.runtime_type or '未配置'}/"
+        f"{item.runtime_name or '未配置'}，"
+        f"metric_instance={item.metric_instance or '未配置'}，"
         f"log_service={item.log_service or '未配置'}"
         for item in instances
     ] or ["- （没有登记部署实例）"]

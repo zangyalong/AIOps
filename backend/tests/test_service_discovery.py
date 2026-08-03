@@ -42,8 +42,7 @@ class _FakeConnection:
             return SimpleNamespace(
                 exit_status=0,
                 stdout=(
-                    "orders-api\texample/api:1\tUp 2 hours\t"
-                    "0.0.0.0:8080->8080/tcp\n"
+                    "orders-api\texample/api:1\tUp 2 hours\t0.0.0.0:8080->8080/tcp\n"
                 ),
                 stderr="",
             )
@@ -220,9 +219,7 @@ class ServiceDiscoveryToolTest(unittest.IsolatedAsyncioTestCase):
             any(item["service_name"] == "container-api" for item in process_candidates)
         )
         php_fpm = next(
-            item
-            for item in process_candidates
-            if item["service_name"] == "php-fpm8.2"
+            item for item in process_candidates if item["service_name"] == "php-fpm8.2"
         )
         self.assertEqual(php_fpm["ports"], ["unix:/run/php/php-fpm.sock"])
 
@@ -341,9 +338,13 @@ class ServiceDiscoveryToolTest(unittest.IsolatedAsyncioTestCase):
         registrations = register.await_args.kwargs["registrations"]
         self.assertEqual(len(registrations), 2)
         self.assertEqual(registrations[0].service_name, "orders-api")
+        self.assertEqual(registrations[0].runtime_type, "docker")
+        self.assertEqual(registrations[0].runtime_name, "orders-api")
         self.assertIn("镜像=example/api:1", registrations[0].description)
         process_registration = registrations[1]
         self.assertEqual(process_registration.service_name, "uvicorn")
+        self.assertEqual(process_registration.runtime_type, "process")
+        self.assertEqual(process_registration.runtime_name, "uvicorn:tcp-8010")
         self.assertIn("监听端口=tcp/8010", process_registration.description)
         self.assertIn("启动命令=/opt/venv/bin/python", process_registration.description)
         self.assertIn("ghost.service", result)
@@ -406,9 +407,19 @@ class DiscoveredServiceRegistrationTest(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         server = SimpleNamespace(id=uuid.uuid4(), name="web01")
         service = SimpleNamespace(id=uuid.uuid4(), name="orders-api")
-        existing_instance = SimpleNamespace(id=uuid.uuid4())
+        existing_instance = SimpleNamespace(
+            id=uuid.uuid4(),
+            runtime_type=None,
+            runtime_name=None,
+            log_service=None,
+        )
 
         with (
+            patch.object(
+                service_catalog_service.service_catalog_repository,
+                "get_instance_by_runtime_identity",
+                AsyncMock(side_effect=[None, None]),
+            ),
             patch.object(
                 service_catalog_service.service_catalog_repository,
                 "get_service_by_identity",
@@ -429,6 +440,11 @@ class DiscoveredServiceRegistrationTest(unittest.IsolatedAsyncioTestCase):
                 "create_instance",
                 AsyncMock(return_value=SimpleNamespace(id=uuid.uuid4())),
             ) as create_instance,
+            patch.object(
+                service_catalog_service.service_catalog_repository,
+                "save_instance",
+                AsyncMock(return_value=existing_instance),
+            ) as save_instance,
         ):
             result = await service_catalog_service.register_discovered_services(
                 object(),
@@ -438,10 +454,14 @@ class DiscoveredServiceRegistrationTest(unittest.IsolatedAsyncioTestCase):
                     DiscoveredServiceRegistration(
                         service_name="orders-api",
                         instance_name="web01:docker:orders-api",
+                        runtime_type="docker",
+                        runtime_name="orders-api",
                     ),
                     DiscoveredServiceRegistration(
                         service_name="orders-api",
                         instance_name="web01:docker:orders-api-canary",
+                        runtime_type="docker",
+                        runtime_name="orders-api-canary",
                     ),
                 ],
             )
@@ -451,3 +471,12 @@ class DiscoveredServiceRegistrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.skipped_instances, 1)
         create_service.assert_awaited_once()
         create_instance.assert_awaited_once()
+        save_instance.assert_awaited_once()
+        self.assertIs(save_instance.await_args.args[1], existing_instance)
+        instance_data = create_instance.await_args.args[1]
+        self.assertEqual(instance_data.runtime_type, "docker")
+        self.assertEqual(instance_data.runtime_name, "orders-api")
+        self.assertEqual(instance_data.log_service, "orders-api")
+        self.assertEqual(existing_instance.runtime_type, "docker")
+        self.assertEqual(existing_instance.runtime_name, "orders-api-canary")
+        self.assertEqual(existing_instance.log_service, "orders-api")

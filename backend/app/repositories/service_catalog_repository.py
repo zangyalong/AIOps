@@ -97,6 +97,22 @@ async def get_instance_by_identity(
     )
 
 
+async def get_instance_by_runtime_identity(
+    db: AsyncSession,
+    *,
+    server_id: uuid.UUID,
+    runtime_type: str,
+    runtime_name: str,
+) -> ServiceInstance | None:
+    return await db.scalar(
+        select(ServiceInstance).where(
+            ServiceInstance.server_id == server_id,
+            ServiceInstance.runtime_type == runtime_type,
+            ServiceInstance.runtime_name == runtime_name,
+        )
+    )
+
+
 async def create_instance(
     db: AsyncSession, instance: ServiceInstance
 ) -> ServiceInstance:
