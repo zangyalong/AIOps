@@ -16,7 +16,8 @@ usage() {
     [--port 22] \
     [--config ./deploy.conf] \
     [--key-dir /absolute/path/to/ssh] \
-    [--output-dir /absolute/path/to/dist]
+    [--output-dir /absolute/path/to/dist] \
+    [--config-assets-dir /absolute/path]
 
 生成一个不含私钥的首次安装包。目标服务器管理员解压后只需执行：
   sudo ./install.sh
@@ -35,6 +36,7 @@ SSH_PORT="22"
 CONFIG_PATH="$SCRIPT_DIR/deploy.conf"
 KEY_DIR="$PROJECT_ROOT/ssh"
 OUTPUT_DIR="$SCRIPT_DIR/dist"
+CONFIG_ASSETS_DIR="$SCRIPT_DIR"
 
 while (($# > 0)); do
     case "$1" in
@@ -68,6 +70,11 @@ while (($# > 0)); do
             OUTPUT_DIR="$2"
             shift 2
             ;;
+        --config-assets-dir)
+            (($# >= 2)) || fail "--config-assets-dir 缺少参数"
+            CONFIG_ASSETS_DIR="$2"
+            shift 2
+            ;;
         -h|--help)
             usage
             exit 0
@@ -88,6 +95,8 @@ done
 [[ -f "$CONFIG_PATH" ]] || fail "找不到部署配置：$CONFIG_PATH"
 [[ "$KEY_DIR" == /* ]] || fail "--key-dir 必须是绝对路径"
 [[ "$OUTPUT_DIR" == /* ]] || fail "--output-dir 必须是绝对路径"
+[[ "$CONFIG_ASSETS_DIR" == /* ]] || fail "--config-assets-dir 必须是绝对路径"
+[[ -d "$CONFIG_ASSETS_DIR" ]] || fail "找不到配置素材目录：$CONFIG_ASSETS_DIR"
 
 CONFIG_PATH="$(cd -- "$(dirname -- "$CONFIG_PATH")" && pwd)/$(basename -- "$CONFIG_PATH")"
 
@@ -157,21 +166,24 @@ for boolean_value in \
         fail "exporter 开关只能是 true 或 false"
 done
 
-"$SCRIPT_DIR/bootstrap/prepare-client.sh" \
-    --server "$SERVER_NAME" \
-    --host "$SERVER_HOST" \
-    --port "$SSH_PORT" \
-    --readonly-user "$AIOMS_SSH_USER" \
-    --deploy-user "$AIOMS_DEPLOY_USER" \
-    --key-dir "$KEY_DIR"
-
-readonly ROLE_SOURCE="$SCRIPT_DIR/bootstrap/generated/$SERVER_NAME"
 readonly BUNDLE_NAME="aioms-$SERVER_NAME"
 stage_root="$(mktemp -d /tmp/aioms-bundle.XXXXXX)"
 cleanup() {
     rm -rf -- "$stage_root"
 }
 trap cleanup EXIT
+
+readonly GENERATED_ROOT="$stage_root/generated"
+"$SCRIPT_DIR/bootstrap/prepare-client.sh" \
+    --server "$SERVER_NAME" \
+    --host "$SERVER_HOST" \
+    --port "$SSH_PORT" \
+    --readonly-user "$AIOMS_SSH_USER" \
+    --deploy-user "$AIOMS_DEPLOY_USER" \
+    --key-dir "$KEY_DIR" \
+    --generated-root "$GENERATED_ROOT"
+
+readonly ROLE_SOURCE="$GENERATED_ROOT/$SERVER_NAME"
 
 readonly BUNDLE_DIR="$stage_root/$BUNDLE_NAME"
 readonly TARGET_COPY="$BUNDLE_DIR/target-server"
@@ -211,9 +223,10 @@ copy_configured_file() {
     [[ "$relative_path" != /* ]] || fail "$label 在一键包中必须使用相对路径"
     [[ "/$relative_path/" != *"/../"* ]] || fail "$label 路径不能包含 .."
     [[ "$relative_path" =~ ^[A-Za-z0-9_./-]+$ ]] || fail "$label 路径包含不支持的字符"
-    [[ -f "$SCRIPT_DIR/$relative_path" ]] || fail "找不到 $label：$SCRIPT_DIR/$relative_path"
+    [[ -f "$CONFIG_ASSETS_DIR/$relative_path" ]] ||
+        fail "找不到 $label：$CONFIG_ASSETS_DIR/$relative_path"
     install -d -m 0755 "$TARGET_COPY/$(dirname -- "$relative_path")"
-    install -m 0600 "$SCRIPT_DIR/$relative_path" "$TARGET_COPY/$relative_path"
+    install -m 0600 "$CONFIG_ASSETS_DIR/$relative_path" "$TARGET_COPY/$relative_path"
 }
 
 if [[ -n "$ALLOY_SERVICE_MAP" ]]; then

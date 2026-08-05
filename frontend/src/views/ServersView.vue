@@ -4,10 +4,22 @@ import {
   createServer,
   deleteServer,
   fetchServers,
+  generateDeploymentBundle,
   testServerConnection,
   updateServer,
 } from '../api/servers'
-import type { Server, ServerCreateInput, ServerStatus } from '../types/server'
+import TargetDeploymentConfigForm from '../components/TargetDeploymentConfigForm.vue'
+import {
+  createDefaultDeploymentConfig,
+  createEmptyDeploymentSecrets,
+} from '../types/server'
+import type {
+  DeploymentBundleSecrets,
+  Server,
+  ServerCreateInput,
+  ServerStatus,
+  TargetDeploymentConfig,
+} from '../types/server'
 
 const servers = ref<Server[]>([])
 const loading = ref(true)
@@ -16,8 +28,14 @@ const error = ref<string | null>(null)
 const showModal = ref(false)
 const editingServer = ref<Server | null>(null)
 const saving = ref(false)
+const generatingBundle = ref(false)
 const formError = ref<string | null>(null)
-const form = reactive<ServerCreateInput>({
+const bundleMessage = ref<string | null>(null)
+const deploymentSecrets = reactive<DeploymentBundleSecrets>(createEmptyDeploymentSecrets())
+type ServerForm = Omit<ServerCreateInput, 'deployment_config'> & {
+  deployment_config: TargetDeploymentConfig
+}
+const form = reactive<ServerForm>({
   name: '',
   ip_address: '',
   description: '',
@@ -26,6 +44,7 @@ const form = reactive<ServerCreateInput>({
   ssh_key_filename: '',
   deploy_ssh_user: '',
   deploy_ssh_key_filename: '',
+  deployment_config: createDefaultDeploymentConfig(),
 })
 
 // 'testing' 是纯前端的临时态（测试请求还在飞的时候显示），后端不会返回这个
@@ -57,7 +76,10 @@ function resetForm() {
   form.ssh_key_filename = ''
   form.deploy_ssh_user = ''
   form.deploy_ssh_key_filename = ''
+  form.deployment_config = createDefaultDeploymentConfig()
+  Object.assign(deploymentSecrets, createEmptyDeploymentSecrets())
   formError.value = null
+  bundleMessage.value = null
 }
 
 function openCreateModal() {
@@ -75,7 +97,13 @@ function openEditModal(server: Server) {
   form.ssh_key_filename = server.ssh_key_filename ?? ''
   form.deploy_ssh_user = server.deploy_ssh_user ?? ''
   form.deploy_ssh_key_filename = server.deploy_ssh_key_filename ?? ''
+  form.deployment_config = {
+    ...createDefaultDeploymentConfig(),
+    ...(server.deployment_config ?? {}),
+  }
+  Object.assign(deploymentSecrets, createEmptyDeploymentSecrets())
   formError.value = null
+  bundleMessage.value = null
   editingServer.value = server
   showModal.value = true
 }
@@ -85,35 +113,86 @@ function closeModal() {
   editingServer.value = null
 }
 
-async function submitForm() {
+function buildPayload(): ServerCreateInput | null {
   if (!form.name.trim() || !form.ip_address.trim()) {
     formError.value = '名称和 IP 地址是必填的'
-    return
+    return null
   }
+
+  return {
+    name: form.name.trim(),
+    ip_address: form.ip_address.trim(),
+    description: form.description?.trim() || null,
+    ssh_port: form.ssh_port || null,
+    ssh_user: form.ssh_user?.trim() || null,
+    ssh_key_filename: form.ssh_key_filename?.trim() || null,
+    deploy_ssh_user: form.deploy_ssh_user?.trim() || null,
+    deploy_ssh_key_filename: form.deploy_ssh_key_filename?.trim() || null,
+    deployment_config: { ...form.deployment_config },
+  }
+}
+
+async function persistForm(): Promise<Server | null> {
+  const payload = buildPayload()
+  if (!payload) return null
+  formError.value = null
+
+  const saved = editingServer.value
+    ? await updateServer(editingServer.value.id, payload)
+    : await createServer(payload)
+  editingServer.value = saved
+  return saved
+}
+
+async function submitForm() {
   saving.value = true
   formError.value = null
   try {
-    const payload: ServerCreateInput = {
-      name: form.name.trim(),
-      ip_address: form.ip_address.trim(),
-      description: form.description?.trim() || null,
-      ssh_port: form.ssh_port || null,
-      ssh_user: form.ssh_user?.trim() || null,
-      ssh_key_filename: form.ssh_key_filename?.trim() || null,
-      deploy_ssh_user: form.deploy_ssh_user?.trim() || null,
-      deploy_ssh_key_filename: form.deploy_ssh_key_filename?.trim() || null,
-    }
-    if (editingServer.value) {
-      await updateServer(editingServer.value.id, payload)
-    } else {
-      await createServer(payload)
-    }
+    const saved = await persistForm()
+    if (!saved) return
     closeModal()
     await loadServers()
   } catch (e) {
     formError.value = e instanceof Error ? e.message : String(e)
   } finally {
     saving.value = false
+  }
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(url)
+}
+
+async function saveAndGenerateBundle() {
+  generatingBundle.value = true
+  formError.value = null
+  bundleMessage.value = null
+  try {
+    const saved = await persistForm()
+    if (!saved) return
+
+    const download = await generateDeploymentBundle(saved.id, deploymentSecrets)
+    downloadBlob(download.blob, download.filename)
+    if (saved.ssh_user && saved.deploy_ssh_user) {
+      form.ssh_key_filename = `${saved.name}-${saved.ssh_user}`
+      form.deploy_ssh_key_filename = `${saved.name}-${saved.deploy_ssh_user}`
+    }
+    bundleMessage.value = download.sha256
+      ? `安装包已下载，SHA-256：${download.sha256}`
+      : '安装包已下载'
+    await loadServers()
+  } catch (e) {
+    formError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    Object.assign(deploymentSecrets, createEmptyDeploymentSecrets())
+    generatingBundle.value = false
   }
 }
 
@@ -234,10 +313,24 @@ const sortedServers = computed(() =>
             <label>部署私钥文件名<input v-model="form.deploy_ssh_key_filename" placeholder="比如 web01-aioms-deploy" /></label>
           </div>
 
+          <TargetDeploymentConfigForm
+            :config="form.deployment_config"
+            :secrets="deploymentSecrets"
+          />
+
           <p v-if="formError" class="error">{{ formError }}</p>
+          <p v-if="bundleMessage" class="bundle-success">{{ bundleMessage }}</p>
           <div class="modal-actions">
             <button type="button" class="btn-ghost" @click="closeModal">取消</button>
-            <button type="submit" class="btn-primary" :disabled="saving">
+            <button
+              type="button"
+              class="btn-bundle"
+              :disabled="saving || generatingBundle"
+              @click="saveAndGenerateBundle"
+            >
+              {{ generatingBundle ? '生成中…' : '保存并下载一键安装包' }}
+            </button>
+            <button type="submit" class="btn-primary" :disabled="saving || generatingBundle">
               {{ saving ? '保存中…' : '保存' }}
             </button>
           </div>
@@ -497,7 +590,7 @@ h1 {
   border-radius: var(--radius);
   box-shadow: var(--shadow-lg);
   width: 100%;
-  max-width: 480px;
+  max-width: 760px;
   max-height: 90vh;
   overflow-y: auto;
 }
@@ -583,5 +676,38 @@ label {
 .modal-actions .btn-ghost {
   flex: 0 0 auto;
   padding: 0.55rem 1.1rem;
+}
+
+.btn-bundle {
+  padding: 0.55rem 1.1rem;
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-accent) 10%, var(--color-surface));
+  color: var(--color-accent);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.btn-bundle:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.bundle-success {
+  margin: 0;
+  color: var(--color-status-active);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 680px) {
+  .form-row,
+  .modal-actions {
+    flex-direction: column;
+  }
+
+  .modal-actions button {
+    width: 100%;
+  }
 }
 </style>

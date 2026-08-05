@@ -40,3 +40,7 @@ class Server(Base, UUIDMixin, TimestampMixin):
     # instance 用来查 Prometheus 指标 / Alertmanager 告警，service 用来查 Loki 日志。可空。
     # 注：create_all 不会给已有表加列，新增这列要手动 ALTER（见 scripts/seed_monitor_labels.py）。
     monitor_labels: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    # 目标服务器首次部署的非敏感参数。数据库 exporter 密码不会写入这里，生成安装包时
+    # 由前端一次性提交并只写入临时目录，响应结束后清理。
+    deployment_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

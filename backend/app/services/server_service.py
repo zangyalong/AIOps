@@ -28,18 +28,30 @@ async def get_server_by_name_or_ip(db: AsyncSession, identifier: str) -> Server 
 
 
 async def create_server(db: AsyncSession, data: ServerCreate) -> Server:
-    server = Server(**data.model_dump())
+    server = Server(**data.model_dump(mode="json"))
     return await server_repository.create(db, server)
 
 
 async def update_server(db: AsyncSession, server: Server, data: ServerUpdate) -> Server:
-    for field, value in data.model_dump(exclude_unset=True).items():
+    for field, value in data.model_dump(mode="json", exclude_unset=True).items():
         setattr(server, field, value)
     return await server_repository.save(db, server)
 
 
 async def delete_server(db: AsyncSession, server: Server) -> None:
     await server_repository.delete(db, server)
+
+
+async def record_generated_ssh_keys(
+    db: AsyncSession,
+    server: Server,
+    *,
+    readonly_key_filename: str,
+    deploy_key_filename: str,
+) -> Server:
+    server.ssh_key_filename = readonly_key_filename
+    server.deploy_ssh_key_filename = deploy_key_filename
+    return await server_repository.save(db, server)
 
 
 async def _probe_connection(server: Server) -> ConnectionTestResult:

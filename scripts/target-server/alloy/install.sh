@@ -30,6 +30,11 @@ usage() {
 --install-only          只安装 Alloy 和固定配置应用器，不要求 services.map，不启动服务。
 --allow-docker-socket   允许后续已审批配置采集 Docker 日志；该权限接近 Docker 控制权限。
 --no-start              安装并校验已有映射，但不启动或重启 Alloy。
+--apt-repo-url URL      APT 仓库地址；默认 https://apt.grafana.com。
+--apt-gpg-key-url URL   APT 仓库签名公钥地址；默认 Grafana 官方地址。
+--rpm-repo-url URL      DNF/YUM 仓库地址；默认使用清华 TUNA 镜像。
+--rpm-gpg-key-url URL   DNF/YUM 仓库签名公钥地址；默认 Grafana 官方地址。
+--package-proxy-url URL 仅本次安装下载使用的 HTTP(S) 代理；不会写入系统全局代理。
 EOF
 }
 
@@ -51,6 +56,11 @@ SERVICE_MAP=""
 ALLOW_DOCKER_SOCKET=false
 INSTALL_ONLY=false
 START_SERVICE=true
+APT_REPO_URL="https://apt.grafana.com"
+APT_GPG_KEY_URL="https://apt.grafana.com/gpg-full.key"
+RPM_REPO_URL="https://mirrors.tuna.tsinghua.edu.cn/grafana/yum/rpm"
+RPM_GPG_KEY_URL="https://rpm.grafana.com/gpg.key"
+PACKAGE_PROXY_URL=""
 
 while (($# > 0)); do
     case "$1" in
@@ -87,6 +97,31 @@ while (($# > 0)); do
             START_SERVICE=false
             shift
             ;;
+        --apt-repo-url)
+            (($# >= 2)) || fail "--apt-repo-url 缺少参数"
+            APT_REPO_URL="$2"
+            shift 2
+            ;;
+        --apt-gpg-key-url)
+            (($# >= 2)) || fail "--apt-gpg-key-url 缺少参数"
+            APT_GPG_KEY_URL="$2"
+            shift 2
+            ;;
+        --rpm-repo-url)
+            (($# >= 2)) || fail "--rpm-repo-url 缺少参数"
+            RPM_REPO_URL="$2"
+            shift 2
+            ;;
+        --rpm-gpg-key-url)
+            (($# >= 2)) || fail "--rpm-gpg-key-url 缺少参数"
+            RPM_GPG_KEY_URL="$2"
+            shift 2
+            ;;
+        --package-proxy-url)
+            (($# >= 2)) || fail "--package-proxy-url 缺少参数"
+            PACKAGE_PROXY_URL="$2"
+            shift 2
+            ;;
         -h|--help)
             usage
             exit 0
@@ -98,12 +133,30 @@ while (($# > 0)); do
 done
 
 readonly USER_PATTERN='^[a-z_][a-z0-9_-]*[$]?$'
+validate_http_url() {
+    local key="$1"
+    local value="$2"
+
+    [[ "$value" =~ ^https?://[^[:space:]]+$ ]] ||
+        fail "$key 必须是没有空格的 http(s) URL"
+}
+
 [[ $EUID -eq 0 ]] || fail "请使用 root 或 sudo 运行"
 [[ "$SERVER_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$ ]] || fail "必须提供合法 --server"
 [[ "$LOKI_PUSH_URL" =~ ^https?://[^[:space:]]+/loki/api/v1/push$ ]] ||
     fail "--loki-url 必须是 http(s)://.../loki/api/v1/push"
 [[ "$DEPLOY_USER" =~ $USER_PATTERN ]] || fail "--deploy-user 格式不合法"
 id "$DEPLOY_USER" >/dev/null 2>&1 || fail "部署用户不存在：$DEPLOY_USER"
+validate_http_url "--apt-repo-url" "$APT_REPO_URL"
+validate_http_url "--apt-gpg-key-url" "$APT_GPG_KEY_URL"
+validate_http_url "--rpm-repo-url" "$RPM_REPO_URL"
+validate_http_url "--rpm-gpg-key-url" "$RPM_GPG_KEY_URL"
+if [[ -n "$PACKAGE_PROXY_URL" ]]; then
+    validate_http_url "--package-proxy-url" "$PACKAGE_PROXY_URL"
+fi
+
+APT_REPO_URL="${APT_REPO_URL%/}"
+RPM_REPO_URL="${RPM_REPO_URL%/}"
 
 if [[ "$INSTALL_ONLY" == true ]]; then
     [[ -z "$SERVICE_MAP" ]] || fail "--install-only 不能同时指定 --map"
@@ -132,32 +185,94 @@ install_alloy_package() {
     fi
 
     if command -v apt-get >/dev/null 2>&1; then
-        apt-get update
-        apt-get install -y ca-certificates gpg wget
+        local -a apt_proxy_args=()
+        if [[ -n "$PACKAGE_PROXY_URL" ]]; then
+            apt_proxy_args=(
+                -o "Acquire::http::Proxy=$PACKAGE_PROXY_URL"
+                -o "Acquire::https::Proxy=$PACKAGE_PROXY_URL"
+            )
+        fi
+
+        apt-get "${apt_proxy_args[@]}" update
+        apt-get "${apt_proxy_args[@]}" install -y ca-certificates gpg wget
         install -d -o root -g root -m 0755 /etc/apt/keyrings
-        wget -O /etc/apt/keyrings/grafana.asc https://apt.grafana.com/gpg-full.key
+        if [[ -n "$PACKAGE_PROXY_URL" ]]; then
+            env \
+                http_proxy="$PACKAGE_PROXY_URL" \
+                https_proxy="$PACKAGE_PROXY_URL" \
+                HTTP_PROXY="$PACKAGE_PROXY_URL" \
+                HTTPS_PROXY="$PACKAGE_PROXY_URL" \
+                wget -O /etc/apt/keyrings/grafana.asc "$APT_GPG_KEY_URL"
+        else
+            wget -O /etc/apt/keyrings/grafana.asc "$APT_GPG_KEY_URL"
+        fi
         chmod 0644 /etc/apt/keyrings/grafana.asc
         printf '%s\n' \
-            'deb [signed-by=/etc/apt/keyrings/grafana.asc] https://apt.grafana.com stable main' \
+            "deb [signed-by=/etc/apt/keyrings/grafana.asc] $APT_REPO_URL stable main" \
             >/etc/apt/sources.list.d/grafana.list
-        apt-get update
-        apt-get install -y alloy
+        apt-get "${apt_proxy_args[@]}" update
+        apt-get "${apt_proxy_args[@]}" install -y alloy
         return
     fi
 
     if command -v dnf >/dev/null 2>&1; then
-        cat >/etc/yum.repos.d/grafana.repo <<'EOF'
+        local repo_path="/etc/yum.repos.d/grafana.repo"
+        local repo_backup=""
+        local repo_existed=false
+        local repo_gpgcheck=0
+        local -a dnf_proxy_args=()
+
+        # 官方仓库提供 repomd.xml.asc；TUNA 等镜像通常只同步仓库元数据和已签名 RPM 包。
+        # 自定义镜像只关闭元数据签名校验，RPM 包签名校验始终保持开启。
+        if [[ "$RPM_REPO_URL" == "https://rpm.grafana.com" ]]; then
+            repo_gpgcheck=1
+        fi
+        if [[ -n "$PACKAGE_PROXY_URL" ]]; then
+            dnf_proxy_args=(--setopt="proxy=$PACKAGE_PROXY_URL")
+        fi
+
+        # 仓库文件只在安装期间生效。无论成功、失败还是被中断，子 Shell 的 EXIT trap
+        # 都会恢复服务器原有配置，避免 AIOMS 永久改变系统软件源。
+        (
+            cleanup_temporary_repo() {
+                dnf -q --disablerepo='*' --enablerepo=grafana clean metadata \
+                    >/dev/null 2>&1 || true
+                rm -f -- "$repo_path"
+                if [[ "$repo_existed" == true ]]; then
+                    cp -a -- "$repo_backup" "$repo_path"
+                fi
+                [[ -z "$repo_backup" ]] || rm -f -- "$repo_backup"
+            }
+            trap cleanup_temporary_repo EXIT
+
+            if [[ -e "$repo_path" || -L "$repo_path" ]]; then
+                repo_backup="$(mktemp /tmp/aioms-grafana-repo.XXXXXX)"
+                rm -f -- "$repo_backup"
+                cp -a -- "$repo_path" "$repo_backup"
+                repo_existed=true
+            fi
+
+            cat >"$repo_path" <<EOF
 [grafana]
 name=grafana
-baseurl=https://rpm.grafana.com
-repo_gpgcheck=1
+baseurl=$RPM_REPO_URL
+repo_gpgcheck=$repo_gpgcheck
 enabled=1
 gpgcheck=1
-gpgkey=https://rpm.grafana.com/gpg.key
+gpgkey=$RPM_GPG_KEY_URL
 sslverify=1
 sslcacert=/etc/pki/tls/certs/ca-bundle.crt
 EOF
-        dnf install -y alloy
+
+            echo "临时使用 Alloy RPM 源：$RPM_REPO_URL"
+            if [[ "$repo_gpgcheck" == 0 ]]; then
+                echo "镜像不校验仓库元数据签名；Alloy RPM 包签名校验仍保持开启。"
+            fi
+            dnf "${dnf_proxy_args[@]}" \
+                --disablerepo='*' --enablerepo=grafana clean metadata
+            dnf "${dnf_proxy_args[@]}" --refresh install -y alloy
+        )
+        echo "Alloy 安装完成，已恢复服务器原有 DNF 仓库配置。"
         return
     fi
 

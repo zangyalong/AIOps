@@ -16,7 +16,8 @@ usage() {
     [--port 22] \
     [--readonly-user aioms] \
     [--deploy-user aioms-deploy] \
-    [--key-dir /path/to/ssh]
+    [--key-dir /path/to/ssh] \
+    [--generated-root /absolute/path]
 
 脚本在 AIOMS 客户端生成两组 Ed25519 密钥。私钥只保存在 key-dir；
 同时生成一个可单独交给服务器管理员的角色包：
@@ -37,6 +38,7 @@ SSH_PORT="22"
 READONLY_USER="aioms"
 DEPLOY_USER="aioms-deploy"
 KEY_DIR="$PROJECT_ROOT/ssh"
+GENERATED_ROOT="$SCRIPT_DIR/generated"
 
 while (($# > 0)); do
     case "$1" in
@@ -70,6 +72,11 @@ while (($# > 0)); do
             KEY_DIR="$2"
             shift 2
             ;;
+        --generated-root)
+            (($# >= 2)) || fail "--generated-root 缺少参数"
+            GENERATED_ROOT="$2"
+            shift 2
+            ;;
         -h|--help)
             usage
             exit 0
@@ -92,6 +99,8 @@ readonly USER_PATTERN='^[a-z_][a-z0-9_-]*[$]?$'
 ((SSH_PORT >= 1 && SSH_PORT <= 65535)) || fail "SSH 端口必须在 1 到 65535 之间"
 [[ "$KEY_DIR" == /* ]] || fail "--key-dir 必须是绝对路径"
 [[ "$KEY_DIR" != "/" ]] || fail "--key-dir 不能是根目录"
+[[ "$GENERATED_ROOT" == /* ]] || fail "--generated-root 必须是绝对路径"
+[[ "$GENERATED_ROOT" != "/" ]] || fail "--generated-root 不能是根目录"
 
 if [[ -z "$SERVER_HOST" ]]; then
     SERVER_HOST="$SERVER_NAME"
@@ -107,7 +116,7 @@ install -d -m 0700 "$KEY_DIR"
 
 readonly READONLY_KEY_PATH="$KEY_DIR/$SERVER_NAME-$READONLY_USER"
 readonly DEPLOY_KEY_PATH="$KEY_DIR/$SERVER_NAME-$DEPLOY_USER"
-readonly GENERATED_DIR="$SCRIPT_DIR/generated/$SERVER_NAME"
+readonly GENERATED_DIR="$GENERATED_ROOT/$SERVER_NAME"
 
 ensure_key_pair() {
     local private_path="$1"

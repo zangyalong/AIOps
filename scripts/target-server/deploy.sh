@@ -48,6 +48,11 @@ AIOMS_DEPLOY_USER="aioms-deploy"
 ENABLE_ALLOY="true"
 SERVER_NAME=""
 LOKI_PUSH_URL=""
+ALLOY_APT_REPO_URL="https://apt.grafana.com"
+ALLOY_APT_GPG_KEY_URL="https://apt.grafana.com/gpg-full.key"
+ALLOY_RPM_REPO_URL="https://mirrors.tuna.tsinghua.edu.cn/grafana/yum/rpm"
+ALLOY_RPM_GPG_KEY_URL="https://rpm.grafana.com/gpg.key"
+ALLOY_PACKAGE_PROXY_URL=""
 ALLOY_SERVICE_MAP=""
 ALLOW_DOCKER_SOCKET="false"
 START_ALLOY="false"
@@ -93,6 +98,11 @@ set_config_value() {
         ENABLE_ALLOY) ENABLE_ALLOY="$value" ;;
         SERVER_NAME) SERVER_NAME="$value" ;;
         LOKI_PUSH_URL) LOKI_PUSH_URL="$value" ;;
+        ALLOY_APT_REPO_URL) ALLOY_APT_REPO_URL="$value" ;;
+        ALLOY_APT_GPG_KEY_URL) ALLOY_APT_GPG_KEY_URL="$value" ;;
+        ALLOY_RPM_REPO_URL) ALLOY_RPM_REPO_URL="$value" ;;
+        ALLOY_RPM_GPG_KEY_URL) ALLOY_RPM_GPG_KEY_URL="$value" ;;
+        ALLOY_PACKAGE_PROXY_URL) ALLOY_PACKAGE_PROXY_URL="$value" ;;
         ALLOY_SERVICE_MAP) ALLOY_SERVICE_MAP="$value" ;;
         ALLOW_DOCKER_SOCKET) ALLOW_DOCKER_SOCKET="$value" ;;
         START_ALLOY) START_ALLOY="$value" ;;
@@ -140,11 +150,25 @@ while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
     SEEN_KEYS+="$key|"
 done <"$CONFIG_PATH"
 
+# 仓库字段留空时使用各平台默认地址，代理留空表示直连。
+ALLOY_APT_REPO_URL="${ALLOY_APT_REPO_URL:-https://apt.grafana.com}"
+ALLOY_APT_GPG_KEY_URL="${ALLOY_APT_GPG_KEY_URL:-https://apt.grafana.com/gpg-full.key}"
+ALLOY_RPM_REPO_URL="${ALLOY_RPM_REPO_URL:-https://mirrors.tuna.tsinghua.edu.cn/grafana/yum/rpm}"
+ALLOY_RPM_GPG_KEY_URL="${ALLOY_RPM_GPG_KEY_URL:-https://rpm.grafana.com/gpg.key}"
+
 validate_boolean() {
     local key="$1"
     local value="$2"
     [[ "$value" == "true" || "$value" == "false" ]] ||
         fail "$key 只能填写 true 或 false"
+}
+
+validate_http_url() {
+    local key="$1"
+    local value="$2"
+
+    [[ "$value" =~ ^https?://[^[:space:]]+$ ]] ||
+        fail "$key 必须是没有空格的 http(s) URL"
 }
 
 [[ -n "$AIOMS_SSH_USER" ]] || fail "AIOMS_SSH_USER 不能为空"
@@ -167,6 +191,13 @@ alloy_args=()
 if [[ "$ENABLE_ALLOY" == "true" ]]; then
     [[ -n "$SERVER_NAME" ]] || fail "ENABLE_ALLOY=true 时 SERVER_NAME 不能为空"
     [[ -n "$LOKI_PUSH_URL" ]] || fail "ENABLE_ALLOY=true 时 LOKI_PUSH_URL 不能为空"
+    validate_http_url "ALLOY_APT_REPO_URL" "$ALLOY_APT_REPO_URL"
+    validate_http_url "ALLOY_APT_GPG_KEY_URL" "$ALLOY_APT_GPG_KEY_URL"
+    validate_http_url "ALLOY_RPM_REPO_URL" "$ALLOY_RPM_REPO_URL"
+    validate_http_url "ALLOY_RPM_GPG_KEY_URL" "$ALLOY_RPM_GPG_KEY_URL"
+    if [[ -n "$ALLOY_PACKAGE_PROXY_URL" ]]; then
+        validate_http_url "ALLOY_PACKAGE_PROXY_URL" "$ALLOY_PACKAGE_PROXY_URL"
+    fi
     [[ -x "$SCRIPT_DIR/alloy/install.sh" ]] ||
         fail "缺少可执行的 Alloy 安装器：$SCRIPT_DIR/alloy/install.sh"
     [[ -x "$SCRIPT_DIR/alloy/aioms-alloy-apply" ]] ||
@@ -176,7 +207,15 @@ if [[ "$ENABLE_ALLOY" == "true" ]]; then
         --server "$SERVER_NAME"
         --loki-url "$LOKI_PUSH_URL"
         --deploy-user "$AIOMS_DEPLOY_USER"
+        --apt-repo-url "$ALLOY_APT_REPO_URL"
+        --apt-gpg-key-url "$ALLOY_APT_GPG_KEY_URL"
+        --rpm-repo-url "$ALLOY_RPM_REPO_URL"
+        --rpm-gpg-key-url "$ALLOY_RPM_GPG_KEY_URL"
     )
+
+    if [[ -n "$ALLOY_PACKAGE_PROXY_URL" ]]; then
+        alloy_args+=(--package-proxy-url "$ALLOY_PACKAGE_PROXY_URL")
+    fi
 
     if [[ -n "$ALLOY_SERVICE_MAP" ]]; then
         if [[ "$ALLOY_SERVICE_MAP" == /* ]]; then

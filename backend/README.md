@@ -114,15 +114,25 @@ uv run python scripts/migrate_chat_runs.py
 | `REDIS_URL`             | `redis://localhost:6379`   | arq broker                 |
 | `OBS_HTTP_TIMEOUT`      | `10`                       | 可观测性 HTTP 请求超时秒数 |
 | `SSH_RESTART_SERVICE_ALLOWLIST` | 空                  | 允许重启的 systemd 服务名，逗号分隔；空值表示全部禁止 |
+| `SSH_KEY_DIR`           | 仓库根目录 `ssh/`          | 生成和读取目标服务器 SSH 私钥 |
+| `TARGET_SERVER_SCRIPTS_DIR` | `scripts/target-server/` | 生成目标服务器一键安装包的固定脚本目录 |
 
-SSH 私钥目录固定为仓库根目录的 `ssh/`，数据库只保存私钥文件名。具体测试方法见 [`docs/local-ssh-sandbox.md`](../docs/local-ssh-sandbox.md)。
+SSH 私钥默认放在仓库根目录的 `ssh/`，数据库只保存私钥文件名。具体测试方法见 [`docs/local-ssh-sandbox.md`](../docs/local-ssh-sandbox.md)。
 日常只读连接使用 `ssh_user` / `ssh_key_filename`；审批后的目标配置写 Tool 使用独立的
-`deploy_ssh_user` / `deploy_ssh_key_filename`，不会回退复用只读密钥。已有数据库先执行：
+`deploy_ssh_user` / `deploy_ssh_key_filename`，不会回退复用只读密钥。服务器编辑页还会把
+非敏感部署参数保存在 `servers.deployment_config`；数据库 exporter 密码只用于当次打包，
+不会落库。已有数据库先执行：
 
 ```bash
 psql -d aioms -v ON_ERROR_STOP=1 \
   -f scripts/database/20260803_add_server_deploy_ssh_identity.sql
+psql -d aioms -v ON_ERROR_STOP=1 \
+  -f scripts/database/20260803_add_server_deployment_config.sql
 ```
+
+`POST /servers/{server_id}/deployment-bundle` 会在后端临时目录生成不含私钥的安装包并直接下载，
+响应完成后清理临时配置和数据库凭据。后端运行机器需要有 Bash、`ssh-keygen`、`tar` 和
+`sha256sum`（macOS 可使用 `shasum`），并且 `SSH_KEY_DIR` 对后端进程可写。
 
 真实目标服务器需要安装只读 Docker / 业务资产发现网关和 sudoers，文件、安装位置、参数及
 验证方法见 [`scripts/target-server/README.md`](../scripts/target-server/README.md)。

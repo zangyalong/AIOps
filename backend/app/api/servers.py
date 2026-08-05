@@ -3,12 +3,25 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.background import BackgroundTask
 
 from app.dependencies import DBSession
 from app.models.server import Server
-from app.schemas.server import ConnectionTestResult, ServerCreate, ServerRead, ServerUpdate
+from app.schemas.server import (
+    ConnectionTestResult,
+    DeploymentBundleRequest,
+    ServerCreate,
+    ServerRead,
+    ServerUpdate,
+)
 from app.services import server_service
+from app.services.target_deployment_service import (
+    DeploymentBundleError,
+    build_deployment_bundle,
+    cleanup_bundle,
+)
 
 router = APIRouter(prefix="/servers", tags=["servers"])
 
@@ -50,6 +63,45 @@ async def delete_server(server_id: uuid.UUID, db: DBSession) -> None:
 
 
 @router.post("/{server_id}/test-connection", response_model=ConnectionTestResult)
-async def test_server_connection(server_id: uuid.UUID, db: DBSession) -> ConnectionTestResult:
+async def test_server_connection(
+    server_id: uuid.UUID, db: DBSession
+) -> ConnectionTestResult:
     server = await _get_server_or_404(db, server_id)
     return await server_service.test_connection(db, server)
+
+
+@router.post(
+    "/{server_id}/deployment-bundle",
+    response_class=FileResponse,
+    responses={200: {"content": {"application/gzip": {}}}},
+)
+async def download_deployment_bundle(
+    server_id: uuid.UUID,
+    data: DeploymentBundleRequest,
+    db: DBSession,
+) -> FileResponse:
+    """生成不含私钥的首次安装包；数据库凭据只存在于响应期临时目录。"""
+    server = await _get_server_or_404(db, server_id)
+    try:
+        artifact = await build_deployment_bundle(server, data.secrets)
+    except DeploymentBundleError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    try:
+        await server_service.record_generated_ssh_keys(
+            db,
+            server,
+            readonly_key_filename=artifact.readonly_key_filename,
+            deploy_key_filename=artifact.deploy_key_filename,
+        )
+    except Exception:
+        cleanup_bundle(artifact.temporary_root)
+        raise
+
+    return FileResponse(
+        path=artifact.archive_path,
+        media_type="application/gzip",
+        filename=artifact.archive_path.name,
+        headers={"X-Checksum-SHA256": artifact.sha256},
+        background=BackgroundTask(cleanup_bundle, artifact.temporary_root),
+    )

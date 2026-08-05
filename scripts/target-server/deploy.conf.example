@@ -17,6 +17,19 @@ SERVER_NAME=web01
 # ENABLE_ALLOY=true 时必填：目标服务器能够访问的中央 Loki 推送地址。
 LOKI_PUSH_URL=http://monitor.example.com:3100/loki/api/v1/push
 
+# 可选：Alloy 软件包下载入口。APT 默认使用 Grafana 官方源；RPM 默认临时使用清华 TUNA 镜像。
+# APT 机器只使用 ALLOY_APT_*；RHEL/Fedora 机器只使用 ALLOY_RPM_*。
+# RPM 镜像中的软件包仍使用 Grafana 官方 GPG key 校验；安装结束后会恢复服务器原有 DNF repo。
+# 留空也会回退到下方默认地址，不要填写来源不明的公共镜像。
+ALLOY_APT_REPO_URL=https://apt.grafana.com
+ALLOY_APT_GPG_KEY_URL=https://apt.grafana.com/gpg-full.key
+ALLOY_RPM_REPO_URL=https://mirrors.tuna.tsinghua.edu.cn/grafana/yum/rpm
+ALLOY_RPM_GPG_KEY_URL=https://rpm.grafana.com/gpg.key
+
+# 可选：仅本次安装 Alloy 软件包使用的 HTTP(S) 代理；留空表示直连，不会写入系统全局代理配置。
+# 若代理地址含账号密码，deploy.conf 和生成的安装包都应按敏感文件保管。
+ALLOY_PACKAGE_PROXY_URL=
+
 # 首次安装留空：先安装 discovery 和 Alloy 基础组件，服务注册后由 AI 自动生成并审批应用。
 # 管理员已有审核过的映射时，也可以填写相对路径或绝对路径直接部署。
 ALLOY_SERVICE_MAP=

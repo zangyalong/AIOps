@@ -1,6 +1,7 @@
 # AIOMS 目标服务器配置指南
 
-推荐在 AIOMS 本地生成单服务器安装包，目标服务器解压后只执行一次 `sudo ./install.sh`。
+推荐在 AIOMS 前端的服务器编辑页填写“环境部署”并下载单服务器安装包，目标服务器解压后只
+执行一次 `sudo ./install.sh`。命令行 `make-bundle.sh` 仍保留，适合离线或排错。
 也可以把整个 `scripts/target-server/` 目录复制到目标 Linux 服务器，按底层步骤分别执行。
 首次安装可以完成：
 
@@ -22,7 +23,31 @@
 Alloy 和全部 exporter 都是可选组件。只做服务发现时关闭所有采集开关；需要日志时启用
 Alloy，需要哪类指标就单独启用对应 exporter。
 
-## 推荐：一个安装包、服务器一条命令
+## 推荐：前端生成一个安装包、服务器执行一条命令
+
+已有数据库先增加保存非敏感部署参数的 JSONB 列：
+
+```bash
+psql -d aioms -v ON_ERROR_STOP=1 \
+  -f scripts/database/20260803_add_server_deployment_config.sql
+```
+
+在 AIOMS 前端打开“服务器 → 编辑”，依次填写：
+
+1. 日常只读 SSH：端口和用户名（例如 `22`、`aioms`）。
+2. 审批后部署 SSH：独立用户名（例如 `aioms-deploy`）。
+3. 环境部署：环境名、Loki 地址，以及 Alloy、node_exporter、cAdvisor 和数据库 exporter 开关。
+4. 启用数据库 exporter 时，填写连接参数和本次打包密码。
+
+点击“保存并下载一键安装包”。后端会生成或复用两组 Ed25519 密钥，私钥只保留在后端的
+`SSH_KEY_DIR`，浏览器下载 `aioms-<server>.tar.gz`。非敏感环境配置会随服务器记录保存；
+数据库密码不会写入数据库或返回服务器详情，只会进入当次压缩包的独立凭据文件，响应完成后
+服务端临时目录会被删除。
+
+首次部署仍不填写服务器上的服务清单。安装完成后由 AI 对话运行发现 Tool，注册服务，再生成
+并审批应用 Alloy 服务映射，所以服务发现能力不会被前置手工配置替代。
+
+如果不使用前端，也可以在 AIOMS 后端机器命令行生成：
 
 首次只填写服务器级配置，不填写服务列表：
 
@@ -165,6 +190,11 @@ AIOMS_DEPLOY_USER=aioms-deploy
 ENABLE_ALLOY=true
 SERVER_NAME=web01
 LOKI_PUSH_URL=http://监控服务器:3100/loki/api/v1/push
+ALLOY_APT_REPO_URL=https://apt.grafana.com
+ALLOY_APT_GPG_KEY_URL=https://apt.grafana.com/gpg-full.key
+ALLOY_RPM_REPO_URL=https://mirrors.tuna.tsinghua.edu.cn/grafana/yum/rpm
+ALLOY_RPM_GPG_KEY_URL=https://rpm.grafana.com/gpg.key
+ALLOY_PACKAGE_PROXY_URL=
 ALLOY_SERVICE_MAP=
 ALLOW_DOCKER_SOCKET=false
 START_ALLOY=false
@@ -185,6 +215,9 @@ START_EXPORTERS=true
 | `ENABLE_ALLOY`                   | 始终必填                | `true` 安装 Alloy 基础组件，`false` 只安装发现和指标组件     |
 | `SERVER_NAME`                    | 启用 Alloy              | 稳定服务器标签，如`web01`                                      |
 | `LOKI_PUSH_URL`                  | 启用 Alloy              | 从目标服务器可访问的中央 Loki 地址                               |
+| `ALLOY_APT_REPO_URL` / `ALLOY_APT_GPG_KEY_URL` | 可选（Debian/Ubuntu） | APT 仓库和签名公钥；默认 Grafana 官方地址，内网镜像须成对替换 |
+| `ALLOY_RPM_REPO_URL` / `ALLOY_RPM_GPG_KEY_URL` | 可选（RHEL/Fedora） | 默认临时使用清华 TUNA 仓库，RPM 包仍用 Grafana 官方公钥校验 |
+| `ALLOY_PACKAGE_PROXY_URL`        | 可选                    | 仅本次 Alloy 下载使用的 HTTP(S) 代理，不写入系统全局代理        |
 | `ALLOY_SERVICE_MAP`              | 可选                    | 首次留空；管理员已有审核映射时可填写相对或绝对路径               |
 | `ALLOW_DOCKER_SOCKET`            | 需要 Docker 日志时      | root 侧权限策略；AI 不能自行从 `false` 改为 `true`            |
 | `START_ALLOY`                    | 有手工映射时            | 首次无映射必须为 `false`；AI 审批应用后会启动或重载            |
@@ -202,6 +235,33 @@ START_EXPORTERS=true
 镜像、连接 URI、Docker 数据目录等详细字段已经写在 `deploy.conf.example` 的相应组件旁边。
 配置文件只允许模板中的白名单字段，布尔值只允许 `true` 或 `false`，值两侧不要加引号。
 部署脚本不会通过 `source` 把配置当成 root Shell 命令执行。
+
+### Alloy 内网源和下载代理
+
+APT 默认使用 Grafana 官方仓库；DNF 默认只在 Alloy 安装期间使用清华 TUNA 镜像，完成或失败后
+都会恢复服务器原有的 `/etc/yum.repos.d/grafana.repo`。TUNA 不提供仓库元数据签名，因此安装器
+对该临时镜像使用 `repo_gpgcheck=0`，但始终保留 `gpgcheck=1`，继续通过 Grafana 官方 GPG key
+校验实际下载的 RPM 包。
+
+网络出口较慢时，也可以在 `deploy.conf` 填入公司内部、已经审核过的镜像地址；仓库和它对应的
+GPG 公钥地址必须一起替换。例如 Debian/Ubuntu：
+
+```ini
+ALLOY_APT_REPO_URL=https://packages.example.internal/grafana/apt
+ALLOY_APT_GPG_KEY_URL=https://packages.example.internal/grafana/gpg-full.key
+```
+
+RHEL/Fedora 使用对应的 `ALLOY_RPM_REPO_URL` 和 `ALLOY_RPM_GPG_KEY_URL`。镜像若使用内部 CA，
+先把该 CA 安装到目标服务器信任库；部署脚本不会为了下载软件而关闭 TLS 校验。
+
+如果仅需经代理访问官方源，填写：
+
+```ini
+ALLOY_PACKAGE_PROXY_URL=http://proxy.example.internal:7890
+```
+
+代理只传给本次 `wget`、`apt-get` 或 `dnf` 下载命令，脚本不会修改 `/etc/apt/apt.conf.d`、DNF 配置
+或系统环境变量。代理 URL 包含账号密码时，`deploy.conf` 和安装包包含敏感信息，务必限制权限和传输范围。
 
 首次不要编辑 `alloy/services.map`。基础部署完成后，直接在 AIOMS 对话中说：
 

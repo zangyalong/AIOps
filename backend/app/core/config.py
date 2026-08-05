@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     # SSH 私钥统一放仓库根目录的 ssh/ 下（.gitignore 忽略，不提交仓库），
     # servers 表里只存只读/部署私钥文件名，实际路径都是 ssh_key_dir / 文件名拼出来的。
     ssh_key_dir: Path = REPO_ROOT / "ssh"
+    # 前端“生成环境部署包”调用这里的固定脚本；可在测试环境覆盖为临时目录。
+    target_server_scripts_dir: Path = REPO_ROOT / "scripts" / "target-server"
     # 有副作用的服务重启写工具使用独立白名单；默认空字符串=禁止重启任何服务。
     ssh_restart_service_allowlist: str = ""
 

@@ -24,6 +24,11 @@ log_source
 ENABLE_ALLOY=true
 SERVER_NAME=web01
 LOKI_PUSH_URL=http://监控服务器:3100/loki/api/v1/push
+ALLOY_APT_REPO_URL=https://apt.grafana.com
+ALLOY_APT_GPG_KEY_URL=https://apt.grafana.com/gpg-full.key
+ALLOY_RPM_REPO_URL=https://mirrors.tuna.tsinghua.edu.cn/grafana/yum/rpm
+ALLOY_RPM_GPG_KEY_URL=https://rpm.grafana.com/gpg.key
+ALLOY_PACKAGE_PROXY_URL=
 ALLOY_SERVICE_MAP=
 ALLOW_DOCKER_SOCKET=false
 START_ALLOY=false
@@ -35,6 +40,13 @@ START_ALLOY=false
 `LOKI_PUSH_URL` 必须是目标服务器能访问的中央 Loki 地址，不能误写目标机自己的
 `localhost:3100`。如果明确需要 Docker stdout/stderr，应由管理员理解权限风险后把
 `ALLOW_DOCKER_SOCKET=true`；AI Tool 不能自行改变这项 root 策略。
+
+APT 软件包默认从 Grafana 官方源下载，RPM 软件包默认临时使用清华 TUNA 镜像，并继续通过
+Grafana 官方 GPG key 校验 RPM 包。DNF 安装结束或失败后都会恢复服务器原有的 `grafana.repo`。
+若服务器只能访问经审核的内网镜像，请在顶层 `deploy.conf` 同时填写对应平台的仓库地址和
+GPG 公钥地址（APT 使用 `ALLOY_APT_*`，DNF 使用 `ALLOY_RPM_*`）。
+如果只是出口受限，填写 `ALLOY_PACKAGE_PROXY_URL=http://proxy.example.internal:7890` 即可；代理仅用于
+这次软件包下载，不会持久化为目标服务器的系统代理。不要把来源不明的公开镜像或 GPG key 写入配置。
 
 ## 2. 通过对话发现和注册服务
 
