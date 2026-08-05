@@ -79,6 +79,31 @@ class ServiceMetricDefinitionTests(unittest.TestCase):
         redis_up = next(item for item in definitions if item.key == "redis_up")
         self.assertIn('runtime_name="aioms-redis-exporter"', redis_up.promql)
 
+    def test_systemd_service_uses_its_cgroup_metrics(self) -> None:
+        service = SimpleNamespace(name="pixel-forge-frontend")
+        instance = SimpleNamespace(
+            runtime_name="pixel-forge-frontend.service",
+            runtime_type="systemd",
+            metric_instance=None,
+        )
+        server = SimpleNamespace(name="web-01")
+
+        definitions = service_observability_service._metric_definitions(
+            service, instance, server
+        )
+
+        self.assertEqual(
+            [definition.key for definition in definitions],
+            ["service_cpu", "service_memory"],
+        )
+        for definition in definitions:
+            self.assertIn('server="web-01"', definition.promql)
+            self.assertIn(
+                'id="/system.slice/pixel-forge-frontend.service"',
+                definition.promql,
+            )
+            self.assertNotIn('instance="web-01:9100"', definition.promql)
+
 
 if __name__ == "__main__":
     unittest.main()

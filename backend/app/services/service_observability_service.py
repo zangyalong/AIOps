@@ -146,6 +146,29 @@ def _metric_definitions(
             ),
         ]
 
+    if instance.runtime_type == "systemd" and server and instance.runtime_name:
+        systemd_selector = _selector(
+            {
+                "server": server.name,
+                "id": f"/system.slice/{instance.runtime_name}",
+            }
+        )
+        return [
+            _MetricDefinition(
+                "service_cpu",
+                "服务 CPU",
+                "percent",
+                "sum(rate(container_cpu_usage_seconds_total"
+                f"{systemd_selector}[5m])) * 100",
+            ),
+            _MetricDefinition(
+                "service_memory",
+                "服务内存",
+                "bytes",
+                f"sum(container_memory_working_set_bytes{systemd_selector})",
+            ),
+        ]
+
     if instance.runtime_type == "docker" and server and instance.runtime_name:
         container_selector = runtime_selector
         return [
