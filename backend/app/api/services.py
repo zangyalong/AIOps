@@ -7,17 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import DBSession
 from app.models.server import Server
-from app.models.service_catalog import Service, ServiceDependency, ServiceInstance
+from app.models.service_catalog import Service, ServiceInstance
 from app.schemas.service_catalog import (
     ServiceCreate,
-    ServiceDependencyCreate,
-    ServiceDependencyRead,
-    ServiceDependencyUpdate,
     ServiceInstanceCreate,
     ServiceInstanceRead,
     ServiceInstanceUpdate,
     ServiceRead,
-    ServiceTopologyRead,
     ServiceUpdate,
 )
 from app.schemas.service_observability import (
@@ -56,15 +52,6 @@ async def _instance_or_404(db: AsyncSession, instance_id: uuid.UUID) -> ServiceI
     return instance
 
 
-async def _dependency_or_404(
-    db: AsyncSession, dependency_id: uuid.UUID
-) -> ServiceDependency:
-    dependency = await service_catalog_service.get_dependency(db, dependency_id)
-    if dependency is None:
-        raise HTTPException(status_code=404, detail="service dependency not found")
-    return dependency
-
-
 @router.get("/services", response_model=list[ServiceRead])
 async def list_services(db: DBSession, environment: str | None = None) -> list[Service]:
     return await service_catalog_service.list_services(db, environment)
@@ -99,20 +86,6 @@ async def delete_service(service_id: uuid.UUID, db: DBSession) -> None:
     await service_catalog_service.delete_service(
         db, await _service_or_404(db, service_id)
     )
-
-
-@router.get("/services/{service_id}/topology", response_model=ServiceTopologyRead)
-async def get_service_topology(
-    service_id: uuid.UUID,
-    db: DBSession,
-    max_depth: int = Query(default=3, ge=1, le=8),
-) -> service_catalog_service.ServiceTopology:
-    try:
-        return await service_catalog_service.get_topology(
-            db, service_id, max_depth=max_depth
-        )
-    except ValueError as exc:
-        _raise_service_error(exc)
 
 
 @router.get("/service-instances", response_model=list[ServiceInstanceRead])
@@ -195,43 +168,4 @@ async def update_service_instance(
 async def delete_service_instance(instance_id: uuid.UUID, db: DBSession) -> None:
     await service_catalog_service.delete_instance(
         db, await _instance_or_404(db, instance_id)
-    )
-
-
-@router.get("/service-dependencies", response_model=list[ServiceDependencyRead])
-async def list_service_dependencies(
-    db: DBSession, service_id: uuid.UUID | None = None
-) -> list[ServiceDependency]:
-    return await service_catalog_service.list_dependencies(db, service_id)
-
-
-@router.post(
-    "/service-dependencies", response_model=ServiceDependencyRead, status_code=201
-)
-async def create_service_dependency(
-    data: ServiceDependencyCreate, db: DBSession
-) -> ServiceDependency:
-    try:
-        return await service_catalog_service.create_dependency(db, data)
-    except ValueError as exc:
-        _raise_service_error(exc)
-
-
-@router.patch(
-    "/service-dependencies/{dependency_id}", response_model=ServiceDependencyRead
-)
-async def update_service_dependency(
-    dependency_id: uuid.UUID, data: ServiceDependencyUpdate, db: DBSession
-) -> ServiceDependency:
-    dependency = await _dependency_or_404(db, dependency_id)
-    try:
-        return await service_catalog_service.update_dependency(db, dependency, data)
-    except ValueError as exc:
-        _raise_service_error(exc)
-
-
-@router.delete("/service-dependencies/{dependency_id}", status_code=204)
-async def delete_service_dependency(dependency_id: uuid.UUID, db: DBSession) -> None:
-    await service_catalog_service.delete_dependency(
-        db, await _dependency_or_404(db, dependency_id)
     )

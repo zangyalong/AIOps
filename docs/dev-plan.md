@@ -22,10 +22,9 @@
   - 新增只读工具 `query_recent_changes`；`correlate_incident` 自动带上同一服务、同一时间窗的变更
   - 事件详情展示告警发生前后的变更时间线；事实关联只按实体和时间窗完成，不把时间重合直接断言为根因
   - 代码、后端测试和前端构建完成后仍保持未勾选，等用户用真实记录完成运行时验收
-- [ ] **服务目录与依赖拓扑**：建立服务、负责人、环境、监控标签、仓库 / 仪表盘链接，以及服务依赖和服务器归属关系
-  - 提供服务管理与依赖图页面，以及 `query_service_dependencies`、`query_impacted_services`、`query_upstream_candidates` 只读工具
-  - 已实现 `services`、`service_instances`、`service_dependencies` 三张规范化表与完整 CRUD；事件和自动 triage 优先按实例解析服务，旧 `monitor_labels` 兼容回退
-  - 已实现可点击 SVG 拓扑和服务详情 URL；代码、后端测试和前端构建完成后仍保持未勾选，等用户运行时验收
+- [ ] **服务目录与部署实例**：建立服务、环境、监控标签和服务器归属关系
+  - 使用 `services`、`service_instances` 两张规范化表维护逻辑服务和部署实例；事件和自动 triage 优先按实例解析服务，旧 `monitor_labels` 兼容回退
+  - 已按实际使用反馈移除负责人、仓库、仪表盘和服务依赖关系，目录聚焦运行状态、指标、日志和实例管理
   - 服务目录左侧改为树形菜单：服务器是一级菜单，展开后显示该服务器的服务二级菜单，右侧保留服务详情；代码与前端构建完成后保持未勾选，等用户运行时验收
 - [ ] **服务运行状态与可观测性工作台**：服务目录直接展示实时运行状态、近期日志和关键指标，不再要求用户先去 Prometheus / Loki 手工拼查询
   - 服务器展开后的服务列表用绿 / 灰 / 红状态灯分别表示运行、停止和异常；展开服务器或点击“检测状态”时，通过只读 SSH 对 systemd / Docker 运行时做实时检测
@@ -92,7 +91,7 @@
   - 数据源用 docker-compose 起的 Alertmanager + Prometheus 告警规则（`docker/alert_rules.yml`，3 条 demo）；`query_alerts` 查 `/api/v2/alerts`，可按 severity/instance 过滤。`alert_events` 表 + 种子脚本按选型 C.4 保留不动，留给方向二告警生命周期状态机
 - [x] **Grafana 联动**（可选）：agent 能引用/生成 Grafana 面板链接，把结论落到统一仪表盘
   - `grafana_explore_link` 工具：按查询 + 时间窗拼 Grafana Explore 链接（纯字符串，不访问网络），支持 metrics（PromQL）/ logs（LogQL）/ alerts（Prometheus 的 ALERTS 指标）三种。docker-compose 加 grafana + 数据源 provisioning（固定 uid）。后续引入前端 md 渲染即可让链接可点击
-- [x] **关联原语**：实体模型（服务→实例→依赖拓扑）+ 时间窗对齐——给定告警/时间点，自动拉同一服务、同一窗口的 metrics + logs（+ traces）一起看
+- [x] **关联原语**：实体模型（服务→实例）+ 时间窗对齐——给定告警/时间点，自动拉同一服务、同一窗口的 metrics + logs（+ traces）一起看
   - `correlate_incident` 工具：给定业务服务器名 + 时刻，`asyncio.gather` 并发拉齐指标(range)+日志+告警+变更，同一时间窗对齐成横切面报告。实体映射优先使用规范化服务实例，旧 `servers.monitor_labels` 作为兼容回退。经对抗式审查加固（异常兜底、window 校验、自适应 step）。traces 暂缺（单机 PLG 无 Tempo）
 - [ ] **读工具 / 写工具边界划分**（survey 启发 #2）：把纯读诊断工具和有破坏力的写工具分成两类抽象，别混在一起
   - 已新增集中式 `catalog.py`，读工具与写工具分开注册且禁止重叠；原 SSH 白名单命令明确改为只读诊断工具，不再触发审批
@@ -108,7 +107,7 @@ CLAUDE.md 项目定位里"值班/告警诊断"的核心闭环。
 - [x] **后台任务 runner**：当前是纯请求-响应，需要 background/scheduled 能力（告警触发的诊断、定时值班报告都要它）
   - 用 arq + Redis 搭任务队列：webhook 落库时把「新触发」的告警入队，独立的 arq worker 进程（`app.worker.WorkerSettings`）消费。以后定时值班报告也挂这个 runner
 - [x] **告警自动 triage**：告警落库后自动触发 agent 调查（拉 metrics/logs）→ 诊断结果推 Slack/IM
-  - worker 的 `triage_incident` 复用 Supervisor 专家图：载入事件 → 按 `service_instances.metric_instance` 解析服务与服务器（旧 monitor_labels 回退）→ agent 调拓扑和 correlate 工具调查 → 诊断回填到事件。**推 Slack/IM 这步先缓**（诊断已落库、`GET /incidents` 可查，通知渠道以后单接）
+  - worker 的 `triage_incident` 复用 Supervisor 专家图：载入事件 → 按 `service_instances.metric_instance` 解析服务与服务器（旧 monitor_labels 回退）→ agent 调 correlate 工具调查 → 诊断回填到事件。**推 Slack/IM 这步先缓**（诊断已落库、`GET /incidents` 可查，通知渠道以后单接）
 - [x] **去重/关联层用规则引擎**（CEL 或等价），不用 LLM——survey 启发 #1，Keep 最成熟的实现就是纯规则，快/可解释/好测；这是 agent 之前的确定性预处理
   - `app/services/correlation.py`：用 CEL（celpy）写匹配条件 + group_by 归组，算出 `group_key`（同 key = 同一事件）。当前规则 by-instance：带 instance 的 critical/warning 告警按 `[instance, alertname]` 归组（同机同种告警去重、不同种各成事件）。ingest 时算 group_key 落库，**只有事件的第一条 firing 才入队诊断**，同事件其余静默归入——治好「同台机多条告警重复诊断」。dedup（按 fingerprint）本就有
 - [x] **事件生命周期状态机**：`alert_events` 从平铺一条记录升级成 `FIRING/ACK/RESOLVED` 状态机（谁认领、后续如何）——survey 模块 6 / 启发 #6

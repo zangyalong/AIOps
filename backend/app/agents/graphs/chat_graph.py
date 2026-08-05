@@ -40,21 +40,16 @@ from app.agents.tools.metrics import (
     query_metrics,
     query_server_metrics,
 )
-from app.agents.tools.servers import query_servers
 from app.agents.tools.server_log_config import (
     apply_server_log_config,
     preview_server_log_config,
 )
+from app.agents.tools.servers import query_servers
 from app.agents.tools.service_discovery import (
     discover_server_services,
     register_server_services,
 )
-from app.agents.tools.service_topology import (
-    query_impacted_services,
-    query_server_services,
-    query_service_dependencies,
-    query_upstream_candidates,
-)
+from app.agents.tools.service_topology import query_server_services
 from app.core.config import settings
 
 AgentName = Literal[
@@ -84,9 +79,6 @@ SPECIALIST_READ_TOOLS: dict[AgentName, list[BaseTool]] = {
         correlate_incident,
         query_recent_changes,
         query_server_services,
-        query_service_dependencies,
-        query_impacted_services,
-        query_upstream_candidates,
         query_servers,
     ],
     "infrastructure_agent": [
@@ -138,8 +130,7 @@ SPECIALIST_PROMPTS: dict[AgentName, str] = {
         "只需要单独核对发布、回滚、扩缩容或配置变更时调用 query_recent_changes。"
         "用户询问某台服务器在服务目录中登记或部署了哪些服务时，调用 query_server_services；"
         "它查询的是 AIOMS 登记关系，不能用来回答实时进程或容器运行状态。"
-        "需要理解服务直接依赖时调用 query_service_dependencies；分析故障影响范围时调用 "
-        "query_impacted_services；寻找依赖传播的根因候选时调用 query_upstream_candidates。"
+        "服务目录只维护服务与部署实例，不包含服务依赖关系。"
         "变更与故障时间重合只是相关性证据，不能在没有其他证据时直接断言为根因。"
         "完成调查后输出一份给 Supervisor 的简短证据报告，不要假装直接回复最终用户。"
     ),
@@ -181,7 +172,7 @@ SUPERVISOR_PROMPT = """你是 AIOMS 的 Supervisor，只负责拆解问题和把
 可委派的专家：
 - metrics_agent：Prometheus 指标、实例发现、指标图表链接
 - logs_agent：Loki 日志、服务发现、日志图表链接
-- incident_agent：当前告警、变更记录、服务目录、按服务器查询已登记服务、拓扑、影响范围和事件关联
+- incident_agent：当前告警、变更记录、服务目录、按服务器查询已登记服务和事件关联
 - infrastructure_agent：服务器清单、实时服务发现、服务目录注册、Alloy 配置预览/审批应用、SSH 只读诊断和受控服务重启
 
 每次只选择一个专家。专家完成后你会再次拿到控制权，可以继续委派另一个专家；证据已经足够，或用户只是闲聊、解释概念时选择 finish。

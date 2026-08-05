@@ -6,7 +6,6 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-DependencyType = Literal["service", "database", "cache", "queue", "external"]
 RuntimeType = Literal["systemd", "docker", "process"]
 
 
@@ -27,10 +26,7 @@ def _optional_text(value: str | None) -> str | None:
 class ServiceBase(BaseModel):
     name: str = Field(max_length=200)
     environment: str = Field(max_length=50)
-    owner: str | None = Field(default=None, max_length=100)
     description: str | None = None
-    repository_url: str | None = None
-    dashboard_url: str | None = None
 
     _clean_required = field_validator("name", "environment")(_required_text)
 
@@ -42,10 +38,7 @@ class ServiceCreate(ServiceBase):
 class ServiceUpdate(BaseModel):
     name: str | None = Field(default=None, max_length=200)
     environment: str | None = Field(default=None, max_length=50)
-    owner: str | None = Field(default=None, max_length=100)
     description: str | None = None
-    repository_url: str | None = None
-    dashboard_url: str | None = None
 
     @field_validator("name", "environment")
     @classmethod
@@ -123,47 +116,3 @@ class ServiceInstanceRead(ServiceInstanceBase):
     id: uuid.UUID
     created_at: datetime
     updated_at: datetime
-
-
-class ServiceDependencyBase(BaseModel):
-    upstream_service_id: uuid.UUID
-    downstream_service_id: uuid.UUID
-    dependency_type: DependencyType = "service"
-    description: str | None = None
-
-
-class ServiceDependencyCreate(ServiceDependencyBase):
-    pass
-
-
-class ServiceDependencyUpdate(BaseModel):
-    upstream_service_id: uuid.UUID | None = None
-    downstream_service_id: uuid.UUID | None = None
-    dependency_type: DependencyType | None = None
-    description: str | None = None
-
-    @model_validator(mode="after")
-    def reject_null_required_fields(self) -> Self:
-        required = (
-            "upstream_service_id",
-            "downstream_service_id",
-            "dependency_type",
-        )
-        for field in required:
-            if field in self.model_fields_set and getattr(self, field) is None:
-                raise ValueError(f"{field} 不能为 null")
-        return self
-
-
-class ServiceDependencyRead(ServiceDependencyBase):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: uuid.UUID
-    created_at: datetime
-    updated_at: datetime
-
-
-class ServiceTopologyRead(BaseModel):
-    focus_service_id: uuid.UUID
-    nodes: list[ServiceRead]
-    edges: list[ServiceDependencyRead]

@@ -111,14 +111,7 @@ def _build_prompt(
         f"- 摘要：{incident.summary or '（无）'}",
     ]
     if service:
-        lines.append(
-            f"- 关联服务：{service.name}/{service.environment}"
-            + (f"（负责人 {service.owner}）" if service.owner else "")
-        )
-        lines.append(
-            "提示：需要判断依赖传播或影响范围时，先调用服务拓扑工具获取结构性候选，"
-            "再用同一时间窗的真实指标、日志和告警验证，不能只靠拓扑断言根因。"
-        )
+        lines.append(f"- 关联服务：{service.name}/{service.environment}")
     if srv:
         service_args = (
             f"，service={service.name}，environment={service.environment}"

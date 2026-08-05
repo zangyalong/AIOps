@@ -26,21 +26,16 @@ from app.agents.tools.metrics import (
     query_metrics,
     query_server_metrics,
 )
-from app.agents.tools.servers import query_servers
 from app.agents.tools.server_log_config import (
     apply_server_log_config,
     preview_server_log_config,
 )
+from app.agents.tools.servers import query_servers
 from app.agents.tools.service_discovery import (
     discover_server_services,
     register_server_services,
 )
-from app.agents.tools.service_topology import (
-    query_impacted_services,
-    query_server_services,
-    query_service_dependencies,
-    query_upstream_candidates,
-)
+from app.agents.tools.service_topology import query_server_services
 
 RiskLevel = Literal["medium", "high", "critical"]
 ActionDetailsBuilder = Callable[[dict[str, Any]], dict[str, Any]]
@@ -137,9 +132,6 @@ READ_TOOLS: tuple[BaseTool, ...] = (
     correlate_incident,
     query_recent_changes,
     query_server_services,
-    query_service_dependencies,
-    query_impacted_services,
-    query_upstream_candidates,
     discover_server_services,
     preview_server_log_config,
 )

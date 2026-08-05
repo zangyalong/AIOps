@@ -18,10 +18,7 @@ class Service(Base, UUIDMixin, TimestampMixin):
 
     name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
     environment: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
-    owner: Mapped[str | None] = mapped_column(String(100), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    repository_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    dashboard_url: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class ServiceInstance(Base, UUIDMixin, TimestampMixin):
@@ -61,32 +58,4 @@ class ServiceInstance(Base, UUIDMixin, TimestampMixin):
         String(255), nullable=True, index=True
     )
     log_service: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-
-class ServiceDependency(Base, UUIDMixin, TimestampMixin):
-    """依赖边：upstream（调用方）依赖 downstream（被调用方）。"""
-
-    __tablename__ = "service_dependencies"
-    __table_args__ = (
-        UniqueConstraint(
-            "upstream_service_id",
-            "downstream_service_id",
-            name="uq_service_dependencies_edge",
-        ),
-        CheckConstraint(
-            "upstream_service_id <> downstream_service_id",
-            name="ck_service_dependencies_no_self_loop",
-        ),
-    )
-
-    upstream_service_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("services.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    downstream_service_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("services.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    dependency_type: Mapped[str] = mapped_column(
-        String(30), nullable=False, default="service", server_default="service"
-    )
     description: Mapped[str | None] = mapped_column(Text, nullable=True)

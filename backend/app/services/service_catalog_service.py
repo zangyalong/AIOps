@@ -6,12 +6,10 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.server import Server
-from app.models.service_catalog import Service, ServiceDependency, ServiceInstance
+from app.models.service_catalog import Service, ServiceInstance
 from app.repositories import service_catalog_repository
 from app.schemas.service_catalog import (
     ServiceCreate,
-    ServiceDependencyCreate,
-    ServiceDependencyUpdate,
     ServiceInstanceCreate,
     ServiceInstanceUpdate,
     ServiceUpdate,
@@ -27,19 +25,8 @@ class DirectoryConflict(ValueError):
     pass
 
 
-class InvalidDependency(ValueError):
-    pass
-
-
 class AmbiguousService(ValueError):
     pass
-
-
-@dataclass(frozen=True)
-class ServiceTopology:
-    focus_service_id: uuid.UUID
-    nodes: list[Service]
-    edges: list[ServiceDependency]
 
 
 @dataclass(frozen=True)
@@ -304,98 +291,6 @@ async def update_instance(
 
 async def delete_instance(db: AsyncSession, instance: ServiceInstance) -> None:
     await service_catalog_repository.delete_instance(db, instance)
-
-
-async def list_dependencies(
-    db: AsyncSession, service_id: uuid.UUID | None = None
-) -> list[ServiceDependency]:
-    return await service_catalog_repository.list_dependencies(db, service_id)
-
-
-async def get_dependency(
-    db: AsyncSession, dependency_id: uuid.UUID
-) -> ServiceDependency | None:
-    return await service_catalog_repository.get_dependency(db, dependency_id)
-
-
-async def _validate_dependency(
-    db: AsyncSession, upstream_id: uuid.UUID, downstream_id: uuid.UUID
-) -> None:
-    if upstream_id == downstream_id:
-        raise InvalidDependency("服务不能依赖自身")
-    if await get_service(db, upstream_id) is None:
-        raise DirectoryNotFound("upstream service not found")
-    if await get_service(db, downstream_id) is None:
-        raise DirectoryNotFound("downstream service not found")
-
-
-async def create_dependency(
-    db: AsyncSession, data: ServiceDependencyCreate
-) -> ServiceDependency:
-    await _validate_dependency(db, data.upstream_service_id, data.downstream_service_id)
-    existing = await service_catalog_repository.get_dependency_by_edge(
-        db, data.upstream_service_id, data.downstream_service_id
-    )
-    if existing is not None:
-        raise DirectoryConflict("该依赖关系已经存在")
-    return await service_catalog_repository.create_dependency(
-        db, ServiceDependency(**data.model_dump())
-    )
-
-
-async def update_dependency(
-    db: AsyncSession,
-    dependency: ServiceDependency,
-    data: ServiceDependencyUpdate,
-) -> ServiceDependency:
-    values = data.model_dump(exclude_unset=True)
-    upstream_id = values.get("upstream_service_id", dependency.upstream_service_id)
-    downstream_id = values.get(
-        "downstream_service_id", dependency.downstream_service_id
-    )
-    await _validate_dependency(db, upstream_id, downstream_id)
-    existing = await service_catalog_repository.get_dependency_by_edge(
-        db, upstream_id, downstream_id
-    )
-    if existing is not None and existing.id != dependency.id:
-        raise DirectoryConflict("该依赖关系已经存在")
-    for field, value in values.items():
-        setattr(dependency, field, value)
-    return await service_catalog_repository.save_dependency(db, dependency)
-
-
-async def delete_dependency(db: AsyncSession, dependency: ServiceDependency) -> None:
-    await service_catalog_repository.delete_dependency(db, dependency)
-
-
-async def get_topology(
-    db: AsyncSession, focus_service_id: uuid.UUID, *, max_depth: int = 3
-) -> ServiceTopology:
-    if await get_service(db, focus_service_id) is None:
-        raise DirectoryNotFound("service not found")
-    services = await list_services(db)
-    dependencies = await list_dependencies(db)
-    visited = {focus_service_id}
-    frontier = {focus_service_id}
-    for _ in range(max_depth):
-        next_frontier: set[uuid.UUID] = set()
-        for edge in dependencies:
-            if edge.upstream_service_id in frontier:
-                next_frontier.add(edge.downstream_service_id)
-            if edge.downstream_service_id in frontier:
-                next_frontier.add(edge.upstream_service_id)
-        next_frontier -= visited
-        if not next_frontier:
-            break
-        visited.update(next_frontier)
-        frontier = next_frontier
-    nodes = [service for service in services if service.id in visited]
-    edges = [
-        edge
-        for edge in dependencies
-        if edge.upstream_service_id in visited and edge.downstream_service_id in visited
-    ]
-    return ServiceTopology(focus_service_id, nodes, edges)
 
 
 async def resolve_by_metric_instance(

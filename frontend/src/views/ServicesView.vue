@@ -3,33 +3,23 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   createService,
-  createServiceDependency,
   createServiceInstance,
   deleteService,
-  deleteServiceDependency,
   deleteServiceInstance,
-  fetchServiceDependencies,
   fetchServiceInstanceStatuses,
   fetchServiceInstances,
   fetchServiceObservability,
   fetchServices,
-  fetchServiceTopology,
   updateService,
-  updateServiceDependency,
   updateServiceInstance,
 } from '../api/services'
 import { fetchServers } from '../api/servers'
-import ServiceTopology from '../components/ServiceTopology.vue'
 import type { Server } from '../types/server'
 import type {
-  DependencyType,
-  ServiceDependency,
-  ServiceDependencyInput,
   ServiceInput,
   ServiceInstance,
   ServiceInstanceInput,
   ServiceRecord,
-  ServiceTopology as ServiceTopologyData,
   RuntimeType,
   RuntimeStatus,
   ServiceInstanceStatus,
@@ -41,11 +31,8 @@ const route = useRoute()
 const router = useRouter()
 const services = ref<ServiceRecord[]>([])
 const instances = ref<ServiceInstance[]>([])
-const dependencies = ref<ServiceDependency[]>([])
 const servers = ref<Server[]>([])
-const topology = ref<ServiceTopologyData | null>(null)
 const loading = ref(true)
-const topologyLoading = ref(false)
 const error = ref<string | null>(null)
 const formError = ref<string | null>(null)
 const saving = ref(false)
@@ -64,10 +51,7 @@ const editingService = ref<ServiceRecord | null>(null)
 const serviceForm = reactive({
   name: '',
   environment: 'prod',
-  owner: '',
   description: '',
-  repository_url: '',
-  dashboard_url: '',
 })
 
 const instanceModal = ref(false)
@@ -82,40 +66,12 @@ const instanceForm = reactive({
   description: '',
 })
 
-const dependencyModal = ref(false)
-const editingDependency = ref<ServiceDependency | null>(null)
-const dependencyForm = reactive<{
-  direction: 'depends_on' | 'depended_by'
-  target_service_id: string
-  dependency_type: DependencyType
-  description: string
-}>({
-  direction: 'depends_on',
-  target_service_id: '',
-  dependency_type: 'service',
-  description: '',
-})
-
-const dependencyTypes: { value: DependencyType; label: string }[] = [
-  { value: 'service', label: '内部服务' },
-  { value: 'database', label: '数据库' },
-  { value: 'cache', label: '缓存' },
-  { value: 'queue', label: '消息队列' },
-  { value: 'external', label: '外部服务' },
-]
-const dependencyTypeLabel = Object.fromEntries(
-  dependencyTypes.map((item) => [item.value, item.label]),
-) as Record<DependencyType, string>
-
 const selectedId = computed(() => {
   const value = route.params.serviceId
   return typeof value === 'string' ? value : null
 })
 const selectedService = computed(
   () => services.value.find((service) => service.id === selectedId.value) ?? null,
-)
-const serviceMap = computed(
-  () => new Map(services.value.map((service) => [service.id, service])),
 )
 const serverMap = computed(() => new Map(servers.value.map((server) => [server.id, server])))
 const selectedServer = computed(
@@ -132,15 +88,6 @@ const selectedInstances = computed(() => {
 })
 const selectedInstanceKey = computed(() =>
   selectedInstances.value.map((instance) => instance.id).sort().join(','),
-)
-const directDependencies = computed(() =>
-  dependencies.value.filter((edge) => edge.upstream_service_id === selectedId.value),
-)
-const directDependents = computed(() =>
-  dependencies.value.filter((edge) => edge.downstream_service_id === selectedId.value),
-)
-const targetServices = computed(() =>
-  services.value.filter((service) => service.id !== selectedId.value),
 )
 const filteredServers = computed(() => {
   const keyword = search.value.trim().toLowerCase()
@@ -164,7 +111,7 @@ function servicesForServer(serverId: string): ServiceRecord[] {
 }
 
 function serviceMatchesSearch(service: ServiceRecord, keyword: string): boolean {
-  return [service.name, service.environment, service.owner ?? ''].some((value) =>
+  return [service.name, service.environment].some((value) =>
     value.toLowerCase().includes(keyword),
   )
 }
@@ -356,26 +303,17 @@ function requestRuntimeAction(instance: ServiceInstance, action: 'start' | 'stop
   void router.push({ name: 'chat', query: { prompt } })
 }
 
-function dependencyCount(serviceId: string): number {
-  return dependencies.value.filter(
-    (edge) =>
-      edge.upstream_service_id === serviceId || edge.downstream_service_id === serviceId,
-  ).length
-}
-
 async function loadAll() {
   loading.value = true
   error.value = null
   try {
-    const [serviceRows, instanceRows, dependencyRows, serverRows] = await Promise.all([
+    const [serviceRows, instanceRows, serverRows] = await Promise.all([
       fetchServices(),
       fetchServiceInstances(),
-      fetchServiceDependencies(),
       fetchServers(),
     ])
     services.value = serviceRows
     instances.value = instanceRows
-    dependencies.value = dependencyRows
     servers.value = serverRows
     if (selectedId.value && !serviceRows.some((service) => service.id === selectedId.value)) {
       await router.replace('/services')
@@ -389,25 +327,10 @@ async function loadAll() {
   }
 }
 
-async function loadTopology() {
-  const id = selectedId.value
-  topology.value = null
-  if (!id) return
-  topologyLoading.value = true
-  try {
-    topology.value = await fetchServiceTopology(id)
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
-  } finally {
-    topologyLoading.value = false
-  }
-}
-
 onMounted(loadAll)
 watch(
   selectedId,
   (serviceId) => {
-    void loadTopology()
     if (serviceId) syncSelectedServerToService(serviceId)
   },
   { immediate: true },
@@ -489,10 +412,7 @@ function resetServiceForm() {
   editingService.value = null
   serviceForm.name = ''
   serviceForm.environment = 'prod'
-  serviceForm.owner = ''
   serviceForm.description = ''
-  serviceForm.repository_url = ''
-  serviceForm.dashboard_url = ''
   formError.value = null
 }
 
@@ -505,10 +425,7 @@ function openEditService(service: ServiceRecord) {
   editingService.value = service
   serviceForm.name = service.name
   serviceForm.environment = service.environment
-  serviceForm.owner = service.owner ?? ''
   serviceForm.description = service.description ?? ''
-  serviceForm.repository_url = service.repository_url ?? ''
-  serviceForm.dashboard_url = service.dashboard_url ?? ''
   formError.value = null
   serviceModal.value = true
 }
@@ -521,10 +438,7 @@ async function submitService() {
   const payload: ServiceInput = {
     name: serviceForm.name.trim(),
     environment: serviceForm.environment.trim(),
-    owner: serviceForm.owner.trim() || null,
     description: serviceForm.description.trim() || null,
-    repository_url: serviceForm.repository_url.trim() || null,
-    dashboard_url: serviceForm.dashboard_url.trim() || null,
   }
   saving.value = true
   formError.value = null
@@ -540,7 +454,6 @@ async function submitService() {
     )
     serviceModal.value = false
     if (!editingService.value) openService(saved.id)
-    await loadTopology()
   } catch (e) {
     formError.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -549,7 +462,7 @@ async function submitService() {
 }
 
 async function removeService(service: ServiceRecord) {
-  if (!confirm(`确定删除服务 ${service.name}/${service.environment}？它的实例和依赖边也会删除。`)) {
+  if (!confirm(`确定删除服务 ${service.name}/${service.environment}？它的实例也会删除。`)) {
     return
   }
   error.value = null
@@ -557,10 +470,6 @@ async function removeService(service: ServiceRecord) {
     await deleteService(service.id)
     services.value = services.value.filter((item) => item.id !== service.id)
     instances.value = instances.value.filter((item) => item.service_id !== service.id)
-    dependencies.value = dependencies.value.filter(
-      (edge) =>
-        edge.upstream_service_id !== service.id && edge.downstream_service_id !== service.id,
-    )
     if (selectedId.value === service.id) await router.push('/services')
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
@@ -636,7 +545,6 @@ async function submitInstance() {
       expandServer(saved.server_id)
     }
     instanceModal.value = false
-    await loadTopology()
   } catch (e) {
     formError.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -665,83 +573,6 @@ async function removeInstance(instance: ServiceInstance) {
   }
 }
 
-function resetDependencyForm() {
-  editingDependency.value = null
-  dependencyForm.direction = 'depends_on'
-  dependencyForm.target_service_id = targetServices.value[0]?.id ?? ''
-  dependencyForm.dependency_type = 'service'
-  dependencyForm.description = ''
-  formError.value = null
-}
-
-function openCreateDependency() {
-  resetDependencyForm()
-  dependencyModal.value = true
-}
-
-function openEditDependency(edge: ServiceDependency) {
-  editingDependency.value = edge
-  const isOutgoing = edge.upstream_service_id === selectedId.value
-  dependencyForm.direction = isOutgoing ? 'depends_on' : 'depended_by'
-  dependencyForm.target_service_id = isOutgoing
-    ? edge.downstream_service_id
-    : edge.upstream_service_id
-  dependencyForm.dependency_type = edge.dependency_type
-  dependencyForm.description = edge.description ?? ''
-  formError.value = null
-  dependencyModal.value = true
-}
-
-async function submitDependency() {
-  if (!selectedService.value || !dependencyForm.target_service_id) {
-    formError.value = '请选择关联服务'
-    return
-  }
-  const currentId = selectedService.value.id
-  const targetId = dependencyForm.target_service_id
-  const payload: ServiceDependencyInput = {
-    upstream_service_id:
-      dependencyForm.direction === 'depends_on' ? currentId : targetId,
-    downstream_service_id:
-      dependencyForm.direction === 'depends_on' ? targetId : currentId,
-    dependency_type: dependencyForm.dependency_type,
-    description: dependencyForm.description.trim() || null,
-  }
-  saving.value = true
-  formError.value = null
-  try {
-    const saved = editingDependency.value
-      ? await updateServiceDependency(editingDependency.value.id, payload)
-      : await createServiceDependency(payload)
-    const index = dependencies.value.findIndex((edge) => edge.id === saved.id)
-    if (index === -1) dependencies.value.push(saved)
-    else dependencies.value[index] = saved
-    dependencyModal.value = false
-    await loadTopology()
-  } catch (e) {
-    formError.value = e instanceof Error ? e.message : String(e)
-  } finally {
-    saving.value = false
-  }
-}
-
-async function removeDependency(edge: ServiceDependency) {
-  if (!confirm('确定删除这条服务依赖关系？')) return
-  error.value = null
-  try {
-    await deleteServiceDependency(edge.id)
-    dependencies.value = dependencies.value.filter((item) => item.id !== edge.id)
-    await loadTopology()
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
-  }
-}
-
-function serviceLabel(serviceId: string): string {
-  const service = serviceMap.value.get(serviceId)
-  return service ? `${service.name}/${service.environment}` : '未知服务'
-}
-
 function serverLabel(serverId: string | null): string {
   if (!serverId) return '未绑定服务器'
   const server = serverMap.value.get(serverId)
@@ -758,15 +589,6 @@ function serverStatusLabel(server: Server): string {
   return labels[server.status]
 }
 
-function safeExternalUrl(value: string | null): string | null {
-  if (!value) return null
-  try {
-    const url = new URL(value)
-    return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString() : null
-  } catch {
-    return null
-  }
-}
 </script>
 
 <template>
@@ -774,7 +596,7 @@ function safeExternalUrl(value: string | null): string | null {
     <header class="view-header">
       <div>
         <h1>服务目录</h1>
-        <p class="subtitle">按服务器查看服务状态、关键指标、近期日志和依赖关系</p>
+        <p class="subtitle">按服务器查看服务状态、关键指标和近期日志</p>
       </div>
       <button type="button" class="btn-primary" @click="openCreateService">+ 新增服务</button>
     </header>
@@ -839,10 +661,8 @@ function safeExternalUrl(value: string | null): string | null {
                     {{ serviceStatusLabel(service.id, server.id) }}
                   </span>
                 </span>
-                <span class="service-owner">{{ service.owner || '未设置负责人' }}</span>
                 <span class="service-counts">
-                  {{ serviceInstanceCountOnServer(service.id, server.id) }} 个实例 ·
-                  {{ dependencyCount(service.id) }} 条关系
+                  {{ serviceInstanceCountOnServer(service.id, server.id) }} 个实例
                 </span>
               </button>
             </div>
@@ -868,34 +688,6 @@ function safeExternalUrl(value: string | null): string | null {
             </button>
           </div>
         </div>
-
-        <dl class="service-meta">
-          <div><dt>负责人</dt><dd>{{ selectedService.owner || '未设置' }}</dd></div>
-          <div>
-            <dt>代码仓库</dt>
-            <dd>
-              <a
-                v-if="safeExternalUrl(selectedService.repository_url)"
-                :href="safeExternalUrl(selectedService.repository_url) || undefined"
-                target="_blank"
-                rel="noopener noreferrer"
-              >打开仓库</a>
-              <span v-else>未设置</span>
-            </dd>
-          </div>
-          <div>
-            <dt>仪表盘</dt>
-            <dd>
-              <a
-                v-if="safeExternalUrl(selectedService.dashboard_url)"
-                :href="safeExternalUrl(selectedService.dashboard_url) || undefined"
-                target="_blank"
-                rel="noopener noreferrer"
-              >打开仪表盘</a>
-              <span v-else>未设置</span>
-            </dd>
-          </div>
-        </dl>
 
         <section class="detail-section observability-section">
           <div class="section-heading observability-heading">
@@ -993,20 +785,6 @@ function safeExternalUrl(value: string | null): string | null {
           </div>
         </section>
 
-        <section class="detail-section topology-section">
-          <div class="section-heading">
-            <div><h3>依赖拓扑</h3><p>调用方 → 被调用方，默认展示三层关联</p></div>
-          </div>
-          <p v-if="topologyLoading" class="hint">正在生成拓扑…</p>
-          <ServiceTopology
-            v-else-if="topology"
-            :nodes="topology.nodes"
-            :edges="topology.edges"
-            :focus-id="selectedService.id"
-            @select="openService"
-          />
-        </section>
-
         <section class="detail-section">
           <div class="section-heading">
             <div>
@@ -1080,50 +858,6 @@ function safeExternalUrl(value: string | null): string | null {
           </div>
         </section>
 
-        <section class="detail-section">
-          <div class="section-heading">
-            <div><h3>直接依赖</h3><p>维护当前服务依赖谁，以及谁依赖当前服务</p></div>
-            <button
-              type="button"
-              class="btn-secondary"
-              :disabled="targetServices.length === 0"
-              @click="openCreateDependency"
-            >+ 添加依赖</button>
-          </div>
-
-          <div class="dependency-columns">
-            <div>
-              <h4>当前服务依赖</h4>
-              <p v-if="directDependencies.length === 0" class="section-empty">无直接依赖</p>
-              <article v-for="edge in directDependencies" :key="edge.id" class="dependency-row">
-                <div>
-                  <strong>{{ serviceLabel(edge.downstream_service_id) }}</strong>
-                  <span>{{ dependencyTypeLabel[edge.dependency_type] }}</span>
-                  <p v-if="edge.description">{{ edge.description }}</p>
-                </div>
-                <div class="inline-actions">
-                  <button type="button" @click="openEditDependency(edge)">编辑</button>
-                  <button type="button" class="danger" @click="removeDependency(edge)">删除</button>
-                </div>
-              </article>
-            </div>
-            <div>
-              <h4>依赖当前服务</h4>
-              <p v-if="directDependents.length === 0" class="section-empty">无调用方</p>
-              <article v-for="edge in directDependents" :key="edge.id" class="dependency-row">
-                <div>
-                  <strong>{{ serviceLabel(edge.upstream_service_id) }}</strong>
-                  <span>{{ dependencyTypeLabel[edge.dependency_type] }}</span>
-                  <p v-if="edge.description">{{ edge.description }}</p>
-                </div>
-                <div class="inline-actions">
-                  <button type="button" @click="openEditDependency(edge)">编辑</button>
-                  <button type="button" class="danger" @click="removeDependency(edge)">删除</button>
-                </div>
-              </article>
-            </div>
-          </div>
-        </section>
       </main>
 
       <main v-else class="service-placeholder">
@@ -1148,10 +882,7 @@ function safeExternalUrl(value: string | null): string | null {
             <label>服务名 *<input v-model="serviceForm.name" placeholder="例如 orders-api" /></label>
             <label>环境 *<input v-model="serviceForm.environment" placeholder="例如 prod" /></label>
           </div>
-          <label>负责人<input v-model="serviceForm.owner" placeholder="团队或个人" /></label>
           <label>服务说明<textarea v-model="serviceForm.description" rows="3" /></label>
-          <label>代码仓库<input v-model="serviceForm.repository_url" placeholder="https://..." /></label>
-          <label>Grafana 仪表盘<input v-model="serviceForm.dashboard_url" placeholder="https://..." /></label>
           <p v-if="formError" class="error">{{ formError }}</p>
           <div class="modal-actions">
             <button type="button" class="btn-ghost" @click="serviceModal = false">取消</button>
@@ -1210,45 +941,6 @@ function safeExternalUrl(value: string | null): string | null {
       </div>
     </div>
 
-    <div v-if="dependencyModal" class="modal-backdrop" @click.self="dependencyModal = false">
-      <div class="modal" role="dialog" aria-modal="true" aria-label="服务依赖表单">
-        <div class="modal-header">
-          <h2>{{ editingDependency ? '编辑服务依赖' : '添加服务依赖' }}</h2>
-          <button type="button" class="close-button" @click="dependencyModal = false">×</button>
-        </div>
-        <form class="modal-body" @submit.prevent="submitDependency">
-          <label>
-            关系方向
-            <select v-model="dependencyForm.direction">
-              <option value="depends_on">当前服务依赖目标服务</option>
-              <option value="depended_by">目标服务依赖当前服务</option>
-            </select>
-          </label>
-          <label>
-            目标服务 *
-            <select v-model="dependencyForm.target_service_id">
-              <option v-for="service in targetServices" :key="service.id" :value="service.id">
-                {{ service.name }}/{{ service.environment }}
-              </option>
-            </select>
-          </label>
-          <label>
-            依赖类型
-            <select v-model="dependencyForm.dependency_type">
-              <option v-for="item in dependencyTypes" :key="item.value" :value="item.value">
-                {{ item.label }}
-              </option>
-            </select>
-          </label>
-          <label>关系说明<textarea v-model="dependencyForm.description" rows="3" /></label>
-          <p v-if="formError" class="error">{{ formError }}</p>
-          <div class="modal-actions">
-            <button type="button" class="btn-ghost" @click="dependencyModal = false">取消</button>
-            <button type="submit" class="btn-primary" :disabled="saving">{{ saving ? '保存中…' : '保存' }}</button>
-          </div>
-        </form>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -1628,7 +1320,6 @@ button:disabled {
   padding: 0.25rem 0.55rem;
 }
 
-.service-owner,
 .service-counts {
   color: var(--color-text-muted);
   font-size: 0.68rem;
@@ -1665,31 +1356,6 @@ button:disabled {
 .header-actions,
 .inline-actions {
   gap: 0.4rem;
-}
-
-.service-meta {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.75rem;
-  margin: 1.1rem 0 0;
-  padding: 0.85rem 1rem;
-  border-radius: var(--radius);
-  background: var(--color-bg);
-}
-
-.service-meta dt {
-  color: var(--color-text-muted);
-  font-size: 0.7rem;
-}
-
-.service-meta dd {
-  margin: 0.15rem 0 0;
-  font-size: 0.82rem;
-  overflow-wrap: anywhere;
-}
-
-.service-meta a {
-  color: var(--color-accent);
 }
 
 .detail-section {
@@ -1954,8 +1620,7 @@ button:disabled {
   gap: 0.75rem;
 }
 
-.instance-card,
-.dependency-row {
+.instance-card {
   min-width: 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
@@ -2043,43 +1708,6 @@ button:disabled {
 
 .instance-card dd {
   margin: 0;
-}
-
-.dependency-columns {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1rem;
-}
-
-.dependency-columns > div > h4 {
-  margin-bottom: 0.55rem;
-  font-size: 0.82rem;
-}
-
-.dependency-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.5rem;
-  margin-bottom: 0.5rem;
-}
-
-.dependency-row strong {
-  display: block;
-  font-size: 0.8rem;
-  overflow-wrap: anywhere;
-}
-
-.dependency-row span {
-  color: var(--color-text-muted);
-  font-size: 0.68rem;
-}
-
-.dependency-row p {
-  margin: 0.2rem 0 0;
-  color: var(--color-text-muted);
-  font-size: 0.72rem;
-  overflow-wrap: anywhere;
 }
 
 .service-placeholder {
@@ -2198,9 +1826,7 @@ button:disabled {
     padding: 1.25rem;
   }
 
-  .instance-grid,
-  .dependency-columns,
-  .service-meta {
+  .instance-grid {
     grid-template-columns: 1fr;
   }
 

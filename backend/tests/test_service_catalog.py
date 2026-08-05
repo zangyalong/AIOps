@@ -23,62 +23,10 @@ def _service(name: str, environment: str = "prod") -> SimpleNamespace:
         id=uuid.uuid4(),
         name=name,
         environment=environment,
-        owner=None,
     )
 
 
-class ServiceTopologyTraversalTest(unittest.IsolatedAsyncioTestCase):
-    async def test_topology_returns_connected_component_with_depth_limit(self) -> None:
-        orders = _service("orders")
-        payments = _service("payments")
-        database = _service("mysql")
-        unrelated = _service("search")
-        edges = [
-            SimpleNamespace(
-                id=uuid.uuid4(),
-                upstream_service_id=orders.id,
-                downstream_service_id=payments.id,
-            ),
-            SimpleNamespace(
-                id=uuid.uuid4(),
-                upstream_service_id=payments.id,
-                downstream_service_id=database.id,
-            ),
-        ]
-
-        with (
-            patch.object(
-                service_catalog_service,
-                "get_service",
-                AsyncMock(return_value=orders),
-            ),
-            patch.object(
-                service_catalog_service,
-                "list_services",
-                AsyncMock(return_value=[orders, payments, database, unrelated]),
-            ),
-            patch.object(
-                service_catalog_service,
-                "list_dependencies",
-                AsyncMock(return_value=edges),
-            ),
-        ):
-            topology = await service_catalog_service.get_topology(
-                object(), orders.id, max_depth=1
-            )
-
-        self.assertEqual({item.id for item in topology.nodes}, {orders.id, payments.id})
-        self.assertEqual(len(topology.edges), 1)
-
-    async def test_self_dependency_is_rejected_before_database_lookup(self) -> None:
-        service_id = uuid.uuid4()
-        with self.assertRaises(service_catalog_service.InvalidDependency):
-            await service_catalog_service._validate_dependency(
-                object(), service_id, service_id
-            )
-
-
-class ServiceTopologyToolsTest(unittest.IsolatedAsyncioTestCase):
+class ServiceCatalogToolsTest(unittest.IsolatedAsyncioTestCase):
     async def test_server_services_lists_registered_instances(self) -> None:
         server = SimpleNamespace(id=uuid.uuid4(), name="web-01", ip_address="10.0.0.11")
         service = _service("web")
@@ -121,90 +69,6 @@ class ServiceTopologyToolsTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("实例=web-01-main", result)
         self.assertIn("runtime=systemd/web.service", result)
         self.assertIn("不代表实时进程或容器运行状态", result)
-
-    async def test_impacted_services_walks_reverse_dependencies(self) -> None:
-        orders = _service("orders")
-        payments = _service("payments")
-        database = _service("mysql")
-        edges = [
-            SimpleNamespace(
-                upstream_service_id=orders.id,
-                downstream_service_id=payments.id,
-            ),
-            SimpleNamespace(
-                upstream_service_id=payments.id,
-                downstream_service_id=database.id,
-            ),
-        ]
-
-        with (
-            patch.object(
-                service_topology, "AsyncSessionLocal", return_value=_SessionContext()
-            ),
-            patch.object(
-                service_topology.service_catalog_service,
-                "resolve_service",
-                AsyncMock(return_value=database),
-            ),
-            patch.object(
-                service_topology.service_catalog_service,
-                "list_services",
-                AsyncMock(return_value=[orders, payments, database]),
-            ),
-            patch.object(
-                service_topology.service_catalog_service,
-                "list_dependencies",
-                AsyncMock(return_value=edges),
-            ),
-        ):
-            result = await service_topology.query_impacted_services.ainvoke(
-                {"service": "mysql", "environment": "prod", "max_depth": 3}
-            )
-
-        self.assertIn("第 1 层：payments/prod", result)
-        self.assertIn("第 2 层：orders/prod", result)
-
-    async def test_upstream_candidates_walks_service_dependencies(self) -> None:
-        orders = _service("orders")
-        payments = _service("payments")
-        database = _service("mysql")
-        edges = [
-            SimpleNamespace(
-                upstream_service_id=orders.id,
-                downstream_service_id=payments.id,
-            ),
-            SimpleNamespace(
-                upstream_service_id=payments.id,
-                downstream_service_id=database.id,
-            ),
-        ]
-
-        with (
-            patch.object(
-                service_topology, "AsyncSessionLocal", return_value=_SessionContext()
-            ),
-            patch.object(
-                service_topology.service_catalog_service,
-                "resolve_service",
-                AsyncMock(return_value=orders),
-            ),
-            patch.object(
-                service_topology.service_catalog_service,
-                "list_services",
-                AsyncMock(return_value=[orders, payments, database]),
-            ),
-            patch.object(
-                service_topology.service_catalog_service,
-                "list_dependencies",
-                AsyncMock(return_value=edges),
-            ),
-        ):
-            result = await service_topology.query_upstream_candidates.ainvoke(
-                {"service": "orders", "environment": "prod", "max_depth": 3}
-            )
-
-        self.assertIn("第 1 层：payments/prod", result)
-        self.assertIn("第 2 层：mysql/prod", result)
 
 
 class ServiceInstanceResolutionTest(unittest.IsolatedAsyncioTestCase):

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.service_catalog import Service, ServiceDependency, ServiceInstance
+from app.models.service_catalog import Service, ServiceInstance
 
 
 async def list_services(
@@ -130,57 +130,4 @@ async def save_instance(db: AsyncSession, instance: ServiceInstance) -> ServiceI
 
 async def delete_instance(db: AsyncSession, instance: ServiceInstance) -> None:
     await db.delete(instance)
-    await db.commit()
-
-
-async def list_dependencies(
-    db: AsyncSession, service_id: uuid.UUID | None = None
-) -> list[ServiceDependency]:
-    stmt = select(ServiceDependency).order_by(ServiceDependency.created_at)
-    if service_id is not None:
-        stmt = stmt.where(
-            or_(
-                ServiceDependency.upstream_service_id == service_id,
-                ServiceDependency.downstream_service_id == service_id,
-            )
-        )
-    return list(await db.scalars(stmt))
-
-
-async def get_dependency(
-    db: AsyncSession, dependency_id: uuid.UUID
-) -> ServiceDependency | None:
-    return await db.get(ServiceDependency, dependency_id)
-
-
-async def get_dependency_by_edge(
-    db: AsyncSession, upstream_id: uuid.UUID, downstream_id: uuid.UUID
-) -> ServiceDependency | None:
-    return await db.scalar(
-        select(ServiceDependency).where(
-            ServiceDependency.upstream_service_id == upstream_id,
-            ServiceDependency.downstream_service_id == downstream_id,
-        )
-    )
-
-
-async def create_dependency(
-    db: AsyncSession, dependency: ServiceDependency
-) -> ServiceDependency:
-    db.add(dependency)
-    await db.commit()
-    await db.refresh(dependency)
-    return dependency
-
-
-async def save_dependency(
-    db: AsyncSession, dependency: ServiceDependency
-) -> ServiceDependency:
-    await db.commit()
-    await db.refresh(dependency)
-    return dependency
-
-
-async def delete_dependency(db: AsyncSession, dependency: ServiceDependency) -> None:
-    await db.delete(dependency)
     await db.commit()

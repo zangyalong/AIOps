@@ -12,7 +12,7 @@ AIOMS 的 FastAPI 后端，负责业务 API、LangGraph 多 Agent 工作流、�
 - Supervisor 调度四个专业 Agent
 - Prometheus 指标、Loki 日志、Alertmanager 告警查询；指标工具可按服务器名/IP 自动解析 instance
 - 服务发布、回滚、扩缩容和配置变更记录 CRUD，以及 `query_recent_changes` 只读工具
-- 服务目录、部署实例与有向依赖拓扑；支持直接依赖、潜在影响范围和根因候选查询
+- 服务目录与部署实例；支持服务运行状态、指标和日志查询
 - 指标、日志、告警、变更的同实体时间窗关联
 - Alertmanager webhook、告警去重归组和事件生命周期
 - Redis/arq 后台自动诊断事件
@@ -27,7 +27,7 @@ FastAPI POST /chat → 创建后台 Chat Run
 LangGraph Supervisor
     ├── metrics_agent         → Prometheus / Grafana
     ├── logs_agent            → Loki / Grafana
-    ├── incident_agent        → Alertmanager / 变更记录 / 服务拓扑 / 跨信号关联
+    ├── incident_agent        → Alertmanager / 变更记录 / 服务目录 / 跨信号关联
     └── infrastructure_agent  → servers 表 / SSH 工具
                                  ├── 只读诊断：直接执行
                                  └── 服务重启：interrupt 人工审批
@@ -100,22 +100,22 @@ uv run python scripts/migrate_chat_runs.py
 
 配置由 `app/core/config.py` 中的 Pydantic Settings 加载，环境变量名使用大写形式。
 
-| 变量                      | 默认值                       | 用途                       |
-| ------------------------- | ---------------------------- | -------------------------- |
-| `DATABASE_URL`          | 本机`aioms` 库             | PostgreSQL 异步连接        |
-| `DEEPSEEK_API_KEY`      | 空                           | DeepSeek API 密钥          |
-| `DEEPSEEK_BASE_URL`     | `https://api.deepseek.com` | OpenAI 兼容接口地址        |
-| `DEEPSEEK_MODEL`        | `deepseek-v4-flash`        | 对话、路由和回答模型       |
-| `PROMETHEUS_BASE_URL`   | `http://localhost:9090`    | 指标查询                   |
-| `LOKI_BASE_URL`         | `http://localhost:3100`    | 日志查询                   |
-| `LOKI_ORG_ID`           | 空                           | 多租户 Loki 的组织 ID      |
-| `ALERTMANAGER_BASE_URL` | `http://localhost:9093`    | 当前告警查询               |
-| `GRAFANA_BASE_URL`      | `http://localhost:3000`    | 生成 Explore 链接          |
-| `REDIS_URL`             | `redis://localhost:6379`   | arq broker                 |
-| `OBS_HTTP_TIMEOUT`      | `10`                       | 可观测性 HTTP 请求超时秒数 |
-| `SSH_RESTART_SERVICE_ALLOWLIST` | 空                  | 允许重启的 systemd 服务名，逗号分隔；空值表示全部禁止 |
-| `SSH_KEY_DIR`           | 仓库根目录 `ssh/`          | 生成和读取目标服务器 SSH 私钥 |
-| `TARGET_SERVER_SCRIPTS_DIR` | `scripts/target-server/` | 生成目标服务器一键安装包的固定脚本目录 |
+| 变量                              | 默认值                       | 用途                                                  |
+| --------------------------------- | ---------------------------- | ----------------------------------------------------- |
+| `DATABASE_URL`                  | 本机`aioms` 库             | PostgreSQL 异步连接                                   |
+| `DEEPSEEK_API_KEY`              | 空                           | DeepSeek API 密钥                                     |
+| `DEEPSEEK_BASE_URL`             | `https://api.deepseek.com` | OpenAI 兼容接口地址                                   |
+| `DEEPSEEK_MODEL`                | `deepseek-v4-flash`        | 对话、路由和回答模型                                  |
+| `PROMETHEUS_BASE_URL`           | `http://localhost:9090`    | 指标查询                                              |
+| `LOKI_BASE_URL`                 | `http://localhost:3100`    | 日志查询                                              |
+| `LOKI_ORG_ID`                   | 空                           | 多租户 Loki 的组织 ID                                 |
+| `ALERTMANAGER_BASE_URL`         | `http://localhost:9093`    | 当前告警查询                                          |
+| `GRAFANA_BASE_URL`              | `http://localhost:3000`    | 生成 Explore 链接                                     |
+| `REDIS_URL`                     | `redis://localhost:6379`   | arq broker                                            |
+| `OBS_HTTP_TIMEOUT`              | `10`                       | 可观测性 HTTP 请求超时秒数                            |
+| `SSH_RESTART_SERVICE_ALLOWLIST` | 空                           | 允许重启的 systemd 服务名，逗号分隔；空值表示全部禁止 |
+| `SSH_KEY_DIR`                   | 仓库根目录`ssh/`           | 生成和读取目标服务器 SSH 私钥                         |
+| `TARGET_SERVER_SCRIPTS_DIR`     | `scripts/target-server/`   | 生成目标服务器一键安装包的固定脚本目录                |
 
 SSH 私钥默认放在仓库根目录的 `ssh/`，数据库只保存私钥文件名。具体测试方法见 [`docs/local-ssh-sandbox.md`](../docs/local-ssh-sandbox.md)。
 日常只读连接使用 `ssh_user` / `ssh_key_filename`；审批后的目标配置写 Tool 使用独立的
@@ -183,32 +183,29 @@ uv run arq app.worker.WorkerSettings
 
 ## 主要 API
 
-| API                                    | 作用                       |
-| -------------------------------------- | -------------------------- |
-| `POST /chat`                         | 创建后台 Chat Run，返回 `run_id` |
-| `GET /chat/runs/active/{conversation_id}` | 查询对话当前活跃运行 |
-| `GET /chat/runs/{run_id}/events`     | 订阅或重连运行的 SSE 事件 |
-| `POST /chat/resume`                  | 恢复被人工审批门挂起的运行 |
-| `GET/POST /servers`                  | 查询、新增服务器           |
-| `PATCH/DELETE /servers/{id}`         | 修改、删除服务器           |
-| `POST /servers/{id}/test-connection` | 测试 SSH 连接              |
-| `GET /conversations`                 | 会话列表                   |
-| `GET/DELETE /conversations/{id}`     | 会话详情、删除会话         |
-| `POST /alerts/webhook`               | 接收 Alertmanager webhook  |
-| `GET /alerts`                        | 查询已落库告警             |
-| `GET /incidents`                     | 查询关联后的事件           |
-| `GET /incidents/{id}/changes`        | 查询事件前后同服务的变更   |
-| `POST /incidents/{id}/ack`           | 认领事件                   |
-| `POST /incidents/{id}/resolve`       | 人工解决事件               |
-| `GET/POST /changes`                  | 查询、新增变更记录         |
-| `GET/PATCH/DELETE /changes/{id}`     | 查看、修改、删除变更记录   |
-| `GET/POST /services`                 | 查询、新增逻辑服务         |
-| `GET/PATCH/DELETE /services/{id}`    | 查看、修改、删除服务       |
-| `GET /services/{id}/topology`        | 查询服务关联拓扑           |
-| `GET/POST /service-instances`        | 查询、新增服务部署实例     |
-| `PATCH/DELETE /service-instances/{id}` | 修改、删除部署实例       |
-| `GET/POST /service-dependencies`     | 查询、新增服务依赖边       |
-| `PATCH/DELETE /service-dependencies/{id}` | 修改、删除依赖边     |
+| API                                         | 作用                              |
+| ------------------------------------------- | --------------------------------- |
+| `POST /chat`                              | 创建后台 Chat Run，返回`run_id` |
+| `GET /chat/runs/active/{conversation_id}` | 查询对话当前活跃运行              |
+| `GET /chat/runs/{run_id}/events`          | 订阅或重连运行的 SSE 事件         |
+| `POST /chat/resume`                       | 恢复被人工审批门挂起的运行        |
+| `GET/POST /servers`                       | 查询、新增服务器                  |
+| `PATCH/DELETE /servers/{id}`              | 修改、删除服务器                  |
+| `POST /servers/{id}/test-connection`      | 测试 SSH 连接                     |
+| `GET /conversations`                      | 会话列表                          |
+| `GET/DELETE /conversations/{id}`          | 会话详情、删除会话                |
+| `POST /alerts/webhook`                    | 接收 Alertmanager webhook         |
+| `GET /alerts`                             | 查询已落库告警                    |
+| `GET /incidents`                          | 查询关联后的事件                  |
+| `GET /incidents/{id}/changes`             | 查询事件前后同服务的变更          |
+| `POST /incidents/{id}/ack`                | 认领事件                          |
+| `POST /incidents/{id}/resolve`            | 人工解决事件                      |
+| `GET/POST /changes`                       | 查询、新增变更记录                |
+| `GET/PATCH/DELETE /changes/{id}`          | 查看、修改、删除变更记录          |
+| `GET/POST /services`                      | 查询、新增逻辑服务                |
+| `GET/PATCH/DELETE /services/{id}`         | 查看、修改、删除服务              |
+| `GET/POST /service-instances`             | 查询、新增服务部署实例            |
+| `PATCH/DELETE /service-instances/{id}`    | 修改、删除部署实例                |
 
 前端开发环境请求 `/api/...`，由 Vite 代理去掉 `/api` 前缀后转发到这里。
 
@@ -216,10 +213,6 @@ uv run arq app.worker.WorkerSettings
 `server_id`。事件会优先按 `metric_instance` 精确解析逻辑服务，再用服务名和环境关联变更；旧的
 `servers.monitor_labels` 仍作为兼容回退。关联只说明时间与实体重合，Agent 提示词和事件页面都会明确
 它不是已确认的根因。
-
-服务依赖边定义为 `upstream_service_id → downstream_service_id`，即“调用方依赖被调用方”。
-`query_impacted_services` 反向遍历调用方推导潜在影响范围；`query_upstream_candidates` 沿依赖方向
-寻找可能传播到当前服务的根因候选，两者都只提供结构性线索，仍需结合真实观测证据确认。
 
 ## 测试与静态检查
 

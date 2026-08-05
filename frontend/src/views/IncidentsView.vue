@@ -340,7 +340,7 @@ async function resolve(incident: Incident) {
             v-if="changeContext?.service_id"
             class="service-directory-link"
             :to="`/services/${changeContext.service_id}`"
-          >查看关联服务及依赖拓扑 →</RouterLink>
+          >查看关联服务 →</RouterLink>
         </section>
 
         <section class="diagnosis-panel">
