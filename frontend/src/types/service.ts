@@ -47,6 +47,7 @@ export interface ServiceInstanceStatus {
   status: RuntimeStatus
   label: string
   detail: string
+  ports: string[]
   checked_at: string
 }
 

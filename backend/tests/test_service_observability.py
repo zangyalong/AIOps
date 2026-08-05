@@ -40,8 +40,44 @@ class ServiceRuntimeStatusTests(unittest.TestCase):
             "api\timage:v1\tUp 2 hours\t0.0.0.0:80->80/tcp\n"
             "db\tpostgres:18\tExited (1) 2 minutes ago\t\n"
         )
-        self.assertEqual(rows["api"], "Up 2 hours")
-        self.assertEqual(rows["db"], "Exited (1) 2 minutes ago")
+        self.assertEqual(rows["api"].status, "Up 2 hours")
+        self.assertEqual(rows["api"].ports, ("0.0.0.0:80->80/tcp",))
+        self.assertEqual(rows["db"].status, "Exited (1) 2 minutes ago")
+        self.assertEqual(rows["db"].ports, ())
+
+    def test_systemd_ports_are_mapped_from_listener_pid_unit(self) -> None:
+        listeners = service_runtime_service._parse_listener_endpoints(
+            'tcp LISTEN 0 128 0.0.0.0:8010 0.0.0.0:* users:(("python",pid=301,fd=7))\n'
+            'tcp LISTEN 0 128 127.0.0.1:8011 0.0.0.0:* users:(("python",pid=302,fd=8))\n'
+        )
+
+        ports = service_runtime_service._parse_systemd_ports(
+            "301 1 ops 7200 pixel-forge-backend.service python -m uvicorn\n"
+            "302 1 ops 7200 pixel-forge-backend.service python worker.py\n",
+            listeners,
+        )
+
+        self.assertEqual(
+            ports["pixel-forge-backend.service"],
+            ("tcp/8010", "tcp/8011"),
+        )
+
+    def test_systemd_main_pid_is_used_when_process_unit_is_missing(self) -> None:
+        ports = service_runtime_service._parse_systemd_ports(
+            "101 1 root 7200 - nginx: master process\n",
+            {101: {"tcp/80", "tcp/443"}},
+            {"nginx.service": 101},
+        )
+
+        self.assertEqual(ports["nginx.service"], ("tcp/80", "tcp/443"))
+
+    def test_docker_top_returns_host_pids_for_host_network_ports(self) -> None:
+        pids = service_runtime_service._parse_docker_top_pids(
+            "UID PID PPID C STIME TTY TIME CMD\n"
+            "nobody 4321 1 0 10:00 ? 00:00:00 /bin/mysqld_exporter\n"
+        )
+
+        self.assertEqual(pids, {4321})
 
 
 class ServiceMetricDefinitionTests(unittest.TestCase):

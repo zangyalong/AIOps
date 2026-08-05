@@ -196,6 +196,25 @@ function instanceStatusClass(instance: ServiceInstance): RuntimeStatus {
   return instanceStatus(instance)?.status ?? 'unknown'
 }
 
+function instancePortsLabel(instance: ServiceInstance): string {
+  const status = instanceStatus(instance)
+  if (!status) return '检测状态后获取'
+  if (status.ports?.length) return status.ports.join('、')
+  return status.status === 'running' ? '未发现 TCP/UDP 监听端口' : '无监听端口'
+}
+
+function metricSourceLabel(instance: ServiceInstance): string {
+  if (instance.metric_instance) return `Prometheus ${instance.metric_instance}`
+  const identity = `${selectedService.value?.name ?? ''} ${instance.runtime_name ?? ''}`.toLowerCase()
+  if (identity.includes('node-exporter')) return 'Node Exporter（自动匹配）'
+  if (identity.includes('mysql')) return 'MySQL Exporter（自动匹配）'
+  if (identity.includes('postgres')) return 'PostgreSQL Exporter（自动匹配）'
+  if (identity.includes('redis')) return 'Redis Exporter（自动匹配）'
+  if (instance.runtime_type === 'systemd') return 'cAdvisor（systemd cgroup）'
+  if (instance.runtime_type === 'docker') return 'cAdvisor（容器标签）'
+  return '未接入服务级指标'
+}
+
 function statusTargetInstanceIds(filters: { serverId?: string; serviceId?: string }): string[] {
   return instances.value
     .filter(
@@ -758,7 +777,7 @@ function serverStatusLabel(server: Server): string {
                   <section class="metric-panel">
                     <div class="panel-subheading">
                       <h4>关键指标</h4>
-                      <span>{{ instance.metric_instance || '按目录标签匹配' }}</span>
+                      <span>{{ metricSourceLabel(instance) }}</span>
                     </div>
                     <div v-if="observabilityByInstance[instance.id].metrics.length" class="metric-grid">
                       <div
@@ -848,7 +867,8 @@ function serverStatusLabel(server: Server): string {
                     }}
                   </dd>
                 </div>
-                <div><dt>Prometheus</dt><dd>{{ instance.metric_instance || '未配置' }}</dd></div>
+                <div><dt>监听端口</dt><dd>{{ instancePortsLabel(instance) }}</dd></div>
+                <div><dt>指标来源</dt><dd>{{ metricSourceLabel(instance) }}</dd></div>
                 <div><dt>Loki</dt><dd>{{ instance.log_service || '未配置' }}</dd></div>
               </dl>
               <p v-if="instance.description" class="instance-description">{{ instance.description }}</p>
@@ -945,7 +965,7 @@ function serverStatusLabel(server: Server): string {
             </label>
           </div>
           <div class="form-row">
-            <label>Prometheus instance<input v-model="instanceForm.metric_instance" placeholder="host:9100" /></label>
+            <label>Prometheus instance（可选）<input v-model="instanceForm.metric_instance" placeholder="host:9100" /></label>
             <label>Loki 服务标签<input v-model="instanceForm.log_service" placeholder="orders-api" /></label>
           </div>
           <label>实例说明<textarea v-model="instanceForm.description" rows="3" /></label>

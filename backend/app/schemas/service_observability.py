@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 RuntimeStatus = Literal["running", "stopped", "error", "unknown"]
 LogLevel = Literal["error", "warn", "info", "unknown"]
@@ -15,6 +15,7 @@ class ServiceInstanceStatusRead(BaseModel):
     status: RuntimeStatus
     label: str
     detail: str
+    ports: list[str] = Field(default_factory=list)
     checked_at: datetime
 
 
