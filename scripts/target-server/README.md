@@ -228,6 +228,7 @@ START_EXPORTERS=true
 | `ENABLE_POSTGRES_EXPORTER`       | 可选                    | PostgreSQL 指标，端口 9187                                       |
 | `ENABLE_REDIS_EXPORTER`          | 可选                    | Redis/Valkey 指标，端口 9121                                     |
 | `*_IMAGE`                        | 启用对应 exporter       | 固定 Docker 镜像版本，可手工改成已审核版本或 digest              |
+| `EXPORTER_IMAGE_MIRROR_PREFIX`   | 可选                    | 默认 `m.daocloud.io`，只用于本次拉取，不修改 Docker daemon       |
 | `*_CONFIG` / `*_PASSWORD_FILE` | 启用对应数据库 exporter | 相对本目录或绝对路径的凭据文件                                   |
 | `*_EXPORTER_NETWORK`             | 启用对应数据库 exporter | `host` 或数据库容器所在的已有 Docker 网络名                    |
 | `START_EXPORTERS`                | 启用任一 exporter       | `false` 时只生成、安装和校验 Compose，不拉取镜像或启动容器     |
@@ -235,6 +236,11 @@ START_EXPORTERS=true
 镜像、连接 URI、Docker 数据目录等详细字段已经写在 `deploy.conf.example` 的相应组件旁边。
 配置文件只允许模板中的白名单字段，布尔值只允许 `true` 或 `false`，值两侧不要加引号。
 部署脚本不会通过 `source` 把配置当成 root Shell 命令执行。
+
+Exporter 默认通过 DaoCloud 前缀代理临时拉取 Quay、GHCR 和 Docker Hub 镜像，然后标记回原始
+镜像名并删除代理别名。这个过程不会修改 `/etc/docker/daemon.json` 或重启 Docker；如果已配置
+企业内部镜像仓库，可以直接把各 `*_IMAGE` 改成内部完整镜像名，并将
+`EXPORTER_IMAGE_MIRROR_PREFIX=` 留空。
 
 ### Alloy 内网源和下载代理
 

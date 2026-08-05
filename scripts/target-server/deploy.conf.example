@@ -46,6 +46,8 @@ ENVIRONMENT=prod
 
 # -------------------- Prometheus 指标 exporter --------------------
 # 指标组件以 Docker Compose 运行。每个组件独立开关，镜像可手工升级或固定 digest。
+# 默认仅在安装时通过 DaoCloud 国内代理拉取，然后恢复为下方原始镜像名；留空表示直连原仓库。
+EXPORTER_IMAGE_MIRROR_PREFIX=m.daocloud.io
 
 # 宿主机 CPU、内存、磁盘、网络等指标，默认端口 9100。
 ENABLE_NODE_EXPORTER=true

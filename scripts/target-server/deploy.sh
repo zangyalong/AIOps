@@ -79,6 +79,7 @@ REDIS_EXPORTER_USER=""
 REDIS_EXPORTER_PASSWORD_FILE=""
 REDIS_EXPORTER_NETWORK="host"
 START_EXPORTERS="true"
+EXPORTER_IMAGE_MIRROR_PREFIX="m.daocloud.io"
 SEEN_KEYS="|"
 
 trim() {
@@ -129,6 +130,7 @@ set_config_value() {
         REDIS_EXPORTER_PASSWORD_FILE) REDIS_EXPORTER_PASSWORD_FILE="$value" ;;
         REDIS_EXPORTER_NETWORK) REDIS_EXPORTER_NETWORK="$value" ;;
         START_EXPORTERS) START_EXPORTERS="$value" ;;
+        EXPORTER_IMAGE_MIRROR_PREFIX) EXPORTER_IMAGE_MIRROR_PREFIX="$value" ;;
         *) fail "配置项不受支持：$key" ;;
     esac
 }
@@ -267,7 +269,11 @@ done
 if [[ "$metrics_enabled" == "true" ]]; then
     [[ -n "$SERVER_NAME" ]] || fail "启用 exporter 时 SERVER_NAME 不能为空"
     [[ -n "$ENVIRONMENT" ]] || fail "启用 exporter 时 ENVIRONMENT 不能为空"
-    metrics_args=(--server "$SERVER_NAME" --environment "$ENVIRONMENT")
+    metrics_args=(
+        --server "$SERVER_NAME"
+        --environment "$ENVIRONMENT"
+        --image-mirror-prefix "$EXPORTER_IMAGE_MIRROR_PREFIX"
+    )
 
     if [[ "$ENABLE_NODE_EXPORTER" == "true" ]]; then
         [[ -n "$NODE_EXPORTER_IMAGE" ]] || fail "node_exporter 镜像不能为空"

@@ -11,6 +11,7 @@ usage() {
     cat <<'EOF'
 用法：
   sudo ./install.sh --server web01 --environment prod \
+    [--image-mirror-prefix REGISTRY] \
     [--node-image IMAGE] \
     [--cadvisor-image IMAGE --docker-root-dir /var/lib/docker] \
     [--mysql-image IMAGE --mysql-config FILE --mysql-network NETWORK] \
@@ -23,6 +24,9 @@ usage() {
 
 只传入需要启用的组件。安装器生成 /etc/aioms-exporters/compose.yaml，
 并通过 Docker Compose 管理 aioms-exporters 项目。
+
+--image-mirror-prefix REGISTRY
+                       仅本次拉取使用的镜像代理前缀；默认 m.daocloud.io，传空值则直连原仓库。
 EOF
 }
 
@@ -46,6 +50,7 @@ REDIS_PASSWORD_FILE=""
 REDIS_NETWORK="host"
 START_EXPORTERS=true
 DISABLE_ALL=false
+IMAGE_MIRROR_PREFIX="m.daocloud.io"
 
 while (($# > 0)); do
     case "$1" in
@@ -57,6 +62,11 @@ while (($# > 0)); do
         --environment)
             (($# >= 2)) || fail "--environment 缺少参数"
             ENVIRONMENT="$2"
+            shift 2
+            ;;
+        --image-mirror-prefix)
+            (($# >= 2)) || fail "--image-mirror-prefix 缺少参数"
+            IMAGE_MIRROR_PREFIX="$2"
             shift 2
             ;;
         --node-image)
@@ -185,6 +195,13 @@ fi
 
 [[ "$SERVER_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$ ]] || fail "server 格式不合法"
 [[ "$ENVIRONMENT" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,49}$ ]] || fail "environment 格式不合法"
+IMAGE_MIRROR_PREFIX="${IMAGE_MIRROR_PREFIX%/}"
+if [[ -n "$IMAGE_MIRROR_PREFIX" ]]; then
+    [[ "$IMAGE_MIRROR_PREFIX" =~ ^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$ ]] ||
+        fail "镜像代理前缀格式不合法：$IMAGE_MIRROR_PREFIX"
+    [[ "$IMAGE_MIRROR_PREFIX" != *"://"* ]] ||
+        fail "镜像代理前缀不要包含 http:// 或 https://"
+fi
 
 enabled_count=0
 for image in \
@@ -543,7 +560,47 @@ if [[ "$START_EXPORTERS" != true ]]; then
     exit 0
 fi
 
-"${COMPOSE[@]}" --project-name aioms-exporters -f "$CONFIG_PATH" pull
+canonical_image_name() {
+    local image="$1"
+    local first_component="${image%%/*}"
+
+    if [[ "$image" != */* ]]; then
+        printf 'docker.io/library/%s' "$image"
+    elif [[ "$first_component" == *.* || "$first_component" == *:* ||
+        "$first_component" == "localhost" ]]; then
+        printf '%s' "$image"
+    else
+        printf 'docker.io/%s' "$image"
+    fi
+}
+
+pull_exporter_image() {
+    local original_image="$1"
+    local mirrored_image
+
+    if [[ -z "$IMAGE_MIRROR_PREFIX" ]]; then
+        docker pull "$original_image"
+        return
+    fi
+    if [[ "$original_image" == *@* ]]; then
+        fail "镜像代理暂不支持 digest 引用，请传空 --image-mirror-prefix 后直连：$original_image"
+    fi
+
+    mirrored_image="$IMAGE_MIRROR_PREFIX/$(canonical_image_name "$original_image")"
+    echo "临时拉取 exporter 镜像：$mirrored_image"
+    docker pull "$mirrored_image"
+    if ! docker tag "$mirrored_image" "$original_image"; then
+        docker image rm "$mirrored_image" >/dev/null 2>&1 || true
+        fail "无法把代理镜像标记为原始名称：$original_image"
+    fi
+    docker image rm "$mirrored_image" >/dev/null
+}
+
+for image in \
+    "$NODE_IMAGE" "$CADVISOR_IMAGE" "$MYSQL_IMAGE" "$POSTGRES_IMAGE" "$REDIS_IMAGE"; do
+    [[ -z "$image" ]] || pull_exporter_image "$image"
+done
+
 "${COMPOSE[@]}" --project-name aioms-exporters -f "$CONFIG_PATH" up -d --remove-orphans
 "${COMPOSE[@]}" --project-name aioms-exporters -f "$CONFIG_PATH" ps
 

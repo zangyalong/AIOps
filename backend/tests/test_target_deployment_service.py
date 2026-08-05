@@ -38,6 +38,7 @@ class TargetDeploymentServiceTests(unittest.TestCase):
         self.assertIn("ALLOW_DOCKER_SOCKET=true\n", rendered)
         self.assertIn("ALLOY_SERVICE_MAP=\n", rendered)
         self.assertIn("START_ALLOY=false\n", rendered)
+        self.assertIn("EXPORTER_IMAGE_MIRROR_PREFIX=m.daocloud.io\n", rendered)
         self.assertNotIn("database-secret-value", rendered)
 
     def test_enabled_database_exporter_requires_one_time_password(self) -> None:

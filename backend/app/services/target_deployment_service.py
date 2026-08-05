@@ -84,6 +84,7 @@ def render_deploy_config(
             f"ALLOW_DOCKER_SOCKET={_bool(config.allow_docker_socket)}",
             "START_ALLOY=false",
             f"ENVIRONMENT={config.environment}",
+            "EXPORTER_IMAGE_MIRROR_PREFIX=m.daocloud.io",
             f"ENABLE_NODE_EXPORTER={_bool(config.enable_node_exporter)}",
             f"NODE_EXPORTER_IMAGE={config.node_exporter_image}",
             f"ENABLE_CADVISOR={_bool(config.enable_cadvisor)}",

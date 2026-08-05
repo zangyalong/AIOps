@@ -13,6 +13,12 @@
 五个组件均由 `deploy.conf` 的独立开关控制。目标服务器必须已有 Docker 和 Docker Compose；
 安装器不会自动安装 Docker，也不会自动创建数据库账号。
 
+默认设置 `EXPORTER_IMAGE_MIRROR_PREFIX=m.daocloud.io`。安装器会按照 DaoCloud 推荐的前缀方式，
+临时从 `m.daocloud.io/<原始仓库>/<镜像>` 拉取 Quay、GHCR 和 Docker Hub 镜像，再把本地镜像
+标记回模板中的原始名称并删除代理别名。它不会修改 `/etc/docker/daemon.json`，也不会重启
+Docker daemon；留空该配置可恢复为直连原仓库。生产环境更推荐使用组织自己的、经过审核的
+镜像仓库，把各 `*_IMAGE` 改成内部完整地址并固定为已验证的 digest，同时将代理前缀留空。
+
 模板中的镜像使用截至编写时已发布的固定版本，不使用 `latest`。版本来源分别是
 [node_exporter](https://github.com/prometheus/node_exporter/releases)、
 [cAdvisor](https://github.com/google/cadvisor/releases)、
