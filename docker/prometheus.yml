@@ -27,3 +27,67 @@ scrape_configs:
   - job_name: node
     static_configs:
       - targets: ["node-exporter:9100"]
+
+  - job_name: web01-mysql
+    static_configs:
+      - targets: ["139.196.175.226:9104"]
+        labels:
+          server: web-01
+          environment: prod
+          service: mysqld
+          runtime_type: docker
+          runtime_name: aioms-mysql-exporter
+
+  - job_name: web01-node
+    static_configs:
+      - targets: ["139.196.175.226:9100"]
+        labels:
+          server: web-01
+          environment: prod
+          service: node-exporter
+          runtime_type: docker
+          runtime_name: aioms-node-exporter
+
+  - job_name: web01-cadvisor
+    static_configs:
+      - targets: ["139.196.175.226:8080"]
+        labels:
+          server: web-01
+          environment: prod
+          runtime_type: docker
+    metric_relabel_configs:
+      - source_labels: [container_label_aioms_service]
+        regex: "(.+)"
+        target_label: service
+      - source_labels: [service, container_label_com_docker_compose_service]
+        regex: ";(.+)"
+        replacement: "$1"
+        target_label: service
+      - source_labels: [service, name]
+        regex: ";/?(.+)"
+        replacement: "$1"
+        target_label: service
+      - source_labels: [name]
+        regex: "/?(.+)"
+        replacement: "$1"
+        target_label: runtime_name
+
+  - job_name: web01-postgres
+    static_configs:
+      - targets: ["139.196.175.226:9187"]
+        labels:
+          server: web-01
+          environment: prod
+          service: sub2api-postgres
+          runtime_type: docker
+          runtime_name: aioms-postgres-exporter
+
+  - job_name: web01-redis
+    static_configs:
+      - targets: ["139.196.175.226:9121"]
+        labels:
+          server: web-01
+          environment: prod
+          service: sub2api-redis
+          runtime_type: docker
+          runtime_name: aioms-redis-exporter
