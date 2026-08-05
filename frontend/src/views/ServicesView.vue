@@ -40,7 +40,7 @@ const search = ref('')
 const selectedServerId = ref<string | null>(null)
 const expandedServerIds = ref<Set<string>>(new Set())
 const instanceStatuses = ref<Record<string, ServiceInstanceStatus>>({})
-const statusLoadingServerIds = ref<Set<string>>(new Set())
+const statusLoadingInstanceIds = ref<Set<string>>(new Set())
 const observabilityByInstance = ref<Record<string, ServiceObservability>>({})
 const observabilityLoadingIds = ref<Set<string>>(new Set())
 const observabilityErrors = ref<Record<string, string>>({})
@@ -162,7 +162,10 @@ function serviceRuntimeStatus(serviceId: string, serverId: string): RuntimeStatu
 }
 
 function serviceStatusLabel(serviceId: string, serverId: string): string {
-  if (statusLoadingServerIds.value.has(serverId)) return '检测中'
+  const rows = instancesForServiceOnServer(serviceId, serverId)
+  if (rows.some((instance) => statusLoadingInstanceIds.value.has(instance.id))) {
+    return '检测中'
+  }
   const labels: Record<RuntimeStatus, string> = {
     running: '运行',
     stopped: '停止',
@@ -185,7 +188,7 @@ function instanceStatus(instance: ServiceInstance): ServiceInstanceStatus | null
 }
 
 function instanceStatusLabel(instance: ServiceInstance): string {
-  if (instance.server_id && statusLoadingServerIds.value.has(instance.server_id)) return '检测中'
+  if (statusLoadingInstanceIds.value.has(instance.id)) return '检测中'
   return instanceStatus(instance)?.label ?? '未检测'
 }
 
@@ -193,22 +196,35 @@ function instanceStatusClass(instance: ServiceInstance): RuntimeStatus {
   return instanceStatus(instance)?.status ?? 'unknown'
 }
 
-function setStatusLoading(serverId: string, loadingState: boolean) {
-  const next = new Set(statusLoadingServerIds.value)
-  if (loadingState) next.add(serverId)
-  else next.delete(serverId)
-  statusLoadingServerIds.value = next
+function statusTargetInstanceIds(filters: { serverId?: string; serviceId?: string }): string[] {
+  return instances.value
+    .filter(
+      (instance) =>
+        (!filters.serverId || instance.server_id === filters.serverId) &&
+        (!filters.serviceId || instance.service_id === filters.serviceId),
+    )
+    .map((instance) => instance.id)
+}
+
+function setStatusLoading(instanceIds: string[], loadingState: boolean) {
+  const next = new Set(statusLoadingInstanceIds.value)
+  for (const instanceId of instanceIds) {
+    if (loadingState) next.add(instanceId)
+    else next.delete(instanceId)
+  }
+  statusLoadingInstanceIds.value = next
 }
 
 async function refreshStatuses(filters: { serverId?: string; serviceId?: string }) {
-  if (filters.serverId) setStatusLoading(filters.serverId, true)
+  const targetInstanceIds = statusTargetInstanceIds(filters)
+  setStatusLoading(targetInstanceIds, true)
   try {
     const rows = await fetchServiceInstanceStatuses(filters)
     for (const row of rows) instanceStatuses.value[row.instance_id] = row
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
-    if (filters.serverId) setStatusLoading(filters.serverId, false)
+    setStatusLoading(targetInstanceIds, false)
   }
 }
 
@@ -357,30 +373,30 @@ function syncSelectedServerToService(serviceId: string) {
         (instance) => instance.service_id === serviceId && instance.server_id !== null,
       )?.server_id ?? null
   }
-  if (selectedServerId.value) expandServer(selectedServerId.value)
+  if (selectedServerId.value) {
+    markServerExpanded(selectedServerId.value)
+    void refreshStatuses({ serviceId, serverId: selectedServerId.value })
+  }
 }
 
 function openService(serviceId: string) {
-  syncSelectedServerToService(serviceId)
+  if (selectedId.value === serviceId) syncSelectedServerToService(serviceId)
   void router.push(`/services/${serviceId}`)
 }
 
 function openServiceForServer(serviceId: string, serverId: string) {
   selectedServerId.value = serverId
-  expandServer(serverId)
+  markServerExpanded(serverId)
+  if (selectedId.value === serviceId) {
+    void refreshStatuses({ serviceId, serverId })
+  }
   void router.push(`/services/${serviceId}`)
 }
 
-function expandServer(serverId: string) {
+function markServerExpanded(serverId: string) {
   const next = new Set(expandedServerIds.value)
   next.add(serverId)
   expandedServerIds.value = next
-  if (
-    instances.value.some((instance) => instance.server_id === serverId) &&
-    !statusLoadingServerIds.value.has(serverId)
-  ) {
-    void refreshServerStatuses(serverId)
-  }
 }
 
 function isServerExpanded(serverId: string): boolean {
@@ -542,7 +558,8 @@ async function submitInstance() {
     else instances.value[index] = saved
     if (saved.server_id) {
       selectedServerId.value = saved.server_id
-      expandServer(saved.server_id)
+      markServerExpanded(saved.server_id)
+      void refreshStatuses({ serviceId: saved.service_id, serverId: saved.server_id })
     }
     instanceModal.value = false
   } catch (e) {
