@@ -4,6 +4,8 @@ import type {
   ServiceInput,
   ServiceInstance,
   ServiceInstanceInput,
+  ServiceInstanceStatus,
+  ServiceObservability,
   ServiceRecord,
   ServiceTopology,
 } from '../types/service'
@@ -52,6 +54,31 @@ export async function deleteService(id: string): Promise<void> {
 
 export async function fetchServiceInstances(): Promise<ServiceInstance[]> {
   return parseJson(await fetch('/api/service-instances'), '获取服务实例失败')
+}
+
+export async function fetchServiceInstanceStatuses(filters: {
+  serviceId?: string
+  serverId?: string
+} = {}): Promise<ServiceInstanceStatus[]> {
+  const params = new URLSearchParams()
+  if (filters.serviceId) params.set('service_id', filters.serviceId)
+  if (filters.serverId) params.set('server_id', filters.serverId)
+  const query = params.size ? `?${params.toString()}` : ''
+  return parseJson(
+    await fetch(`/api/service-instances/statuses${query}`),
+    '检测服务状态失败',
+  )
+}
+
+export async function fetchServiceObservability(
+  instanceId: string,
+  minutes = 1440,
+): Promise<ServiceObservability> {
+  const params = new URLSearchParams({ minutes: String(minutes) })
+  return parseJson(
+    await fetch(`/api/service-instances/${instanceId}/observability?${params.toString()}`),
+    '获取服务可观测性数据失败',
+  )
 }
 
 export async function createServiceInstance(

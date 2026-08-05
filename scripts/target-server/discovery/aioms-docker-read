@@ -53,6 +53,11 @@ case "$ACTION" in
         run_docker ps \
             --format '{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
         ;;
+    inventory-all)
+        require_no_extra_args "$@"
+        run_docker ps -a \
+            --format '{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
+        ;;
     images)
         require_no_extra_args "$@"
         run_docker images

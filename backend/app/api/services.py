@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import DBSession
+from app.models.server import Server
 from app.models.service_catalog import Service, ServiceDependency, ServiceInstance
 from app.schemas.service_catalog import (
     ServiceCreate,
@@ -19,7 +20,16 @@ from app.schemas.service_catalog import (
     ServiceTopologyRead,
     ServiceUpdate,
 )
-from app.services import service_catalog_service
+from app.schemas.service_observability import (
+    ServiceInstanceStatusRead,
+    ServiceObservabilityRead,
+)
+from app.services import (
+    server_service,
+    service_catalog_service,
+    service_observability_service,
+    service_runtime_service,
+)
 
 router = APIRouter(tags=["service-catalog"])
 
@@ -124,6 +134,50 @@ async def create_service_instance(
         return await service_catalog_service.create_instance(db, data)
     except ValueError as exc:
         _raise_service_error(exc)
+
+
+@router.get(
+    "/service-instances/statuses", response_model=list[ServiceInstanceStatusRead]
+)
+async def list_service_instance_statuses(
+    db: DBSession,
+    service_id: uuid.UUID | None = None,
+    server_id: uuid.UUID | None = None,
+) -> list[ServiceInstanceStatusRead]:
+    instances = await service_catalog_service.list_instances(
+        db, service_id=service_id, server_id=server_id
+    )
+    server_ids = {item.server_id for item in instances if item.server_id is not None}
+    servers: dict[uuid.UUID, Server] = {}
+    for current_server_id in server_ids:
+        server = await server_service.get_server(db, current_server_id)
+        if server is not None:
+            servers[current_server_id] = server
+    return await service_runtime_service.check_instance_statuses(instances, servers)
+
+
+@router.get(
+    "/service-instances/{instance_id}/observability",
+    response_model=ServiceObservabilityRead,
+)
+async def get_service_instance_observability(
+    instance_id: uuid.UUID,
+    db: DBSession,
+    minutes: int = Query(default=1440, ge=5, le=10080),
+) -> ServiceObservabilityRead:
+    instance = await _instance_or_404(db, instance_id)
+    service = await _service_or_404(db, instance.service_id)
+    server = (
+        await server_service.get_server(db, instance.server_id)
+        if instance.server_id is not None
+        else None
+    )
+    return await service_observability_service.get_instance_observability(
+        service=service,
+        instance=instance,
+        server=server,
+        minutes=minutes,
+    )
 
 
 @router.patch("/service-instances/{instance_id}", response_model=ServiceInstanceRead)

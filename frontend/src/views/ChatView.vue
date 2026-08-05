@@ -461,6 +461,17 @@ watch(
   { immediate: true },
 )
 
+// 服务目录的启停按钮只负责把明确的运维意图带到对话框；不会自动发送，更不会绕过写工具审批。
+watch(
+  () => route.query.prompt,
+  (prompt) => {
+    if (typeof prompt === 'string' && prompt.trim() && !input.value.trim()) {
+      input.value = prompt.trim()
+    }
+  },
+  { immediate: true },
+)
+
 onBeforeUnmount(() => {
   loadVersion += 1
   stopSubscription()

@@ -9,7 +9,9 @@ import {
   deleteServiceDependency,
   deleteServiceInstance,
   fetchServiceDependencies,
+  fetchServiceInstanceStatuses,
   fetchServiceInstances,
+  fetchServiceObservability,
   fetchServices,
   fetchServiceTopology,
   updateService,
@@ -29,6 +31,10 @@ import type {
   ServiceRecord,
   ServiceTopology as ServiceTopologyData,
   RuntimeType,
+  RuntimeStatus,
+  ServiceInstanceStatus,
+  ServiceMetric,
+  ServiceObservability,
 } from '../types/service'
 
 const route = useRoute()
@@ -46,6 +52,12 @@ const saving = ref(false)
 const search = ref('')
 const selectedServerId = ref<string | null>(null)
 const expandedServerIds = ref<Set<string>>(new Set())
+const instanceStatuses = ref<Record<string, ServiceInstanceStatus>>({})
+const statusLoadingServerIds = ref<Set<string>>(new Set())
+const observabilityByInstance = ref<Record<string, ServiceObservability>>({})
+const observabilityLoadingIds = ref<Set<string>>(new Set())
+const observabilityErrors = ref<Record<string, string>>({})
+const observabilityMinutes = ref(1440)
 
 const serviceModal = ref(false)
 const editingService = ref<ServiceRecord | null>(null)
@@ -118,6 +130,9 @@ const selectedInstances = computed(() => {
     (instance) => instance.server_id === selectedServerId.value,
   )
 })
+const selectedInstanceKey = computed(() =>
+  selectedInstances.value.map((instance) => instance.id).sort().join(','),
+)
 const directDependencies = computed(() =>
   dependencies.value.filter((edge) => edge.upstream_service_id === selectedId.value),
 )
@@ -179,6 +194,168 @@ function serviceInstanceCountOnServer(serviceId: string, serverId: string): numb
   ).length
 }
 
+function instancesForServiceOnServer(serviceId: string, serverId: string): ServiceInstance[] {
+  return instances.value.filter(
+    (instance) => instance.service_id === serviceId && instance.server_id === serverId,
+  )
+}
+
+function aggregateRuntimeStatus(rows: ServiceInstance[]): RuntimeStatus {
+  const statuses = rows
+    .map((instance) => instanceStatuses.value[instance.id]?.status)
+    .filter((status): status is RuntimeStatus => Boolean(status))
+  if (statuses.includes('error')) return 'error'
+  if (statuses.includes('running')) return 'running'
+  if (statuses.length > 0 && statuses.every((status) => status === 'stopped')) return 'stopped'
+  return 'unknown'
+}
+
+function serviceRuntimeStatus(serviceId: string, serverId: string): RuntimeStatus {
+  return aggregateRuntimeStatus(instancesForServiceOnServer(serviceId, serverId))
+}
+
+function serviceStatusLabel(serviceId: string, serverId: string): string {
+  if (statusLoadingServerIds.value.has(serverId)) return '检测中'
+  const labels: Record<RuntimeStatus, string> = {
+    running: '运行',
+    stopped: '停止',
+    error: '异常',
+    unknown: '未检测',
+  }
+  return labels[serviceRuntimeStatus(serviceId, serverId)]
+}
+
+function serviceStatusDetail(serviceId: string, serverId: string): string {
+  const rows = instancesForServiceOnServer(serviceId, serverId)
+  const details = rows
+    .map((instance) => instanceStatuses.value[instance.id]?.detail)
+    .filter(Boolean)
+  return details.join('；') || '展开服务器或点击检测状态后获取实时结果'
+}
+
+function instanceStatus(instance: ServiceInstance): ServiceInstanceStatus | null {
+  return instanceStatuses.value[instance.id] ?? null
+}
+
+function instanceStatusLabel(instance: ServiceInstance): string {
+  if (instance.server_id && statusLoadingServerIds.value.has(instance.server_id)) return '检测中'
+  return instanceStatus(instance)?.label ?? '未检测'
+}
+
+function instanceStatusClass(instance: ServiceInstance): RuntimeStatus {
+  return instanceStatus(instance)?.status ?? 'unknown'
+}
+
+function setStatusLoading(serverId: string, loadingState: boolean) {
+  const next = new Set(statusLoadingServerIds.value)
+  if (loadingState) next.add(serverId)
+  else next.delete(serverId)
+  statusLoadingServerIds.value = next
+}
+
+async function refreshStatuses(filters: { serverId?: string; serviceId?: string }) {
+  if (filters.serverId) setStatusLoading(filters.serverId, true)
+  try {
+    const rows = await fetchServiceInstanceStatuses(filters)
+    for (const row of rows) instanceStatuses.value[row.instance_id] = row
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    if (filters.serverId) setStatusLoading(filters.serverId, false)
+  }
+}
+
+async function refreshServerStatuses(serverId: string) {
+  await refreshStatuses({ serverId })
+}
+
+async function refreshSelectedStatuses() {
+  if (!selectedId.value) return
+  await refreshStatuses({
+    serviceId: selectedId.value,
+    serverId: selectedServerId.value ?? undefined,
+  })
+}
+
+function setObservabilityLoading(instanceId: string, loadingState: boolean) {
+  const next = new Set(observabilityLoadingIds.value)
+  if (loadingState) next.add(instanceId)
+  else next.delete(instanceId)
+  observabilityLoadingIds.value = next
+}
+
+async function refreshSelectedObservability() {
+  const rows = selectedInstances.value
+  await Promise.all(
+    rows.map(async (instance) => {
+      setObservabilityLoading(instance.id, true)
+      delete observabilityErrors.value[instance.id]
+      try {
+        observabilityByInstance.value[instance.id] = await fetchServiceObservability(
+          instance.id,
+          observabilityMinutes.value,
+        )
+      } catch (e) {
+        observabilityErrors.value[instance.id] = e instanceof Error ? e.message : String(e)
+      } finally {
+        setObservabilityLoading(instance.id, false)
+      }
+    }),
+  )
+}
+
+function formatMetric(metric: ServiceMetric): string {
+  if (metric.unit === 'state') return metric.value >= 1 ? '正常' : '异常'
+  if (metric.unit === 'percent') return `${metric.value.toFixed(1)}%`
+  if (metric.unit === 'bytes') {
+    const units = ['B', 'KB', 'MB', 'GB', 'TB']
+    let value = metric.value
+    let index = 0
+    while (Math.abs(value) >= 1024 && index < units.length - 1) {
+      value /= 1024
+      index += 1
+    }
+    return `${value.toFixed(index === 0 ? 0 : 1)} ${units[index]}`
+  }
+  if (metric.unit === 'seconds') return `${(metric.value * 1000).toFixed(0)} ms`
+  return Number.isInteger(metric.value) ? String(metric.value) : metric.value.toFixed(2)
+}
+
+function metricIsBad(metric: ServiceMetric): boolean {
+  return metric.unit === 'state' && metric.value < 1
+}
+
+function formatLogTime(value: string): string {
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(new Date(value))
+}
+
+function runtimeActionAvailable(instance: ServiceInstance): boolean {
+  return Boolean(
+    instance.server_id &&
+      instance.runtime_name &&
+      (instance.runtime_type === 'systemd' || instance.runtime_type === 'docker'),
+  )
+}
+
+function requestRuntimeAction(instance: ServiceInstance, action: 'start' | 'stop') {
+  if (!runtimeActionAvailable(instance)) return
+  const server = instance.server_id ? serverMap.value.get(instance.server_id) : null
+  const verb = action === 'start' ? '启动' : '停止'
+  const prompt = [
+    `请在 ${server?.name ?? '目标服务器'} 上${verb}服务 ${instance.runtime_name}。`,
+    `运行类型是 ${instance.runtime_type}。`,
+    '请先检测当前状态并核对目标；如果已有受控写工具就发起人工审批，未配置写网关时不要直接执行。',
+  ].join('')
+  void router.push({ name: 'chat', query: { prompt } })
+}
+
 function dependencyCount(serviceId: string): number {
   return dependencies.value.filter(
     (edge) =>
@@ -235,6 +412,16 @@ watch(
   },
   { immediate: true },
 )
+watch(
+  selectedInstanceKey,
+  (key) => {
+    if (!key) return
+    void refreshSelectedObservability()
+  },
+)
+watch(observabilityMinutes, () => {
+  if (selectedInstanceKey.value) void refreshSelectedObservability()
+})
 
 function syncSelectedServerToService(serviceId: string) {
   const selectedServerHasService = instances.value.some(
@@ -265,6 +452,12 @@ function expandServer(serverId: string) {
   const next = new Set(expandedServerIds.value)
   next.add(serverId)
   expandedServerIds.value = next
+  if (
+    instances.value.some((instance) => instance.server_id === serverId) &&
+    !statusLoadingServerIds.value.has(serverId)
+  ) {
+    void refreshServerStatuses(serverId)
+  }
 }
 
 function isServerExpanded(serverId: string): boolean {
@@ -278,6 +471,7 @@ function toggleServer(serverId: string) {
   } else {
     next.add(serverId)
     selectedServerId.value = serverId
+    void refreshServerStatuses(serverId)
     if (
       selectedId.value &&
       !instances.value.some(
@@ -580,7 +774,7 @@ function safeExternalUrl(value: string | null): string | null {
     <header class="view-header">
       <div>
         <h1>服务目录</h1>
-        <p class="subtitle">按服务器展开服务菜单，查看部署实例和依赖关系</p>
+        <p class="subtitle">按服务器查看服务状态、关键指标、近期日志和依赖关系</p>
       </div>
       <button type="button" class="btn-primary" @click="openCreateService">+ 新增服务</button>
     </header>
@@ -636,7 +830,14 @@ function safeExternalUrl(value: string | null): string | null {
               >
                 <span class="submenu-service-heading">
                   <span class="service-name">{{ service.name }}</span>
-                  <span class="environment-badge">{{ service.environment }}</span>
+                  <span
+                    class="runtime-status"
+                    :class="`runtime-${serviceRuntimeStatus(service.id, server.id)}`"
+                    :title="serviceStatusDetail(service.id, server.id)"
+                  >
+                    <span class="status-light" aria-hidden="true" />
+                    {{ serviceStatusLabel(service.id, server.id) }}
+                  </span>
                 </span>
                 <span class="service-owner">{{ service.owner || '未设置负责人' }}</span>
                 <span class="service-counts">
@@ -696,6 +897,102 @@ function safeExternalUrl(value: string | null): string | null {
           </div>
         </dl>
 
+        <section class="detail-section observability-section">
+          <div class="section-heading observability-heading">
+            <div>
+              <h3>实时状态与可观测性</h3>
+              <p>直接查看 Prometheus 关键指标和 Loki 近期日志；状态来自目标服务器只读检测</p>
+            </div>
+            <div class="observability-controls">
+              <select v-model.number="observabilityMinutes" aria-label="可观测性时间范围">
+                <option :value="60">最近 1 小时</option>
+                <option :value="1440">最近 24 小时</option>
+                <option :value="10080">最近 7 天</option>
+              </select>
+              <button type="button" class="btn-secondary" @click="refreshSelectedStatuses">
+                检测状态
+              </button>
+              <button type="button" class="btn-secondary" @click="refreshSelectedObservability">
+                刷新数据
+              </button>
+            </div>
+          </div>
+
+          <p v-if="selectedInstances.length === 0" class="section-empty">
+            该服务器上还没有可展示的服务实例。
+          </p>
+          <div v-else class="observability-stack">
+            <article v-for="instance in selectedInstances" :key="instance.id" class="observability-card">
+              <div class="observability-instance-head">
+                <div>
+                  <strong>{{ instance.runtime_name || instance.name }}</strong>
+                  <span>{{ instance.runtime_type || '未配置运行时' }}</span>
+                </div>
+                <span
+                  class="runtime-status prominent"
+                  :class="`runtime-${instanceStatusClass(instance)}`"
+                  :title="instanceStatus(instance)?.detail || '尚未检测实时状态'"
+                >
+                  <span class="status-light" aria-hidden="true" />
+                  {{ instanceStatusLabel(instance) }}
+                </span>
+              </div>
+
+              <p v-if="observabilityLoadingIds.has(instance.id)" class="hint compact">
+                正在读取 Prometheus 与 Loki…
+              </p>
+              <p v-else-if="observabilityErrors[instance.id]" class="error compact">
+                {{ observabilityErrors[instance.id] }}
+              </p>
+              <template v-else-if="observabilityByInstance[instance.id]">
+                <div class="observability-grid">
+                  <section class="metric-panel">
+                    <div class="panel-subheading">
+                      <h4>关键指标</h4>
+                      <span>{{ instance.metric_instance || '按目录标签匹配' }}</span>
+                    </div>
+                    <div v-if="observabilityByInstance[instance.id].metrics.length" class="metric-grid">
+                      <div
+                        v-for="metric in observabilityByInstance[instance.id].metrics"
+                        :key="metric.key"
+                        class="metric-card"
+                        :class="{ bad: metricIsBad(metric) }"
+                      >
+                        <span>{{ metric.label }}</span>
+                        <strong>{{ formatMetric(metric) }}</strong>
+                      </div>
+                    </div>
+                    <p v-else class="data-empty">
+                      {{ observabilityByInstance[instance.id].metric_message }}
+                    </p>
+                  </section>
+
+                  <section class="log-panel">
+                    <div class="panel-subheading">
+                      <h4>近期日志</h4>
+                      <span>{{ instance.log_service || '未配置 Loki 标签' }}</span>
+                    </div>
+                    <div v-if="observabilityByInstance[instance.id].logs.length" class="log-list">
+                      <div
+                        v-for="log in observabilityByInstance[instance.id].logs"
+                        :key="`${log.timestamp}-${log.line}`"
+                        class="log-row"
+                      >
+                        <time>{{ formatLogTime(log.timestamp) }}</time>
+                        <span class="log-level" :class="`log-${log.level}`">{{ log.level }}</span>
+                        <code>{{ log.line }}</code>
+                      </div>
+                    </div>
+                    <p v-else class="data-empty">
+                      {{ observabilityByInstance[instance.id].log_message }}
+                    </p>
+                  </section>
+                </div>
+              </template>
+            </article>
+          </div>
+        </section>
+
         <section class="detail-section topology-section">
           <div class="section-heading">
             <div><h3>依赖拓扑</h3><p>调用方 → 被调用方，默认展示三层关联</p></div>
@@ -728,7 +1025,17 @@ function safeExternalUrl(value: string | null): string | null {
           <div v-else class="instance-grid">
             <article v-for="instance in selectedInstances" :key="instance.id" class="instance-card">
               <div class="card-heading">
-                <h4>{{ instance.name }}</h4>
+                <div class="instance-title">
+                  <h4>{{ instance.name }}</h4>
+                  <span
+                    class="runtime-status"
+                    :class="`runtime-${instanceStatusClass(instance)}`"
+                    :title="instanceStatus(instance)?.detail || '尚未检测实时状态'"
+                  >
+                    <span class="status-light" aria-hidden="true" />
+                    {{ instanceStatusLabel(instance) }}
+                  </span>
+                </div>
                 <div class="inline-actions">
                   <button type="button" @click="openEditInstance(instance)">编辑</button>
                   <button type="button" class="danger" @click="removeInstance(instance)">删除</button>
@@ -750,6 +1057,25 @@ function safeExternalUrl(value: string | null): string | null {
                 <div><dt>Loki</dt><dd>{{ instance.log_service || '未配置' }}</dd></div>
               </dl>
               <p v-if="instance.description" class="instance-description">{{ instance.description }}</p>
+              <div class="runtime-actions">
+                <button type="button" class="btn-secondary" @click="refreshSelectedStatuses">
+                  检测状态
+                </button>
+                <button
+                  type="button"
+                  class="btn-secondary action-start"
+                  :disabled="!runtimeActionAvailable(instance)"
+                  title="进入运维对话，发送后仍需人工审批"
+                  @click="requestRuntimeAction(instance, 'start')"
+                >启动服务</button>
+                <button
+                  type="button"
+                  class="btn-secondary action-stop"
+                  :disabled="!runtimeActionAvailable(instance)"
+                  title="进入运维对话，发送后仍需人工审批"
+                  @click="requestRuntimeAction(instance, 'stop')"
+                >停止服务</button>
+              </div>
             </article>
           </div>
         </section>
@@ -1251,6 +1577,57 @@ button:disabled {
   font-weight: 600;
 }
 
+.runtime-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex: none;
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.status-light {
+  width: 0.55rem;
+  height: 0.55rem;
+  border: 2px solid color-mix(in srgb, #98a2b3 35%, transparent);
+  border-radius: 50%;
+  background: #98a2b3;
+  box-shadow: 0 0 0 2px color-mix(in srgb, #98a2b3 14%, transparent);
+}
+
+.runtime-running {
+  color: #067647;
+}
+
+.runtime-running .status-light {
+  border-color: color-mix(in srgb, #12b76a 35%, transparent);
+  background: #12b76a;
+  box-shadow: 0 0 0 2px color-mix(in srgb, #12b76a 14%, transparent);
+}
+
+.runtime-error {
+  color: #b42318;
+}
+
+.runtime-error .status-light {
+  border-color: color-mix(in srgb, #f04438 35%, transparent);
+  background: #f04438;
+  box-shadow: 0 0 0 2px color-mix(in srgb, #f04438 14%, transparent);
+}
+
+.runtime-stopped .status-light,
+.runtime-unknown .status-light {
+  background: #98a2b3;
+}
+
+.runtime-status.prominent {
+  border: 1px solid currentcolor;
+  border-radius: 999px;
+  padding: 0.25rem 0.55rem;
+}
+
 .service-owner,
 .service-counts {
   color: var(--color-text-muted);
@@ -1321,8 +1698,227 @@ button:disabled {
   border-top: 1px solid var(--color-border);
 }
 
-.topology-section {
+.observability-section {
   border-top: 0;
+}
+
+.observability-heading {
+  align-items: center;
+}
+
+.observability-controls,
+.runtime-actions,
+.observability-instance-head,
+.panel-subheading,
+.instance-title {
+  display: flex;
+  align-items: center;
+}
+
+.observability-controls {
+  gap: 0.45rem;
+}
+
+.observability-controls select {
+  width: auto;
+  min-width: 120px;
+  padding: 0.48rem 0.6rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  background: var(--color-surface);
+}
+
+.observability-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.observability-card {
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+}
+
+.observability-instance-head {
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 0.9rem;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.observability-instance-head > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.12rem;
+}
+
+.observability-instance-head strong {
+  overflow: hidden;
+  font-size: 0.84rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.observability-instance-head > div span,
+.panel-subheading span {
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  overflow-wrap: anywhere;
+}
+
+.observability-grid {
+  display: grid;
+  grid-template-columns: minmax(250px, 0.75fr) minmax(360px, 1.6fr);
+  gap: 0;
+}
+
+.metric-panel,
+.log-panel {
+  min-width: 0;
+  padding: 0.9rem;
+}
+
+.metric-panel {
+  border-right: 1px solid var(--color-border);
+}
+
+.panel-subheading {
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.65rem;
+}
+
+.panel-subheading h4 {
+  margin: 0;
+  font-size: 0.78rem;
+}
+
+.panel-subheading span {
+  max-width: 65%;
+  text-align: right;
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.metric-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.2rem;
+  border: 1px solid #d1fadf;
+  border-radius: var(--radius-sm);
+  padding: 0.65rem;
+  background: #f6fef9;
+}
+
+.metric-card.bad {
+  border-color: #fecdca;
+  background: #fef3f2;
+}
+
+.metric-card span {
+  color: var(--color-text-muted);
+  font-size: 0.66rem;
+}
+
+.metric-card strong {
+  color: #067647;
+  font-size: 1rem;
+}
+
+.metric-card.bad strong {
+  color: #b42318;
+}
+
+.log-list {
+  display: flex;
+  max-height: 310px;
+  flex-direction: column;
+  gap: 0.15rem;
+  overflow-y: auto;
+}
+
+.log-row {
+  display: grid;
+  grid-template-columns: 86px 42px minmax(0, 1fr);
+  gap: 0.45rem;
+  align-items: start;
+  padding: 0.35rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.68rem;
+}
+
+.log-row:hover {
+  background: var(--color-surface);
+}
+
+.log-row time {
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.log-row code {
+  min-width: 0;
+  color: var(--color-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.log-level {
+  border-radius: 999px;
+  color: var(--color-text-muted);
+  background: #eaecf0;
+  font-size: 0.58rem;
+  font-weight: 700;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.log-level.log-error {
+  color: #b42318;
+  background: #fee4e2;
+}
+
+.log-level.log-warn {
+  color: #b54708;
+  background: #fef0c7;
+}
+
+.log-level.log-info {
+  color: #175cd3;
+  background: #eff8ff;
+}
+
+.data-empty,
+.hint.compact,
+.error.compact {
+  margin: 0;
+  padding: 0.75rem;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  background: var(--color-surface);
+  font-size: 0.72rem;
+}
+
+.hint.compact,
+.error.compact {
+  margin: 0.8rem;
+}
+
+.error.compact {
+  color: #b42318;
+  background: #fef3f2;
 }
 
 .section-heading {
@@ -1378,6 +1974,34 @@ button:disabled {
   font-size: 0.88rem;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.instance-title {
+  min-width: 0;
+  gap: 0.5rem;
+}
+
+.runtime-actions {
+  gap: 0.45rem;
+  margin-top: 0.75rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.runtime-actions .btn-secondary {
+  flex: 1;
+  padding: 0.4rem 0.5rem;
+  font-size: 0.72rem;
+}
+
+.runtime-actions .action-start {
+  color: #067647;
+  border-color: #abefc6;
+}
+
+.runtime-actions .action-stop {
+  color: #b42318;
+  border-color: #fecdca;
 }
 
 .inline-actions button {
@@ -1558,6 +2182,15 @@ button:disabled {
   .service-placeholder {
     grid-column: auto;
   }
+
+  .observability-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .metric-panel {
+    border-right: 0;
+    border-bottom: 1px solid var(--color-border);
+  }
 }
 
 @media (max-width: 700px) {
@@ -1577,6 +2210,16 @@ button:disabled {
 
   .detail-header {
     flex-direction: column;
+  }
+
+  .observability-heading,
+  .observability-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .log-row {
+    grid-template-columns: 76px 38px minmax(0, 1fr);
   }
 }
 </style>
