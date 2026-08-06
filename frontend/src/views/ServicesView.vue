@@ -1149,9 +1149,14 @@ function serverStatusLabel(server: Server): string {
 
 <style scoped>
 .services-view {
+  display: flex;
+  height: 100%;
+  min-height: 0;
   width: 100%;
   max-width: 1600px;
+  flex-direction: column;
   margin: 0 auto;
+  overflow: hidden;
   padding: 2rem;
 }
 
@@ -1249,9 +1254,11 @@ button:disabled {
 
 .directory-layout {
   display: grid;
+  flex: 1;
   grid-template-columns: 320px minmax(0, 1fr);
   gap: 1rem;
-  align-items: start;
+  align-items: stretch;
+  min-height: 0;
 }
 
 .directory-menu-panel,
@@ -1264,14 +1271,14 @@ button:disabled {
 }
 
 .directory-menu-panel {
-  position: sticky;
-  top: 1rem;
   display: flex;
+  height: 100%;
+  min-height: 0;
   flex-direction: column;
   gap: 0.65rem;
-  max-height: calc(100vh - 4rem);
   overflow-y: auto;
   padding: 0.75rem;
+  scrollbar-gutter: stable;
 }
 
 .panel-heading {
@@ -1539,8 +1546,12 @@ button:disabled {
 
 .service-detail {
   grid-column: auto / -1;
+  height: 100%;
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
   padding: 1.25rem;
+  scrollbar-gutter: stable;
 }
 
 .server-summary-grid {
@@ -2050,7 +2061,9 @@ button:disabled {
 .service-placeholder {
   grid-column: auto / -1;
   display: grid;
-  min-height: 480px;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
   place-items: center;
   padding: 2rem;
   color: var(--color-text-muted);
@@ -2134,18 +2147,29 @@ button:disabled {
 }
 
 @media (max-width: 980px) {
+  .services-view {
+    height: auto;
+    min-height: 100%;
+    overflow: visible;
+  }
+
   .directory-layout {
+    flex: none;
     grid-template-columns: 1fr;
+    min-height: auto;
   }
 
   .directory-menu-panel {
-    position: static;
+    height: auto;
     max-height: none;
+    overflow: visible;
   }
 
   .service-detail,
   .service-placeholder {
     grid-column: auto;
+    height: auto;
+    overflow: visible;
   }
 
   .observability-grid {

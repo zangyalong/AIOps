@@ -15,12 +15,16 @@ import NavSidebar from './components/NavSidebar.vue'
 <style scoped>
 .app-shell {
   display: flex;
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .app-content {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   overflow-y: auto;
 }
 </style>

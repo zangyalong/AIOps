@@ -43,7 +43,8 @@ const items = computed(() => [
 .nav-sidebar {
   width: 200px;
   flex-shrink: 0;
-  height: 100vh;
+  height: 100%;
+  overflow-y: auto;
   background: var(--color-surface);
   border-right: 1px solid var(--color-border);
   padding: 1.25rem 0.75rem;
