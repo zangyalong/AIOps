@@ -1,4 +1,9 @@
-import type { Incident, IncidentChangeContext, IncidentStatus } from '../types/incident'
+import type {
+  AlertOccurrence,
+  Incident,
+  IncidentChangeContext,
+  IncidentStatus,
+} from '../types/incident'
 
 async function parseIncidentResponse(res: Response, fallbackMessage: string): Promise<Incident> {
   if (!res.ok) {
@@ -26,6 +31,12 @@ export async function fetchIncidentChanges(
   const params = new URLSearchParams({ window_minutes: String(windowMinutes) })
   const res = await fetch(`/api/incidents/${id}/changes?${params}`)
   if (!res.ok) throw new Error(`获取事件关联变更失败：${res.status}`)
+  return res.json()
+}
+
+export async function fetchIncidentAlertOccurrences(id: string): Promise<AlertOccurrence[]> {
+  const res = await fetch(`/api/incidents/${id}/alert-occurrences`)
+  if (!res.ok) throw new Error(`获取事件原始告警失败：${res.status}`)
   return res.json()
 }
 

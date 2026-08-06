@@ -27,3 +27,20 @@ export interface IncidentChangeContext {
   window_end: string
   changes: ChangeRecord[]
 }
+
+export interface AlertOccurrence {
+  id: string
+  alert_event_id: string | null
+  incident_id: string
+  fingerprint: string
+  alertname: string
+  severity: string
+  status: 'firing' | 'resolved'
+  summary: string | null
+  instance: string | null
+  labels: Record<string, string> | null
+  starts_at: string | null
+  ends_at: string | null
+  created_at: string
+  updated_at: string
+}

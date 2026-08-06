@@ -3,13 +3,19 @@ import { computed, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import {
   acknowledgeIncident,
+  fetchIncidentAlertOccurrences,
   fetchIncidentChanges,
   fetchIncidents,
   resolveIncident,
 } from '../api/incidents'
 import MarkdownContent from '../components/MarkdownContent.vue'
 import type { ChangeRecord, ChangeType } from '../types/change'
-import type { Incident, IncidentChangeContext, IncidentStatus } from '../types/incident'
+import type {
+  AlertOccurrence,
+  Incident,
+  IncidentChangeContext,
+  IncidentStatus,
+} from '../types/incident'
 
 type IncidentFilter = 'all' | IncidentStatus
 
@@ -22,6 +28,9 @@ const pendingAction = ref<string | null>(null)
 const changeContext = ref<IncidentChangeContext | null>(null)
 const changesLoading = ref(false)
 const changesError = ref<string | null>(null)
+const alertOccurrences = ref<AlertOccurrence[]>([])
+const occurrencesLoading = ref(false)
+const occurrencesError = ref<string | null>(null)
 
 type TimelineEntry =
   | { kind: 'incident'; at: string }
@@ -88,9 +97,27 @@ async function loadIncidentChanges(incident: Incident) {
   }
 }
 
+async function loadAlertOccurrences(incident: Incident) {
+  const incidentId = incident.id
+  occurrencesLoading.value = true
+  occurrencesError.value = null
+  alertOccurrences.value = []
+  try {
+    const result = await fetchIncidentAlertOccurrences(incidentId)
+    if (selectedIncident.value?.id === incidentId) alertOccurrences.value = result
+  } catch (e) {
+    if (selectedIncident.value?.id === incidentId) {
+      occurrencesError.value = e instanceof Error ? e.message : String(e)
+    }
+  } finally {
+    if (selectedIncident.value?.id === incidentId) occurrencesLoading.value = false
+  }
+}
+
 function openIncident(incident: Incident) {
   selectedIncident.value = incident
   void loadIncidentChanges(incident)
+  void loadAlertOccurrences(incident)
 }
 
 function closeIncident() {
@@ -98,6 +125,9 @@ function closeIncident() {
   changeContext.value = null
   changesError.value = null
   changesLoading.value = false
+  alertOccurrences.value = []
+  occurrencesError.value = null
+  occurrencesLoading.value = false
 }
 
 async function loadIncidents() {
@@ -109,6 +139,7 @@ async function loadIncidents() {
       selectedIncident.value =
         incidents.value.find((incident) => incident.id === selectedIncident.value?.id) ?? null
       if (selectedIncident.value) await loadIncidentChanges(selectedIncident.value)
+      if (selectedIncident.value) await loadAlertOccurrences(selectedIncident.value)
     }
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
@@ -291,6 +322,37 @@ async function resolve(incident: Incident) {
           <div v-if="selectedIncident.acked_by"><dt>认领人</dt><dd>{{ selectedIncident.acked_by }}</dd></div>
           <div v-if="selectedIncident.resolved_at"><dt>解决时间</dt><dd>{{ formatTime(selectedIncident.resolved_at) }}</dd></div>
         </dl>
+
+        <section class="occurrences-panel">
+          <div class="section-heading">
+            <h3>关联的原始告警</h3>
+            <span>本次触发周期</span>
+          </div>
+          <p v-if="occurrencesLoading" class="timeline-state">正在加载原始告警…</p>
+          <p v-else-if="occurrencesError" class="timeline-error">{{ occurrencesError }}</p>
+          <p v-else-if="alertOccurrences.length === 0" class="timeline-state">
+            暂无历史快照；后端重启完成数据补齐后会显示。
+          </p>
+          <div v-else class="occurrence-list">
+            <article v-for="occurrence in alertOccurrences" :key="occurrence.id">
+              <div class="occurrence-title">
+                <strong>{{ occurrence.alertname }}</strong>
+                <span class="status-badge" :class="`status-${occurrence.status}`">
+                  {{ occurrence.status === 'firing' ? '触发中' : '已恢复' }}
+                </span>
+              </div>
+              <p>{{ occurrence.summary || '暂无摘要' }}</p>
+              <div>
+                <span>实例：{{ occurrence.instance || '未提供' }}</span>
+                <span>开始：{{ formatTime(occurrence.starts_at) }}</span>
+                <span v-if="occurrence.ends_at">恢复：{{ formatTime(occurrence.ends_at) }}</span>
+                <span :title="occurrence.fingerprint">
+                  指纹：{{ occurrence.fingerprint.slice(0, 12) }}
+                </span>
+              </div>
+            </article>
+          </div>
+        </section>
 
         <section class="timeline-panel">
           <div class="section-heading">
@@ -732,9 +794,44 @@ button:disabled {
 }
 
 .diagnosis-panel,
-.timeline-panel {
+.timeline-panel,
+.occurrences-panel {
   min-width: 0;
   margin-top: 1.4rem;
+}
+
+.occurrence-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.occurrence-list article {
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+}
+
+.occurrence-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.occurrence-list p {
+  margin: 0.3rem 0;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+
+.occurrence-list article > div:last-child {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.8rem;
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
 }
 
 .section-heading {

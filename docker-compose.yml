@@ -1,7 +1,7 @@
 # 方向一「真实数据接入」的本地数据源，按任务逐步加进来（最小起步策略）。
 # - 任务1（Prometheus 指标）：prometheus + node-exporter
 # - 任务2（Loki 日志）：loki + promtail（采集容器日志）+ fake-app（造带级别的假应用日志）
-# - 任务3（Alertmanager 告警）：alertmanager + Prometheus 告警规则（docker/alert_rules.yml）
+# - 任务3（Alertmanager 告警）：alertmanager + AIOMS 托管的 Prometheus 告警规则
 # - 任务4（Grafana 可视化）：grafana（接 Prometheus/Loki，agent 生成 Explore 图表链接给用户点）
 # 方向二（事件驱动）：
 # - 后台任务队列：redis（arq 的 broker，告警自动诊断这类后台作业存这里）
@@ -19,11 +19,14 @@ services:
     container_name: aioms-prometheus
     ports:
       - "9090:9090"                 # 对应 backend config 里的 prometheus_base_url
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--web.enable-lifecycle"
     volumes:
       # 抓取配置：告诉 Prometheus 去哪些 target 拉指标。只读挂载。
       - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      # 告警规则（任务3）：prometheus.yml 里 rule_files 指向的就是这个。
-      - ./docker/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      # UI 管理规则单独挂载目录，原子替换规则文件后容器仍能看到新 inode。
+      - ./docker/prometheus-rules:/etc/prometheus/rules:ro
     restart: unless-stopped
 
   # 主机指标导出器：把 CPU/内存/磁盘/网络等暴露成 Prometheus 能抓的 /metrics。

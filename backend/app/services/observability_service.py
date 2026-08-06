@@ -104,6 +104,34 @@ async def prom_label_values(label: str) -> list[str]:
     return body.get("data") or []
 
 
+async def prom_rule_groups() -> list[dict]:
+    """读取 Prometheus 当前已加载的告警规则及运行状态。"""
+    resp = await get_client().get(
+        f"{settings.prometheus_base_url}/api/v1/rules",
+        params={"type": "alert"},
+    )
+    try:
+        body = resp.json()
+    except ValueError:
+        raise RuntimeError(
+            f"Prometheus 返回了非 JSON 响应：HTTP {resp.status_code}"
+        ) from None
+    if body.get("status") != "success":
+        raise RuntimeError(
+            f"Prometheus 查询规则失败：{body.get('errorType')} - {body.get('error')}"
+        )
+    return (body.get("data") or {}).get("groups") or []
+
+
+async def prom_reload() -> None:
+    """通过官方 lifecycle 端点热重载 Prometheus 配置和规则。"""
+    resp = await get_client().post(f"{settings.prometheus_base_url}/-/reload")
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"Prometheus 热重载失败：HTTP {resp.status_code} - {resp.text[:200]}"
+        )
+
+
 async def loki_query_range(
     logql: str,
     start_ns: int,

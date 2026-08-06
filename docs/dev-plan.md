@@ -35,6 +35,12 @@
   - 桌面端固定应用视口，主导航、服务树和详情区域保持同一底部基线，服务树与详情分别独立滚动
   - 服务器总览增加 1 小时 / 24 小时 / 7 天 CPU、内存和磁盘趋势，并提供带 instance 与时间范围的 Grafana Dashboard 深入查看入口
   - 代码、后端测试和前端构建完成后保持未勾选，等用户用真实 web-01 服务完成状态、日志和指标验收
+- [ ] **预警规则配置页面**：在 AIOMS 中手动维护 Prometheus 告警规则，并查看 Prometheus / Alertmanager 运行状态
+  - 规则保存到数据库，启用规则生成独立 YAML 并热重载 Prometheus；支持 PromQL 校验、严重级别、持续时间、摘要、说明和启停
+  - 旧 YAML 的三条演示规则通过幂等迁移脚本进入 `alert_rules`，Prometheus 只保留 AIOMS 托管的一份规则来源
+  - 页面展示规则的正常 / 等待 / 触发状态与 Alertmanager 活跃告警数；Alertmanager 继续只负责告警路由、抑制和通知
+  - 原始告警继续在 `alert_events` 保存当前状态，新增 `alert_occurrences` 按触发周期保留事件关联；事件详情可查看本次归并的原始告警
+  - 代码与静态检查完成后保持未勾选，等用户创建真实规则并观察到状态变化后再验收
 - [ ] **对话发现并注册服务器服务**：用户可要求 Agent 扫描已纳管服务器，把 systemd 服务、Docker 容器或监听端口的未纳管长期进程登记到服务目录
   - 新增只读 `discover_server_services` 和写入 `register_server_services` Tool；发现按 systemd / Docker / socket 监听三层结构化返回，写入复用 LangGraph 人工审批门
   - 第三层只对监听 socket 返回的 PID 定点查询详情，并保留运行至少 60 秒、又不属于 systemd service / Docker scope 的进程；启动命令先做密钥参数脱敏，候选仍需人工判断是否具备业务意义
@@ -92,7 +98,7 @@
 - [x] **接 Loki**：把 `search_logs`（`backend/app/agents/tools/logs.py`）从 mock 换成真实日志查询（LogQL）
   - 数据源用 docker-compose 起的 Loki + Promtail（采集容器日志）+ fake-app（造带级别的假日志）；顺带加了 `list_log_services` / `list_metric_instances` 两个发现工具，让 agent 能先查"有哪些服务/实例"再查具体数据
 - [x] **接 Alertmanager**：`query_alerts`（`backend/app/agents/tools/alerts.py`）从种子数据换成查真实 firing 告警（先只读）
-  - 数据源用 docker-compose 起的 Alertmanager + Prometheus 告警规则（`docker/alert_rules.yml`，3 条 demo）；`query_alerts` 查 `/api/v2/alerts`，可按 severity/instance 过滤。`alert_events` 表 + 种子脚本按选型 C.4 保留不动，留给方向二告警生命周期状态机
+  - 数据源用 docker-compose 起的 Alertmanager + Prometheus 告警规则（3 条 demo 后续已迁入 AIOMS 统一管理）；`query_alerts` 查 `/api/v2/alerts`，可按 severity/instance 过滤。`alert_events` 表 + 种子脚本按选型 C.4 保留不动，留给方向二告警生命周期状态机
 - [x] **Grafana 联动**（可选）：agent 能引用/生成 Grafana 面板链接，把结论落到统一仪表盘
   - `grafana_explore_link` 工具：按查询 + 时间窗拼 Grafana Explore 链接（纯字符串，不访问网络），支持 metrics（PromQL）/ logs（LogQL）/ alerts（Prometheus 的 ALERTS 指标）三种。docker-compose 加 grafana + 数据源 provisioning（固定 uid）。后续引入前端 md 渲染即可让链接可点击
 - [x] **关联原语**：实体模型（服务→实例）+ 时间窗对齐——给定告警/时间点，自动拉同一服务、同一窗口的 metrics + logs（+ traces）一起看

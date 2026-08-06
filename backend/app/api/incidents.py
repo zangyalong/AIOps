@@ -10,7 +10,10 @@ import uuid
 from fastapi import APIRouter, HTTPException, Query
 
 from app.dependencies import DBSession
+from app.models.alert_occurrence import AlertOccurrence
 from app.models.incident import Incident
+from app.repositories import alert_occurrence_repository
+from app.schemas.alert import AlertOccurrenceRead
 from app.schemas.incident import AckRequest, IncidentChangesRead, IncidentRead
 from app.services import change_record_service, incident_service
 
@@ -38,6 +41,20 @@ async def list_incident_changes(
     return await change_record_service.get_incident_change_context(
         db, incident, window_minutes=window_minutes
     )
+
+
+@router.get(
+    "/{incident_id}/alert-occurrences",
+    response_model=list[AlertOccurrenceRead],
+)
+async def list_incident_alert_occurrences(
+    incident_id: uuid.UUID, db: DBSession
+) -> list[AlertOccurrence]:
+    """列出事件归并到的原始告警触发周期，包括已经恢复的历史周期。"""
+    incident = await incident_service.get_incident(db, incident_id)
+    if incident is None:
+        raise HTTPException(status_code=404, detail="incident not found")
+    return await alert_occurrence_repository.list_by_incident(db, incident_id)
 
 
 @router.post("/{incident_id}/ack", response_model=IncidentRead)

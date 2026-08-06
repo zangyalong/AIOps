@@ -8,6 +8,7 @@ from fastapi import FastAPI
 
 from app.agents.graphs.chat_graph import build_chat_graph
 from app.api import (
+    alert_rules,
     alerts,
     changes,
     chat,
@@ -21,6 +22,8 @@ from app.core.config import settings
 from app.db.session import AsyncSessionLocal, engine
 from app.models import (  # noqa: F401  # 注册模型到 Base.metadata
     alert_event,
+    alert_occurrence,
+    alert_rule,
     change_record,
     chat_run,
     conversation,
@@ -30,7 +33,7 @@ from app.models import (  # noqa: F401  # 注册模型到 Base.metadata
     service_catalog,
 )
 from app.models.base import Base
-from app.services import chat_run_record_service
+from app.services import alert_occurrence_service, chat_run_record_service
 from app.services.chat_run_service import ChatRunManager
 
 
@@ -39,6 +42,15 @@ async def lifespan(app: FastAPI):
     # 项目早期没有迁移工具，缺的表在启动时自动建出来；已存在的表不会被改动。
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    async with AsyncSessionLocal() as db:
+        backfilled_occurrences = (
+            await alert_occurrence_service.backfill_existing_incidents(db)
+        )
+    if backfilled_occurrences:
+        print(
+            "[startup] 已为 "
+            f"{backfilled_occurrences} 条历史事件补齐原始告警快照"
+        )
     async with AsyncSessionLocal() as db:
         stale_runs = await chat_run_record_service.fail_incomplete_runs(db)
     if stale_runs:
@@ -73,6 +85,7 @@ app.include_router(servers.router)
 app.include_router(chat.router)
 app.include_router(conversations.router)
 app.include_router(alerts.router)
+app.include_router(alert_rules.router)
 app.include_router(incidents.router)
 app.include_router(changes.router)
 app.include_router(services.router)

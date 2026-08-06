@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     ssh_key_dir: Path = REPO_ROOT / "ssh"
     # 前端“生成环境部署包”调用这里的固定脚本；可在测试环境覆盖为临时目录。
     target_server_scripts_dir: Path = REPO_ROOT / "scripts" / "target-server"
+    # UI 管理的 Prometheus 告警规则输出文件；Docker 挂载整个目录，以便原子替换后仍可见。
+    prometheus_rules_path: Path = (
+        REPO_ROOT / "docker" / "prometheus-rules" / "managed_alert_rules.yml"
+    )
     # 有副作用的服务重启写工具使用独立白名单；默认空字符串=禁止重启任何服务。
     ssh_restart_service_allowlist: str = ""
 

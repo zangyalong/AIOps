@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import AlertRulesView from '../views/AlertRulesView.vue'
 import ChatView from '../views/ChatView.vue'
 import ChangesView from '../views/ChangesView.vue'
 import IncidentsView from '../views/IncidentsView.vue'
@@ -21,6 +22,7 @@ export const router = createRouter({
       component: ChatView,
     },
     { path: '/incidents', name: 'incidents', component: IncidentsView },
+    { path: '/alert-rules', name: 'alert-rules', component: AlertRulesView },
     { path: '/changes', name: 'changes', component: ChangesView },
     { path: '/services', name: 'services', component: ServicesView },
     { path: '/services/:serviceId', name: 'service-detail', component: ServicesView },

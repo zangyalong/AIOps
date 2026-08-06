@@ -52,3 +52,24 @@ class AlertRead(BaseModel):
     ends_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class AlertOccurrenceRead(BaseModel):
+    """一次告警触发周期，永久关联到当时创建的事件。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    alert_event_id: uuid.UUID | None
+    incident_id: uuid.UUID
+    fingerprint: str
+    alertname: str
+    severity: str
+    status: str
+    summary: str | None
+    instance: str | None
+    labels: dict | None
+    starts_at: datetime | None
+    ends_at: datetime | None
+    created_at: datetime
+    updated_at: datetime

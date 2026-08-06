@@ -7,7 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.alert_event import AlertEvent
 from app.models.incident import RESOLVED
-from app.repositories import alert_event_repository, incident_repository
+from app.repositories import (
+    alert_event_repository,
+    alert_occurrence_repository,
+    incident_repository,
+)
 from app.schemas.alert import AlertmanagerAlert
 from app.services import correlation
 
@@ -59,7 +63,23 @@ async def ingest_alerts(db: AsyncSession, alerts: list[AlertmanagerAlert]) -> li
                 await db.flush()
                 to_triage.append(incident.id)
             alert.incident_id = incident.id
+            await db.flush()
+            await alert_occurrence_repository.upsert_for_incident(
+                db,
+                alert=alert,
+                incident_id=incident.id,
+                status="firing",
+            )
+            await db.flush()
         elif alert.incident_id is not None:
+            await alert_occurrence_repository.upsert_for_incident(
+                db,
+                alert=alert,
+                incident_id=alert.incident_id,
+                status="resolved",
+                ends_at=alert.ends_at,
+            )
+            await db.flush()
             # resolved：若所属事件下的告警都不再 firing，事件自动 resolve
             if await incident_repository.count_firing_alerts(db, alert.incident_id) == 0:
                 incident = await incident_repository.get(db, alert.incident_id)

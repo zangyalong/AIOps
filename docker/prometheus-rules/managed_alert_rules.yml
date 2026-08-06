@@ -1,0 +1,30 @@
+groups:
+- name: aioms-managed-alerts
+  rules:
+  - alert: DiskWillFillSoon
+    expr: vector(1)
+    for: 1m
+    labels:
+      instance: db-01:9100
+      severity: critical
+    annotations:
+      summary: 磁盘预计 5 天内写满（synthetic demo 告警，恒触发）
+      aioms_revision: 5889d868e852
+  - alert: NodeMemoryUsageHigh
+    expr: (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100
+      > 60
+    for: 4m
+    labels:
+      severity: warning
+    annotations:
+      summary: 节点内存使用率偏高
+      aioms_revision: d9ebe5ca5118
+      description: '{{ $labels.instance }} 内存使用率约 {{ $value | printf "%.1f" }}%'
+  - alert: Watchdog
+    expr: vector(1)
+    for: 0m
+    labels:
+      severity: info
+    annotations:
+      summary: 告警链路自检（始终触发，用于确认 Alertmanager 通路正常）
+      aioms_revision: ad999175cedb
