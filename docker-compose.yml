@@ -113,7 +113,7 @@ services:
   # ---- 任务4：Grafana 可视化 ----
 
   # 指标/日志的图形前端。它自己不存数据，接到 Prometheus + Loki 上把数据画成图表。
-  # 我们不在这盯着看，而是让 agent 生成"打开某个查询的 Explore 图表"链接给用户点开看走势。
+  # 服务目录提供轻量趋势图，Grafana 提供可缩放的服务器 Dashboard 和 Agent Explore 链接。
   grafana:
     image: grafana/grafana:latest
     container_name: aioms-grafana
@@ -125,10 +125,12 @@ services:
       # Viewer 点 Explore 链接会被重定向回首页（看不到图）。生产绝不能这样，那要接真实登录/权限。
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Editor
+      - GF_USERS_DEFAULT_LANGUAGE=zh-Hans
     volumes:
       # provisioning：容器一起来就自动把 Prometheus/Loki 配成数据源（固定 uid），
       # 省得人工去 UI 加，也让 agent 拼链接能用确定的数据源 uid。
       - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
       - prometheus
       - loki

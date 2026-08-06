@@ -26,6 +26,18 @@ class ServiceMetricRead(BaseModel):
     unit: str
 
 
+class ServiceMetricPointRead(BaseModel):
+    timestamp: datetime
+    value: float
+
+
+class ServiceMetricSeriesRead(BaseModel):
+    key: str
+    label: str
+    unit: str
+    points: list[ServiceMetricPointRead]
+
+
 class ServiceLogRead(BaseModel):
     timestamp: datetime
     level: LogLevel
@@ -45,7 +57,11 @@ class ServiceObservabilityRead(BaseModel):
 
 class ServerObservabilityRead(BaseModel):
     server_id: uuid.UUID
+    range_minutes: int
     metric_instance: str | None
     metrics: list[ServiceMetricRead]
+    series: list[ServiceMetricSeriesRead]
+    grafana_url: str | None = None
     metric_message: str | None = None
+    series_message: str | None = None
     checked_at: datetime

@@ -160,6 +160,32 @@ class ServiceMetricDefinitionTests(unittest.TestCase):
         for definition in definitions:
             self.assertIn('instance="139.196.175.226:9100"', definition.promql)
 
+    def test_server_trends_only_include_percentage_resources(self) -> None:
+        definitions = service_observability_service._server_trend_definitions(
+            "139.196.175.226:9100"
+        )
+
+        self.assertEqual(
+            [definition.key for definition in definitions],
+            ["cpu_usage", "memory_usage", "disk_usage"],
+        )
+
+    def test_range_step_limits_each_series_to_about_240_points(self) -> None:
+        self.assertEqual(service_observability_service._range_step(60), "15s")
+        self.assertEqual(service_observability_service._range_step(1440), "360s")
+        self.assertEqual(service_observability_service._range_step(10080), "2520s")
+
+    def test_range_rows_are_merged_into_sorted_finite_points(self) -> None:
+        points = service_observability_service._series_points(
+            [
+                {"values": [["20", "2.5"], ["30", "NaN"]]},
+                {"values": [["10", "1.5"]]},
+            ]
+        )
+
+        self.assertEqual([point.value for point in points], [1.5, 2.5])
+        self.assertLess(points[0].timestamp, points[1].timestamp)
+
 
 class ServerMetricResolutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_standard_node_exporter_wins_over_database_exporters(self) -> None:

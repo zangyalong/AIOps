@@ -14,6 +14,7 @@ import {
   updateServiceInstance,
 } from '../api/services'
 import { fetchServerObservability, fetchServers } from '../api/servers'
+import MetricTrendChart from '../components/MetricTrendChart.vue'
 import type { Server, ServerObservability } from '../types/server'
 import type {
   ServiceInput,
@@ -48,6 +49,7 @@ const observabilityMinutes = ref(1440)
 const serverObservabilityById = ref<Record<string, ServerObservability>>({})
 const serverObservabilityLoadingIds = ref<Set<string>>(new Set())
 const serverObservabilityErrors = ref<Record<string, string>>({})
+const serverObservabilityMinutes = ref(60)
 
 const serviceModal = ref(false)
 const editingService = ref<ServiceRecord | null>(null)
@@ -276,7 +278,10 @@ async function refreshServerObservability(serverId: string) {
   setServerObservabilityLoading(serverId, true)
   delete serverObservabilityErrors.value[serverId]
   try {
-    serverObservabilityById.value[serverId] = await fetchServerObservability(serverId)
+    serverObservabilityById.value[serverId] = await fetchServerObservability(
+      serverId,
+      serverObservabilityMinutes.value,
+    )
   } catch (e) {
     serverObservabilityErrors.value[serverId] = e instanceof Error ? e.message : String(e)
   } finally {
@@ -428,6 +433,11 @@ watch(
 )
 watch(observabilityMinutes, () => {
   if (selectedInstanceKey.value) void refreshSelectedObservability()
+})
+watch(serverObservabilityMinutes, () => {
+  if (selectedServerId.value && !selectedId.value) {
+    void refreshServerObservability(selectedServerId.value)
+  }
 })
 
 function syncSelectedServerToService(serviceId: string) {
@@ -991,7 +1001,7 @@ function serverStatusLabel(server: Server): string {
         </section>
 
         <section class="detail-section server-metrics-section">
-          <div class="section-heading">
+          <div class="section-heading observability-heading">
             <div>
               <h3>服务器关键指标</h3>
               <p>
@@ -1000,6 +1010,25 @@ function serverStatusLabel(server: Server): string {
                   · 更新于 {{ formatLogTime(selectedServerObservability.checked_at) }}
                 </template>
               </p>
+            </div>
+            <div class="observability-controls">
+              <select v-model.number="serverObservabilityMinutes" aria-label="服务器指标时间范围">
+                <option :value="60">最近 1 小时</option>
+                <option :value="1440">最近 24 小时</option>
+                <option :value="10080">最近 7 天</option>
+              </select>
+              <a
+                v-if="selectedServerObservability?.grafana_url"
+                class="btn-secondary grafana-link"
+                :href="selectedServerObservability.grafana_url"
+                target="_blank"
+                rel="noopener noreferrer"
+              >在 Grafana 中查看</a>
+              <button
+                type="button"
+                class="btn-secondary"
+                @click="refreshServerObservability(selectedServer.id)"
+              >刷新指标</button>
             </div>
           </div>
 
@@ -1023,6 +1052,24 @@ function serverStatusLabel(server: Server): string {
             </div>
             <p v-else class="data-empty">
               {{ selectedServerObservability.metric_message }}
+            </p>
+
+            <div class="server-trend-heading">
+              <h4>历史趋势</h4>
+              <span>Prometheus 范围查询</span>
+            </div>
+            <div v-if="selectedServerObservability.series.length" class="server-trend-grid">
+              <MetricTrendChart
+                v-for="series in selectedServerObservability.series"
+                :key="series.key"
+                :chart-id="`${selectedServer.id}-${series.key}`"
+                :label="series.label"
+                :unit="series.unit"
+                :points="series.points"
+              />
+            </div>
+            <p v-else class="data-empty">
+              {{ selectedServerObservability.series_message }}
             </p>
           </template>
         </section>
@@ -1228,6 +1275,12 @@ h1 {
 .btn-ghost:hover,
 .btn-secondary:hover {
   background: var(--color-bg);
+}
+
+.grafana-link {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
 }
 
 .danger {
@@ -1801,6 +1854,30 @@ button:disabled {
   color: #b42318;
 }
 
+.server-trend-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 1.1rem 0 0.65rem;
+}
+
+.server-trend-heading h4 {
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+.server-trend-heading span {
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+}
+
+.server-trend-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
 .server-service-list {
   overflow: hidden;
   border: 1px solid var(--color-border);
@@ -2206,6 +2283,10 @@ button:disabled {
   .server-summary-grid,
   .server-metric-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .server-trend-grid {
+    grid-template-columns: 1fr;
   }
 
   .server-service-row {

@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     # 多租户 Loki 才需要传 X-Scope-OrgID；本地单体留空即可
     loki_org_id: str = ""
     alertmanager_base_url: str = "http://localhost:9093"
-    # Grafana（可视化）。只用来给用户拼 Explore 图表链接，不发请求。
+    # Grafana（可视化）。用于拼 Explore 链接和服务器 Dashboard 深入查看链接，不发请求。
     grafana_base_url: str = "http://localhost:3000"
     # 打可观测性数据源 HTTP 请求的统一超时（秒）
     obs_http_timeout: float = 10.0

@@ -95,10 +95,26 @@ export interface Server {
 
 export interface ServerObservability {
   server_id: string
+  range_minutes: number
   metric_instance: string | null
   metrics: ServiceMetric[]
+  series: ServerMetricSeries[]
+  grafana_url: string | null
   metric_message: string | null
+  series_message: string | null
   checked_at: string
+}
+
+export interface ServerMetricPoint {
+  timestamp: string
+  value: number
+}
+
+export interface ServerMetricSeries {
+  key: string
+  label: string
+  unit: string
+  points: ServerMetricPoint[]
 }
 
 export interface ServerCreateInput {

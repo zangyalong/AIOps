@@ -32,8 +32,12 @@ export async function fetchServers(): Promise<Server[]> {
   return res.json()
 }
 
-export async function fetchServerObservability(id: string): Promise<ServerObservability> {
-  const res = await fetch(`/api/servers/${id}/observability`)
+export async function fetchServerObservability(
+  id: string,
+  minutes = 60,
+): Promise<ServerObservability> {
+  const params = new URLSearchParams({ minutes: String(minutes) })
+  const res = await fetch(`/api/servers/${id}/observability?${params.toString()}`)
   if (!res.ok) {
     throw await readApiError(res, '获取服务器指标失败')
   }

@@ -7,20 +7,25 @@ import math
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from urllib.parse import urlencode
 
+from app.core.config import settings
 from app.models.server import Server
 from app.models.service_catalog import Service, ServiceInstance
 from app.schemas.service_observability import (
     LogLevel,
     ServerObservabilityRead,
     ServiceLogRead,
+    ServiceMetricPointRead,
     ServiceMetricRead,
+    ServiceMetricSeriesRead,
     ServiceObservabilityRead,
 )
 from app.services.observability_service import (
     loki_query_range,
     prom_label_values,
     prom_query,
+    prom_query_range,
 )
 
 _LOG_LIMIT = 40
@@ -259,6 +264,12 @@ def _server_metric_definitions(metric_instance: str) -> list[_MetricDefinition]:
     ]
 
 
+def _server_trend_definitions(metric_instance: str) -> list[_MetricDefinition]:
+    definitions = _server_metric_definitions(metric_instance)
+    trend_keys = {"cpu_usage", "memory_usage", "disk_usage"}
+    return [definition for definition in definitions if definition.key in trend_keys]
+
+
 async def _resolve_server_metric_instance(
     server: Server,
 ) -> tuple[str | None, str | None]:
@@ -336,6 +347,84 @@ async def _load_metrics(
     if errors:
         return [], f"Prometheus 查询失败：{errors[0]}"
     return [], "当前没有匹配到指标数据，请检查实例标签或 Prometheus Target"
+
+
+def _range_step(minutes: int) -> str:
+    # 每条时序控制在约 240 个点，短时间窗最低 15 秒。
+    return f"{max(15, math.ceil(minutes * 60 / 240))}s"
+
+
+def _series_points(rows: list[dict]) -> list[ServiceMetricPointRead]:
+    points: dict[float, float] = {}
+    for row in rows:
+        for raw_timestamp, raw_value in row.get("values") or []:
+            try:
+                timestamp = float(raw_timestamp)
+                value = float(raw_value)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(timestamp) and math.isfinite(value):
+                points[timestamp] = value
+    return [
+        ServiceMetricPointRead(
+            timestamp=datetime.fromtimestamp(timestamp, tz=UTC),
+            value=value,
+        )
+        for timestamp, value in sorted(points.items())
+    ]
+
+
+async def _load_metric_series(
+    definitions: list[_MetricDefinition], minutes: int
+) -> tuple[list[ServiceMetricSeriesRead], str | None]:
+    end = datetime.now(UTC).timestamp()
+    start = end - minutes * 60
+    responses = await asyncio.gather(
+        *(
+            prom_query_range(
+                definition.promql,
+                start,
+                end,
+                step=_range_step(minutes),
+            )
+            for definition in definitions
+        ),
+        return_exceptions=True,
+    )
+    series: list[ServiceMetricSeriesRead] = []
+    errors: list[str] = []
+    for definition, response in zip(definitions, responses, strict=True):
+        if isinstance(response, BaseException):
+            errors.append(str(response))
+            continue
+        points = _series_points(response)
+        if points:
+            series.append(
+                ServiceMetricSeriesRead(
+                    key=definition.key,
+                    label=definition.label,
+                    unit=definition.unit,
+                    points=points,
+                )
+            )
+    if series:
+        return series, None
+    if errors:
+        return [], f"Prometheus 趋势查询失败：{errors[0]}"
+    return [], "当前时间范围没有匹配到趋势数据"
+
+
+def _grafana_server_url(metric_instance: str, minutes: int) -> str:
+    query = urlencode(
+        {
+            "orgId": "1",
+            "var-instance": metric_instance,
+            "from": f"now-{minutes}m",
+            "to": "now",
+        }
+    )
+    base_url = settings.grafana_base_url.rstrip("/")
+    return f"{base_url}/d/aioms-server-overview/server-overview?{query}"
 
 
 def _log_level(line: str) -> LogLevel:
@@ -433,24 +522,36 @@ async def get_instance_observability(
     )
 
 
-async def get_server_observability(server: Server) -> ServerObservabilityRead:
+async def get_server_observability(
+    server: Server, minutes: int
+) -> ServerObservabilityRead:
     metric_instance, resolution_message = await _resolve_server_metric_instance(server)
     if metric_instance is None:
         return ServerObservabilityRead(
             server_id=server.id,
+            range_minutes=minutes,
             metric_instance=None,
             metrics=[],
+            series=[],
             metric_message=resolution_message,
+            series_message=resolution_message,
             checked_at=datetime.now(UTC),
         )
 
-    metrics, metric_message = await _load_metrics(
-        _server_metric_definitions(metric_instance)
+    metrics_result, series_result = await asyncio.gather(
+        _load_metrics(_server_metric_definitions(metric_instance)),
+        _load_metric_series(_server_trend_definitions(metric_instance), minutes),
     )
+    metrics, metric_message = metrics_result
+    series, series_message = series_result
     return ServerObservabilityRead(
         server_id=server.id,
+        range_minutes=minutes,
         metric_instance=metric_instance,
         metrics=metrics,
+        series=series,
+        grafana_url=_grafana_server_url(metric_instance, minutes),
         metric_message=metric_message,
+        series_message=series_message,
         checked_at=datetime.now(UTC),
     )

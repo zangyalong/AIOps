@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.background import BackgroundTask
@@ -54,10 +54,12 @@ async def get_server(server_id: uuid.UUID, db: DBSession) -> Server:
     response_model=ServerObservabilityRead,
 )
 async def get_server_observability(
-    server_id: uuid.UUID, db: DBSession
+    server_id: uuid.UUID,
+    db: DBSession,
+    minutes: int = Query(default=60, ge=15, le=10080),
 ) -> ServerObservabilityRead:
     server = await _get_server_or_404(db, server_id)
-    return await service_observability_service.get_server_observability(server)
+    return await service_observability_service.get_server_observability(server, minutes)
 
 
 @router.patch("/{server_id}", response_model=ServerRead)

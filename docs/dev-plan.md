@@ -33,6 +33,7 @@
   - 部署实例随实时状态检测展示当前监听端口；指标来源明确区分手填 Prometheus instance、各数据库 Exporter 和 cAdvisor 自动标签匹配，不再把自动匹配误写为“未配置”
   - 点击服务器节点时展示服务器总览，自动匹配该服务器的 node_exporter，并集中展示 CPU、内存、磁盘、负载、运行时长和服务状态摘要
   - 桌面端固定应用视口，主导航、服务树和详情区域保持同一底部基线，服务树与详情分别独立滚动
+  - 服务器总览增加 1 小时 / 24 小时 / 7 天 CPU、内存和磁盘趋势，并提供带 instance 与时间范围的 Grafana Dashboard 深入查看入口
   - 代码、后端测试和前端构建完成后保持未勾选，等用户用真实 web-01 服务完成状态、日志和指标验收
 - [ ] **对话发现并注册服务器服务**：用户可要求 Agent 扫描已纳管服务器，把 systemd 服务、Docker 容器或监听端口的未纳管长期进程登记到服务目录
   - 新增只读 `discover_server_services` 和写入 `register_server_services` Tool；发现按 systemd / Docker / socket 监听三层结构化返回，写入复用 LangGraph 人工审批门
