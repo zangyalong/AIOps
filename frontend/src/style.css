@@ -10,9 +10,10 @@
   --color-border: #e3e5e9;
   --color-text: #1c1d22;
   --color-text-muted: #6b6f76;
-  --color-accent: #4f46e5;
-  --color-accent-hover: #4338ca;
+  --color-accent: #4f7dd9;
+  --color-accent-hover: #416fc8;
   --color-accent-contrast: #ffffff;
+  --color-interactive-bg: #e7effe;
 
   --color-status-active: #22c55e;
   --color-status-unreachable: #ef4444;
@@ -55,7 +56,7 @@ input:focus,
 select:focus,
 textarea:focus {
   border-color: var(--color-accent);
-  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
+  box-shadow: 0 0 0 3px rgba(79, 125, 217, 0.12);
 }
 
 input::placeholder {

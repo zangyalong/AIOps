@@ -1368,8 +1368,7 @@ button:disabled {
 }
 
 .server-menu-group {
-  overflow: hidden;
-  border-radius: var(--radius-sm);
+  overflow: visible;
 }
 
 .server-menu-item {
@@ -1387,10 +1386,19 @@ button:disabled {
 }
 
 .server-menu-item:hover {
-  background: var(--color-bg);
+  background: transparent;
+  color: var(--color-accent);
 }
 
 .server-menu-item.active {
+  color: var(--color-accent);
+  background: transparent;
+}
+
+.server-menu-item:focus-visible,
+.service-submenu-item:focus-visible,
+.server-service-row:focus-visible {
+  outline: none;
   color: var(--color-accent);
 }
 
@@ -1500,12 +1508,14 @@ button:disabled {
 }
 
 .service-submenu-item:hover {
-  background: var(--color-bg);
+  background: transparent;
+  color: var(--color-accent);
 }
 
 .service-submenu-item.active {
-  border-color: color-mix(in srgb, var(--color-accent) 35%, var(--color-border));
-  background: #eef2ff;
+  border-color: transparent;
+  background: transparent;
+  color: var(--color-accent);
 }
 
 .submenu-service-heading {
@@ -1879,9 +1889,7 @@ button:disabled {
 }
 
 .server-service-list {
-  overflow: hidden;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  overflow: visible;
 }
 
 .server-service-row {
@@ -1891,10 +1899,10 @@ button:disabled {
   align-items: center;
   width: 100%;
   border: 0;
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 0;
   padding: 0.75rem 0.85rem;
   color: var(--color-text);
-  background: var(--color-surface);
+  background: transparent;
   text-align: left;
 }
 
@@ -1903,7 +1911,8 @@ button:disabled {
 }
 
 .server-service-row:hover {
-  background: var(--color-bg);
+  background: transparent;
+  color: var(--color-accent);
 }
 
 .server-service-identity {

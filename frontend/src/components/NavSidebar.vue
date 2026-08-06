@@ -47,13 +47,16 @@ const items = computed(() => [
   overflow-y: auto;
   background: var(--color-surface);
   border-right: 1px solid var(--color-border);
-  padding: 1.25rem 0.75rem;
+  padding: 0 0.75rem 1.25rem;
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 0;
 }
 
 .brand {
+  display: flex;
+  flex: 0 0 64px;
+  align-items: center;
   font-weight: 600;
   font-size: 1.1rem;
   padding: 0 0.5rem;
@@ -86,8 +89,8 @@ ul {
 }
 
 .nav-item.router-link-active {
-  background: var(--color-accent);
-  color: var(--color-accent-contrast);
+  background: var(--color-interactive-bg);
+  color: var(--color-text);
 }
 
 .icon {

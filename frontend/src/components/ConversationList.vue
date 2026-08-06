@@ -62,11 +62,13 @@ onMounted(refresh)
 
 <style scoped>
 .conversation-list {
-  width: 200px;
+  width: 230px;
   flex-shrink: 0;
+  height: 100%;
   border-right: 1px solid var(--color-border);
-  padding-right: 1rem;
+  padding: 1.5rem 1rem 1rem 2rem;
   overflow-y: auto;
+  background: #f8f9fa;
 }
 
 h2 {
@@ -135,8 +137,8 @@ li:hover .del-btn {
 }
 
 li.active {
-  background: var(--color-accent);
-  color: var(--color-accent-contrast);
+  background: var(--color-interactive-bg);
+  color: var(--color-text);
   font-weight: 500;
 }
 

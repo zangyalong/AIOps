@@ -488,65 +488,70 @@ onBeforeUnmount(() => {
     />
 
     <div class="chat-main">
-      <div class="header-row">
-        <h1>运维助手</h1>
-        <button type="button" class="new-chat" @click="newConversation">新对话</button>
+      <div class="chat-header">
+        <div class="header-row">
+          <h1>运维助手</h1>
+          <button type="button" class="new-chat" @click="newConversation">新对话</button>
+        </div>
       </div>
 
       <div ref="messagesEl" class="messages">
-        <p v-if="timeline.length === 0" class="hint">
-          试着问一句"现在有哪些服务器？"
-        </p>
-        <template v-for="item in timeline" :key="item.key">
-          <div v-if="item.kind === 'message'" class="message" :class="item.role">
-            <strong>{{ item.role === 'user' ? '我' : '助手' }}：</strong>
-            <MarkdownContent
-              v-if="item.role === 'assistant'"
-              :content="item.content"
-            />
-            <span v-else class="plain-message">{{ item.content }}</span>
-          </div>
-          <div v-else-if="item.kind === 'tool'" class="tool-line" :class="{ done: item.done, failed: item.failed }">
-            {{ item.failed ? '✕' : item.done ? '✓' : '›' }}
-            {{ item.failed ? '调用失败：' : item.done ? '已' : '正在' }}{{ toolLabel(item.tool) }}{{ item.done || item.failed ? '' : '…' }}
-          </div>
-          <p v-else-if="item.kind === 'run-error'" class="run-error">本轮失败：{{ item.content }}</p>
-          <div v-else-if="item.kind === 'approval'" class="approval-line" :class="item.status">
-            <span class="approval-icon">{{
-              item.status === 'pending' ? '›' : item.status === 'approved' ? '✓' : '✕'
-            }}</span>
-            <span class="approval-text">
-              <span class="approval-verb">{{
-                item.status === 'pending'
-                  ? '待确认'
-                  : item.status === 'approved'
-                    ? '已批准'
-                    : item.status === 'failed'
-                      ? '未完成'
-                      : '已拒绝'
+        <div class="messages-content">
+          <p v-if="timeline.length === 0" class="hint">
+            试着问一句"现在有哪些服务器？"
+          </p>
+          <template v-for="item in timeline" :key="item.key">
+            <div v-if="item.kind === 'message'" class="message" :class="item.role">
+              <MarkdownContent
+                v-if="item.role === 'assistant'"
+                :content="item.content"
+              />
+              <span v-else class="plain-message">{{ item.content }}</span>
+            </div>
+            <div v-else-if="item.kind === 'tool'" class="tool-line" :class="{ done: item.done, failed: item.failed }">
+              {{ item.failed ? '✕' : item.done ? '✓' : '›' }}
+              {{ item.failed ? '调用失败：' : item.done ? '已' : '正在' }}{{ toolLabel(item.tool) }}{{ item.done || item.failed ? '' : '…' }}
+            </div>
+            <p v-else-if="item.kind === 'run-error'" class="run-error">本轮失败：{{ item.content }}</p>
+            <div v-else-if="item.kind === 'approval'" class="approval-line" :class="item.status">
+              <span class="approval-icon">{{
+                item.status === 'pending' ? '›' : item.status === 'approved' ? '✓' : '✕'
               }}</span>
-              <span v-if="item.riskLevel" class="approval-risk">{{ riskLevelLabel(item.riskLevel) }}</span>
-              <code class="approval-cmd">{{ item.command }}</code>
-              <span v-if="item.label" class="approval-loc">· {{ item.label }}</span>
-            </span>
-            <span v-if="item.status === 'pending'" class="approval-btns">
-              <button type="button" class="approve" :disabled="sending" @click="decide(true)">执行</button>
-              <button type="button" class="reject" :disabled="sending" @click="decide(false)">不执行</button>
-            </span>
-          </div>
-        </template>
-        <p v-if="showThinking" class="hint">正在生成回答…</p>
-        <p v-if="error" class="error">{{ error }}</p>
+              <span class="approval-text">
+                <span class="approval-verb">{{
+                  item.status === 'pending'
+                    ? '待确认'
+                    : item.status === 'approved'
+                      ? '已批准'
+                      : item.status === 'failed'
+                        ? '未完成'
+                        : '已拒绝'
+                }}</span>
+                <span v-if="item.riskLevel" class="approval-risk">{{ riskLevelLabel(item.riskLevel) }}</span>
+                <code class="approval-cmd">{{ item.command }}</code>
+                <span v-if="item.label" class="approval-loc">· {{ item.label }}</span>
+              </span>
+              <span v-if="item.status === 'pending'" class="approval-btns">
+                <button type="button" class="approve" :disabled="sending" @click="decide(true)">执行</button>
+                <button type="button" class="reject" :disabled="sending" @click="decide(false)">不执行</button>
+              </span>
+            </div>
+          </template>
+          <p v-if="showThinking" class="hint">正在生成回答…</p>
+          <p v-if="error" class="error">{{ error }}</p>
+        </div>
       </div>
 
-      <form class="input-row" @submit.prevent="send">
-        <input
-          v-model="input"
-          :placeholder="pendingApproval ? '请先处理上面的确认…' : '输入消息…'"
-          :disabled="sending || !!pendingApproval"
-        />
-        <button type="submit" :disabled="sending || !!pendingApproval">发送</button>
-      </form>
+      <div class="input-panel">
+        <form class="input-row" @submit.prevent="send">
+          <input
+            v-model="input"
+            :placeholder="pendingApproval ? '请先处理上面的确认…' : '输入消息…'"
+            :disabled="sending || !!pendingApproval"
+          />
+          <button type="submit" :disabled="sending || !!pendingApproval">发送</button>
+        </form>
+      </div>
     </div>
   </section>
 </template>
@@ -554,24 +559,32 @@ onBeforeUnmount(() => {
 <style scoped>
 .chat-view {
   display: flex;
-  gap: 1.5rem;
-  height: 100vh;
-  padding: 1.5rem 2rem;
+  height: 100%;
+  min-height: 0;
+  background: #ffffff;
 }
 
 .chat-main {
   flex: 1;
   min-width: 0;
-  max-width: 760px;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  background: #ffffff;
+}
+
+.chat-header {
+  flex-shrink: 0;
+  padding: 1.5rem 2rem 0;
 }
 
 .header-row {
+  width: 100%;
+  max-width: 760px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 1rem;
+  margin: 0 auto 1rem;
 }
 
 h1 {
@@ -600,30 +613,61 @@ h1 {
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-gutter: stable;
+  padding: 0 2rem;
+  background: #ffffff;
+  scrollbar-width: thin;
+  scrollbar-color: #c7c9ce transparent;
+}
+
+.messages-content {
+  width: 100%;
+  max-width: 760px;
+  min-height: 100%;
+  margin: 0 auto;
+  padding-bottom: 1rem;
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-  margin-bottom: 1rem;
 }
 
-/* 列表负责纵向滚动；每条消息必须保持内容撑开的真实高度，不能为了塞进视口参与 flex 压缩。 */
-.messages > * {
+.messages::-webkit-scrollbar {
+  width: 12px;
+}
+
+.messages::-webkit-scrollbar-track {
+  border-left: 1px solid #eceef1;
+  background: var(--color-surface);
+}
+
+.messages::-webkit-scrollbar-thumb {
+  min-height: 36px;
+  border: 3px solid var(--color-surface);
+  border-radius: 999px;
+  background: #c7c9ce;
+}
+
+.messages::-webkit-scrollbar-thumb:hover {
+  background: #aeb1b7;
+}
+
+/* 外层列表负责纵向滚动；内容列里的每条消息保持真实高度，不参与 flex 压缩。 */
+.messages-content > * {
   flex-shrink: 0;
 }
 
 .message {
   min-width: 0;
   max-width: min(80%, 100%);
-  padding: 0.55rem 0.85rem;
-  border-radius: var(--radius);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   overflow-wrap: anywhere;
 }
 
-.message.assistant > strong {
-  display: block;
-  margin-bottom: 0.2rem;
+.message.assistant {
+  align-self: stretch;
+  max-width: 100%;
 }
 
 .plain-message {
@@ -633,9 +677,10 @@ h1 {
 
 .message.user {
   align-self: flex-end;
-  background: var(--color-accent);
-  color: var(--color-accent-contrast);
-  border-color: var(--color-accent);
+  padding: 0.55rem 0.85rem;
+  border-radius: var(--radius);
+  background: #eaf1fe;
+  color: var(--color-text);
 }
 
 /* 工具调用渲染成单行文本：运行时黑色，完成后变灰以区分。不是气泡/胶囊。 */
@@ -775,8 +820,17 @@ h1 {
 }
 
 .input-row {
+  width: 100%;
+  max-width: 760px;
   display: flex;
   gap: 0.5rem;
+  margin: 0 auto;
+}
+
+.input-panel {
+  flex-shrink: 0;
+  padding: 0.5rem 2rem 1.5rem;
+  background: #ffffff;
 }
 
 .input-row input {

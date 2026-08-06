@@ -468,14 +468,16 @@ h1 {
   border: 1px solid var(--color-accent);
 }
 
-.btn-primary:hover {
+.btn-primary:hover,
+.btn-secondary:hover {
+  border-color: var(--color-accent-hover);
   background: var(--color-accent-hover);
 }
 
 .btn-secondary {
-  color: var(--color-text);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
+  color: var(--color-accent-contrast);
+  background: var(--color-accent);
+  border: 1px solid var(--color-accent);
 }
 
 button:disabled {
@@ -567,15 +569,37 @@ button:disabled {
   font-size: 0.85rem;
 }
 
-.text-button,
-.close-button {
-  color: var(--color-accent);
-  background: transparent;
-  border: 0;
-  padding: 0.3rem;
+.text-button {
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  padding: 0.38rem 0.65rem;
+  color: var(--color-accent-contrast);
+  background: var(--color-accent);
 }
 
-.text-button.danger,
+.text-button:hover {
+  border-color: var(--color-accent-hover);
+  background: var(--color-accent-hover);
+}
+
+.close-button {
+  border: 0;
+  padding: 0.3rem;
+  color: var(--color-text-muted);
+  background: transparent;
+}
+
+.text-button.danger {
+  border-color: #fecaca;
+  color: var(--color-status-unreachable);
+  background: #fef2f2;
+}
+
+.text-button.danger:hover {
+  border-color: #fca5a5;
+  background: #fee2e2;
+}
+
 .rule-error {
   color: var(--color-status-unreachable);
 }
