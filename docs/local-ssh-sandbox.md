@@ -118,16 +118,16 @@ curl -X POST http://localhost:8010/servers \
 回答里会带上"（真实执行于 docker-test-01）"这样的字样和真实命令输出，不再是固定的模拟文本。
 
 这是纯读诊断工具，因此不会弹人工审批卡片。当前沙箱镜像默认关闭 sudo，也不运行 systemd，
-不能用它验证 `restart_service` 写工具；写工具应在专门的、可随时重建的 systemd 测试机上验收。
+不能用它验证 systemd 服务控制写工具；写工具应在专门的、可随时重建的 systemd 测试机上验收。
 
 ## 写工具验收说明
 
-`restart_service` 与上面的读诊断工具走不同边界：模型提出重启后，LangGraph 会先挂起并等待
-人工批准；批准后，工具还会检查 `SSH_RESTART_SERVICE_ALLOWLIST`，只有精确命中的服务名才会
-执行。例如在专用测试机上只允许重启 nginx：
+`start_service`、`stop_service`、`restart_service` 与上面的读诊断工具走不同边界：模型提出
+操作后，LangGraph 会先挂起并等待人工批准；批准后，工具使用独立部署身份调用固定网关，且
+AIOMS 与目标服务器两端都检查精确白名单。例如在专用测试机上允许控制 nginx：
 
 ```dotenv
-SSH_RESTART_SERVICE_ALLOWLIST=nginx
+SSH_SERVICE_CONTROL_ALLOWLIST=nginx.service
 ```
 
 目标测试账号还必须能非交互执行 `sudo -n -- systemctl restart -- nginx`。不要在生产服务器上直接

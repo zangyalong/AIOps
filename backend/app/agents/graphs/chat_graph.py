@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from functools import lru_cache, partial
+from functools import cache, lru_cache, partial
 from typing import Annotated, Literal, TypedDict
 
 from langchain_core.messages import (
@@ -22,7 +22,8 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command, interrupt
 from pydantic import BaseModel, Field
 
-from app.agents.tools.actions import restart_service
+from app.agents.tools.actions import restart_service, start_service, stop_service
+from app.agents.tools.alert_rules import create_alert_rule
 from app.agents.tools.alerts import query_alerts
 from app.agents.tools.catalog import (
     describe_write_action,
@@ -91,9 +92,11 @@ SPECIALIST_READ_TOOLS: dict[AgentName, list[BaseTool]] = {
 SPECIALIST_WRITE_TOOLS: dict[AgentName, list[BaseTool]] = {
     "metrics_agent": [],
     "logs_agent": [],
-    "incident_agent": [],
+    "incident_agent": [create_alert_rule],
     "infrastructure_agent": [
         register_server_services,
+        start_service,
+        stop_service,
         restart_service,
         apply_server_log_config,
     ],
@@ -107,6 +110,11 @@ for _tools in SPECIALIST_WRITE_TOOLS.values():
 
 MAX_TOOL_ITERATIONS = 5
 MAX_SUPERVISOR_ROUNDS = 4
+SIMPLIFIED_CHINESE_REQUIREMENT = (
+    "语言要求：无论用户输入、历史消息或工具资料使用什么语言，你的说明、内部报告、"
+    "工具调用前文字和最终回答都必须使用简体中文。命令、代码、PromQL、服务名、标签名和"
+    "产品专有名词可以保留原文；不要输出英文思考过程或英文过渡句。"
+)
 
 SPECIALIST_PROMPTS: dict[AgentName, str] = {
     "metrics_agent": (
@@ -128,6 +136,9 @@ SPECIALIST_PROMPTS: dict[AgentName, str] = {
         "用户询问某台服务器在服务目录中登记或部署了哪些服务时，调用 query_server_services；"
         "它查询的是 AIOMS 登记关系，不能用来回答实时进程或容器运行状态。"
         "服务目录只维护服务与部署实例，不包含服务依赖关系。"
+        "用户明确要求新增预警规则时，先确认规则名、PromQL、持续时间、严重级别和摘要都已明确；"
+        "信息不足就用简体中文报告缺失字段，不得猜测。字段完整时调用 create_alert_rule，且该写"
+        "工具必须单独提交人工审批，不能和读工具放在同一批。只有工具成功后才能声称规则已创建。"
         "完成调查后输出一份给 Supervisor 的简短证据报告，不要假装直接回复最终用户。"
     ),
     "infrastructure_agent": (
@@ -157,8 +168,10 @@ SPECIALIST_PROMPTS: dict[AgentName, str] = {
         "映射容器日志，process 标记 none。只有用户明确要求应用、启用或更新配置时，才把预览"
         "返回的 preview_hash 和 mappings 原样传给 apply_server_log_config；它是高风险写工具，"
         "会上传固定映射并启动或重载 Alloy，必须单独提交人工审批，不能和其他 Tool 同批调用。"
-        "只有用户明确要求重启服务时才能调用 "
-        "restart_service；它是高风险写工具，必须等待人工审批，不能用诊断工具替代或拼接写命令。"
+        "用户明确要求启动、停止或重启 systemd 服务时，必须先用 query_servers 核对服务器，再用 "
+        "run_diagnostic_command 检查目标单元和当前状态；核对完成后分别调用 start_service、"
+        "stop_service 或 restart_service。三者都是高风险写工具，必须单独等待人工审批，不能用"
+        "诊断工具替代或拼接写命令。若部署身份、固定写网关或白名单未配置，必须明确说明未执行。"
         "完成调查后输出一份给 Supervisor 的简短证据报告，不要假装直接回复最终用户。"
     ),
 }
@@ -168,14 +181,15 @@ SUPERVISOR_PROMPT = """你是 AIOMS 的 Supervisor，只负责拆解问题和把
 可委派的专家：
 - metrics_agent：Prometheus 指标、实例发现、指标图表链接
 - logs_agent：Loki 日志、服务发现、日志图表链接
-- incident_agent：当前告警、服务目录、按服务器查询已登记服务和事件关联
-- infrastructure_agent：服务器清单、实时服务发现、服务目录注册、Alloy 配置预览/审批应用、SSH 只读诊断和受控服务重启
+- incident_agent：当前告警、服务目录、按服务器查询已登记服务、事件关联和审批创建预警规则
+- infrastructure_agent：服务器清单、实时服务发现、服务目录注册、Alloy 配置预览/审批应用、SSH 只读诊断和受控服务启停/重启
 
 每次只选择一个专家。专家完成后你会再次拿到控制权，可以继续委派另一个专家；证据已经足够，或用户只是闲聊、解释概念时选择 finish。
 涉及“当前/最新”的服务器状态、指标、日志、告警或命令输出时，不能在没有对应专家真实调查结果的情况下 finish。
 不要重复委派已经回答清楚同一问题的专家。instruction 要写成该专家可以独立执行的具体任务，并带上必要实体、时间窗和筛选条件。
 用户询问服务目录登记/部署关系时交给 incident_agent 调用 query_server_services；询问当前实际运行的业务服务、容器或监听应用时交给 infrastructure_agent 调用结构化服务发现，明确命令或具体 PID 调查才使用诊断命令。
 用户要求“扫描当前服务并注册到服务目录”时交给 infrastructure_agent，让它先发现、再发起带人工审批的目录注册。
+用户要求新增或创建预警规则时交给 incident_agent；字段完整后由 create_alert_rule 进入人工审批，字段不足不得猜测。
 不要擅自增加用户没有要求的图表、链接或额外调查项，避免无意义的工具调用。
 """
 
@@ -239,7 +253,7 @@ def _base_llm() -> ChatOpenAI:
     )
 
 
-@lru_cache(maxsize=None)
+@cache
 def _specialist_llm(
     agent_name: AgentName, mode: Literal["none", "auto"], allow_write_tools: bool
 ) -> Runnable:
@@ -374,7 +388,10 @@ async def supervisor_node(
         SupervisorDecision, method="function_calling"
     )
     decision = await structured_llm.ainvoke(
-        [SystemMessage(SUPERVISOR_PROMPT), HumanMessage(context)]
+        [
+            SystemMessage(f"{SIMPLIFIED_CHINESE_REQUIREMENT}\n\n{SUPERVISOR_PROMPT}"),
+            HumanMessage(context),
+        ]
     )
     print(
         f"[graph] supervisor 耗时 {time.monotonic() - t0:.1f}s，"
@@ -419,6 +436,7 @@ async def specialist_node(agent_name: AgentName, state: SpecialistState) -> dict
     )
     reports = _reports_text(state.get("reports", {}))
     system = (
+        f"{SIMPLIFIED_CHINESE_REQUIREMENT}\n\n"
         f"{SPECIALIST_PROMPTS[agent_name]}\n\n"
         f"本次任务：{state.get('specialist_instruction', '')}\n"
         f"其他专家已有报告：\n{reports}\n\n{guidance}"
@@ -590,7 +608,10 @@ async def synthesize_node(state: ChatState) -> dict:
 
     t0 = time.monotonic()
     response = await _base_llm().ainvoke(
-        [SystemMessage(SYNTHESIZER_PROMPT), HumanMessage(context)]
+        [
+            SystemMessage(f"{SIMPLIFIED_CHINESE_REQUIREMENT}\n\n{SYNTHESIZER_PROMPT}"),
+            HumanMessage(context),
+        ]
     )
     print(f"[graph] synthesize 耗时 {time.monotonic() - t0:.1f}s")
     return {"messages": [response]}

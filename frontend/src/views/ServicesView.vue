@@ -376,7 +376,7 @@ function runtimeActionAvailable(instance: ServiceInstance): boolean {
   return Boolean(
     instance.server_id &&
       instance.runtime_name &&
-      (instance.runtime_type === 'systemd' || instance.runtime_type === 'docker'),
+      instance.runtime_type === 'systemd',
   )
 }
 

@@ -66,23 +66,43 @@ const TOOL_LABELS: Record<string, string> = {
   discover_server_services: '发现服务器运行服务',
   register_server_services: '注册服务目录',
   run_diagnostic_command: '执行只读诊断',
+  start_service: '启动服务',
+  stop_service: '停止服务',
   restart_service: '重启服务',
+  create_alert_rule: '创建预警规则',
+  apply_server_log_config: '应用服务器日志配置',
   run_whitelisted_command: '执行远程命令（旧记录）',
 }
 function toolLabel(name: string): string {
   return TOOL_LABELS[name] ?? name
 }
 
-// 目录注册和服务重启是当前写工具；旧名称仅用于正确还原已有历史会话，不会再绑定给 Agent。
+// 写工具都必须还原为审批行；旧名称仅用于正确显示已有历史，不会再绑定给 Agent。
 const WRITE_TOOLS = new Set([
   'register_server_services',
+  'create_alert_rule',
+  'start_service',
+  'stop_service',
   'restart_service',
+  'apply_server_log_config',
   'run_whitelisted_command',
 ])
 
+const MEDIUM_RISK_TOOLS = new Set(['register_server_services', 'create_alert_rule'])
+const HIGH_RISK_TOOLS = new Set([
+  'start_service',
+  'stop_service',
+  'restart_service',
+  'apply_server_log_config',
+])
+
 function historyApprovalCommand(name: string, args: Record<string, unknown>): string {
-  if (name === 'restart_service') {
-    return `重启服务 ${String(args.service_name ?? '?')}`
+  if (name === 'start_service' || name === 'stop_service' || name === 'restart_service') {
+    const action = { start_service: '启动', stop_service: '停止', restart_service: '重启' }[name]
+    return `${action}服务 ${String(args.service_name ?? '?')}`
+  }
+  if (name === 'create_alert_rule') {
+    return `创建预警规则 ${String(args.name ?? '?')}：${String(args.expression ?? '?')}`
   }
   if (name === 'register_server_services') {
     const services = Array.isArray(args.services) ? args.services : []
@@ -98,8 +118,14 @@ function historyApprovalCommand(name: string, args: Record<string, unknown>): st
   return String(args.command ?? name)
 }
 
+function historyRiskLevel(name: string): 'medium' | 'high' | undefined {
+  if (MEDIUM_RISK_TOOLS.has(name)) return 'medium'
+  if (HIGH_RISK_TOOLS.has(name)) return 'high'
+  return undefined
+}
+
 function riskLevelLabel(level: 'medium' | 'high' | 'critical'): string {
-  if (level === 'medium') return '目录写入'
+  if (level === 'medium') return '配置写入'
   if (level === 'critical') return '严重风险'
   return '高风险'
 }
@@ -363,12 +389,7 @@ function buildTimeline(
             threadId: '',
             command: historyApprovalCommand(toolCall.name, args),
             label: [args.server_name, args.environment].filter(Boolean).map(String).join(' · '),
-            riskLevel:
-              toolCall.name === 'register_server_services'
-                ? 'medium'
-                : toolCall.name === 'restart_service'
-                  ? 'high'
-                  : undefined,
+            riskLevel: historyRiskLevel(toolCall.name),
             status: !result
               ? run?.status === 'failed'
                 ? 'failed'

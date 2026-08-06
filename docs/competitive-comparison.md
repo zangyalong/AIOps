@@ -27,7 +27,7 @@
 | 4 | Agent 编排 | ✅ 有 | LangGraph StateGraph：`Supervisor → 专家子图 ↔ tools → synthesize`；最终回答只生成一次，并要求具体数据来自本轮工具证据 |
 | 5 | 事件生命周期 | ✅ 有 | `incidents` 一等实体，`FIRING/ACKNOWLEDGED/RESOLVED` 状态机，告警全 resolved 时自动 resolve，ack/resolve API |
 | 6 | 后台/事件驱动 | ✅ 有 | Alertmanager webhook → arq + Redis 队列 → 独立 worker 进程消费 |
-| 7 | 写操作/自动化+审批 | ⚠️ 半 | `restart_service` 受服务白名单限制，并接入 LangGraph interrupt 真审批；仍缺鉴权、RBAC 和不可篡改审计 |
+| 7 | 写操作/自动化+审批 | ⚠️ 半 | systemd 启停/重启和预警规则创建接入 LangGraph interrupt 真审批；服务控制受双端白名单限制，仍缺鉴权、RBAC 和不可篡改审计 |
 | 8 | 知识/记忆/RAG | ❌ 无 | 无向量库/知识图谱/runbook 检索 |
 | 9 | 可观测性/工程化 | ⚠️ 部分 | 只有 print 日志 + 超时卡位；**无 tracing/LangSmith、无 eval 集、无测试套件** |
 | 10 | 通知/协作 | ❌ 无 | 推 Slack/IM 明确缓做，诊断只落库 + `GET /alerts` 可查 |
@@ -97,7 +97,7 @@
 | **激进自主（仍分级 human-in-loop）** | Resolve.ai（~80% 目标） |
 | **写但缺门控**（反面） | K8sGPT 自愈、Robusta **OSS** remediation |
 
-**AIOMS 在哪**：读诊断与写操作已拆开；当前唯一写工具是受服务白名单约束的 `restart_service`，必须经过 LangGraph 人工审批。它进入了「建议 + 人工 gated 执行」阶段，但鉴权、RBAC、正式密钥管理和不可篡改审计尚未补齐。
+**AIOMS 在哪**：读诊断与写操作已拆开；systemd 启停/重启、服务目录注册、日志配置应用和预警规则创建都必须经过 LangGraph 人工审批。它进入了「建议 + 人工 gated 执行」阶段，但鉴权、RBAC、正式密钥管理和不可篡改审计尚未补齐。
 
 **两条对 AIOMS 的启示**：
 1. **连业界领头羊都把「写」用审批/IAM 关起来**——所以「破坏性操作必须人工二次确认」不是过度谨慎，是行业共识（也是你 CLAUDE.md 红线）。

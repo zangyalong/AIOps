@@ -29,8 +29,14 @@ class Settings(BaseSettings):
     prometheus_rules_path: Path = (
         REPO_ROOT / "docker" / "prometheus-rules" / "managed_alert_rules.yml"
     )
-    # 有副作用的服务重启写工具使用独立白名单；默认空字符串=禁止重启任何服务。
+    # 有副作用的 systemd 启停/重启工具共用独立白名单；默认空字符串=禁止全部服务控制。
+    ssh_service_control_allowlist: str = ""
+    # 兼容旧环境变量；新配置优先使用 SSH_SERVICE_CONTROL_ALLOWLIST。
     ssh_restart_service_allowlist: str = ""
+
+    @property
+    def service_control_allowlist(self) -> str:
+        return self.ssh_service_control_allowlist or self.ssh_restart_service_allowlist
 
     # DeepSeek 走 OpenAI 兼容接口，base_url/model 以官方文档为准（2026-07 查证）
     deepseek_api_key: str = ""

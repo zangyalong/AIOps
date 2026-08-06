@@ -3,6 +3,9 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+from pydantic import SecretStr
 
 from app.models.server import Server
 from app.schemas.server import DeploymentBundleSecrets, TargetDeploymentConfig
@@ -11,7 +14,6 @@ from app.services.target_deployment_service import (
     render_deploy_config,
     write_database_credentials,
 )
-from pydantic import SecretStr
 
 
 def make_server() -> Server:
@@ -32,13 +34,20 @@ class TargetDeploymentServiceTests(unittest.TestCase):
             allow_docker_socket=True,
         )
 
-        rendered = render_deploy_config(make_server(), config, redis_has_password=False)
+        with patch(
+            "app.services.target_deployment_service.settings.ssh_service_control_allowlist",
+            "bt.service,nginx.service",
+        ):
+            rendered = render_deploy_config(
+                make_server(), config, redis_has_password=False
+            )
 
         self.assertIn("SERVER_NAME=web01\n", rendered)
         self.assertIn("ALLOW_DOCKER_SOCKET=true\n", rendered)
         self.assertIn("ALLOY_SERVICE_MAP=\n", rendered)
         self.assertIn("START_ALLOY=false\n", rendered)
         self.assertIn("EXPORTER_IMAGE_MIRROR_PREFIX=m.daocloud.io\n", rendered)
+        self.assertIn("SERVICE_CONTROL_ALLOWLIST=bt.service,nginx.service\n", rendered)
         self.assertNotIn("database-secret-value", rendered)
 
     def test_enabled_database_exporter_requires_one_time_password(self) -> None:

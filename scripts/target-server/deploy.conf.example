@@ -8,6 +8,9 @@ AIOMS_SSH_USER=aioms
 # bootstrap 创建的独立部署用户，只用于审批后的配置写 Tool。
 AIOMS_DEPLOY_USER=aioms-deploy
 
+# Agent 经人工审批后允许启停/重启的 systemd 单元。必须写完整 .service 名；留空拒绝全部。
+SERVICE_CONTROL_ALLOWLIST=
+
 # 是否在目标服务器安装 Alloy 并采集日志：true / false
 ENABLE_ALLOY=true
 

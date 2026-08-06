@@ -16,6 +16,7 @@ from app.schemas.server import DeploymentBundleSecrets, TargetDeploymentConfig
 
 SERVER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")
 SSH_USER_PATTERN = re.compile(r"^[a-z_][a-z0-9_-]*[$]?$")
+SERVICE_UNIT_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@:-]*\.service$")
 DATABASE_SECRET_MAX_LENGTH = 4096
 BUNDLE_TIMEOUT_SECONDS = 60
 
@@ -52,6 +53,20 @@ def _secret_value(secret: SecretStr | None, label: str) -> str | None:
     return value
 
 
+def _service_control_allowlist() -> str:
+    services: list[str] = []
+    for raw in settings.service_control_allowlist.split(","):
+        service = raw.strip()
+        if not service:
+            continue
+        if not SERVICE_UNIT_PATTERN.fullmatch(service):
+            raise DeploymentBundleError(
+                f"SSH_SERVICE_CONTROL_ALLOWLIST 中的服务名不合法：{service}"
+            )
+        services.append(service)
+    return ",".join(sorted(set(services)))
+
+
 def validate_bundle_secrets(
     config: TargetDeploymentConfig, secrets: DeploymentBundleSecrets
 ) -> tuple[str | None, str | None, str | None]:
@@ -77,6 +92,7 @@ def render_deploy_config(
             "# 由 AIOMS 服务器编辑页生成；数据库密码保存在同包的独立凭据文件中。",
             f"AIOMS_SSH_USER={server.ssh_user}",
             f"AIOMS_DEPLOY_USER={server.deploy_ssh_user}",
+            f"SERVICE_CONTROL_ALLOWLIST={_service_control_allowlist()}",
             f"ENABLE_ALLOY={_bool(config.enable_alloy)}",
             f"SERVER_NAME={server.name}",
             f"LOKI_PUSH_URL={config.loki_push_url}",

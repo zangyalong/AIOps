@@ -1,0 +1,74 @@
+#!/bin/bash
+
+set -euo pipefail
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+fail() {
+    echo "aioms-service-control: $*" >&2
+    exit 1
+}
+
+[[ $EUID -eq 0 ]] || fail "必须由 root 通过 sudoers 调用"
+[[ $# -eq 2 ]] || fail "用法：aioms-service-control start|stop|restart SERVICE.service"
+
+readonly ACTION="$1"
+readonly SERVICE="$2"
+readonly ALLOWLIST="/etc/aioms/service-control.allowlist"
+
+case "$ACTION" in
+    start|stop|restart) ;;
+    *) fail "不支持的动作：$ACTION" ;;
+esac
+
+[[ "$SERVICE" =~ ^[A-Za-z0-9][A-Za-z0-9_.@:-]*\.service$ ]] ||
+    fail "服务名必须是明确的 systemd .service 单元"
+[[ -f "$ALLOWLIST" ]] || fail "服务控制白名单不存在：$ALLOWLIST"
+
+read -r owner mode < <(stat -c '%u %a' "$ALLOWLIST")
+[[ "$owner" == "0" ]] || fail "白名单必须由 root 持有"
+(( (8#$mode & 8#022) == 0 )) || fail "白名单不能由组或其他用户写入"
+
+allowed=false
+while IFS= read -r raw || [[ -n "$raw" ]]; do
+    line="${raw%%#*}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" ]] && continue
+    if [[ "$line" == "$SERVICE" ]]; then
+        allowed=true
+        break
+    fi
+done <"$ALLOWLIST"
+[[ "$allowed" == "true" ]] || fail "服务 $SERVICE 不在目标服务器白名单中"
+
+load_state="$(systemctl show --property=LoadState --value -- "$SERVICE" 2>&1)" ||
+    fail "无法核对服务 $SERVICE：$load_state"
+[[ "$load_state" == "loaded" ]] || fail "服务 $SERVICE 未加载（LoadState=$load_state）"
+
+before="$(systemctl is-active -- "$SERVICE" 2>&1 || true)"
+if [[ "$ACTION" == "start" && "$before" == "active" ]]; then
+    echo "服务 $SERVICE 已经处于 active，无需重复启动。"
+    exit 0
+fi
+if [[ "$ACTION" == "stop" && "$before" != "active" ]]; then
+    echo "服务 $SERVICE 当前状态为 $before，无需重复停止。"
+    exit 0
+fi
+
+systemctl "$ACTION" -- "$SERVICE"
+after="$(systemctl is-active -- "$SERVICE" 2>&1 || true)"
+
+case "$ACTION" in
+    start)
+        [[ "$after" == "active" ]] || fail "启动后状态异常：$after"
+        echo "已启动服务 $SERVICE；当前状态：$after。"
+        ;;
+    stop)
+        [[ "$after" != "active" ]] || fail "停止后服务仍为 active"
+        echo "已停止服务 $SERVICE；当前状态：$after。"
+        ;;
+    restart)
+        [[ "$after" == "active" ]] || fail "重启后状态异常：$after"
+        echo "已重启服务 $SERVICE；当前状态：$after。"
+        ;;
+esac

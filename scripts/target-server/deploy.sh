@@ -45,6 +45,7 @@ done
 
 AIOMS_SSH_USER=""
 AIOMS_DEPLOY_USER="aioms-deploy"
+SERVICE_CONTROL_ALLOWLIST=""
 ENABLE_ALLOY="true"
 SERVER_NAME=""
 LOKI_PUSH_URL=""
@@ -96,6 +97,7 @@ set_config_value() {
     case "$key" in
         AIOMS_SSH_USER) AIOMS_SSH_USER="$value" ;;
         AIOMS_DEPLOY_USER) AIOMS_DEPLOY_USER="$value" ;;
+        SERVICE_CONTROL_ALLOWLIST) SERVICE_CONTROL_ALLOWLIST="$value" ;;
         ENABLE_ALLOY) ENABLE_ALLOY="$value" ;;
         SERVER_NAME) SERVER_NAME="$value" ;;
         LOKI_PUSH_URL) LOKI_PUSH_URL="$value" ;;
@@ -188,6 +190,8 @@ validate_boolean "START_EXPORTERS" "$START_EXPORTERS"
 
 [[ -x "$SCRIPT_DIR/discovery/install.sh" ]] ||
     fail "缺少可执行的只读网关安装器：$SCRIPT_DIR/discovery/install.sh"
+[[ -x "$SCRIPT_DIR/actions/install.sh" ]] ||
+    fail "缺少可执行的服务控制写网关安装器：$SCRIPT_DIR/actions/install.sh"
 
 alloy_args=()
 if [[ "$ENABLE_ALLOY" == "true" ]]; then
@@ -341,25 +345,30 @@ if [[ "$metrics_enabled" == "true" ]]; then
     fi
 fi
 
-echo "[1/3] 安装 AIOMS 只读服务发现网关"
+echo "[1/4] 安装 AIOMS 只读服务发现网关"
 "$SCRIPT_DIR/discovery/install.sh" "$AIOMS_SSH_USER"
+
+echo "[2/4] 安装 AIOMS 服务控制写网关"
+"$SCRIPT_DIR/actions/install.sh" \
+    --deploy-user "$AIOMS_DEPLOY_USER" \
+    --allowlist "$SERVICE_CONTROL_ALLOWLIST"
 
 if [[ "$ENABLE_ALLOY" == "true" ]]; then
     if [[ -n "$ALLOY_SERVICE_MAP" ]]; then
-        echo "[2/3] 安装并配置 Alloy 日志采集"
+        echo "[3/4] 安装并配置 Alloy 日志采集"
     else
-        echo "[2/3] 安装 Alloy 基础组件，等待服务发现后生成配置"
+        echo "[3/4] 安装 Alloy 基础组件，等待服务发现后生成配置"
     fi
     "$SCRIPT_DIR/alloy/install.sh" "${alloy_args[@]}"
 else
-    echo "[2/3] 已按配置跳过 Alloy"
+    echo "[3/4] 已按配置跳过 Alloy"
 fi
 
 if [[ "$metrics_enabled" == "true" ]]; then
-    echo "[3/3] 安装并配置 Prometheus 指标 exporter"
+    echo "[4/4] 安装并配置 Prometheus 指标 exporter"
     "$SCRIPT_DIR/metrics/install.sh" "${metrics_args[@]}"
 else
-    echo "[3/3] 全部指标 exporter 已关闭，清理本配置包曾部署的指标容器"
+    echo "[4/4] 全部指标 exporter 已关闭，清理本配置包曾部署的指标容器"
     "$SCRIPT_DIR/metrics/install.sh" --disable-all
 fi
 

@@ -14,7 +14,8 @@ from typing import Any, Literal
 
 from langchain_core.tools import BaseTool
 
-from app.agents.tools.actions import restart_service
+from app.agents.tools.actions import restart_service, start_service, stop_service
+from app.agents.tools.alert_rules import create_alert_rule
 from app.agents.tools.alerts import query_alerts
 from app.agents.tools.commands import run_diagnostic_command
 from app.agents.tools.correlate import correlate_incident
@@ -60,15 +61,47 @@ class WriteToolSpec:
         }
 
 
-def _restart_service_action(args: dict[str, Any]) -> dict[str, Any]:
+def _service_control_action(
+    args: dict[str, Any], *, action: Literal["start", "stop", "restart"]
+) -> dict[str, Any]:
     server = str(args.get("server_name") or "?")
     service = str(args.get("service_name") or "?")
+    label = {"start": "启动", "stop": "停止", "restart": "重启"}[action]
     return {
-        "kind": "service_restart",
-        "title": f"重启 {server} 上的服务 {service}",
+        "kind": f"service_{action}",
+        "title": f"{label} {server} 上的服务 {service}",
         "server_name": server,
         "service_name": service,
-        "command": f"sudo -n -- systemctl restart -- {shlex.quote(service)}",
+        "command": (
+            "sudo -n -- /usr/local/sbin/aioms-service-control "
+            f"{action} {shlex.quote(service)}"
+        ),
+    }
+
+
+def _start_service_action(args: dict[str, Any]) -> dict[str, Any]:
+    return _service_control_action(args, action="start")
+
+
+def _stop_service_action(args: dict[str, Any]) -> dict[str, Any]:
+    return _service_control_action(args, action="stop")
+
+
+def _restart_service_action(args: dict[str, Any]) -> dict[str, Any]:
+    return _service_control_action(args, action="restart")
+
+
+def _create_alert_rule_action(args: dict[str, Any]) -> dict[str, Any]:
+    name = str(args.get("name") or "?")
+    expression = str(args.get("expression") or "?")
+    severity = str(args.get("severity") or "warning")
+    duration = str(args.get("duration") or "0m")
+    return {
+        "kind": "alert_rule_create",
+        "title": f"创建预警规则 {name}",
+        "rule_name": name,
+        "severity": severity,
+        "command": f"{expression}；持续 {duration}；严重级别 {severity}",
     }
 
 
@@ -110,9 +143,7 @@ def _apply_server_log_config_action(args: dict[str, Any]) -> dict[str, Any]:
         "kind": "server_log_config_apply",
         "title": f"应用 {server} 的 {len(sources)} 个日志源并重载 Alloy",
         "server_name": server,
-        "service_names": [
-            str(item.get("service_name") or "?") for item in mappings
-        ],
+        "service_names": [str(item.get("service_name") or "?") for item in mappings],
         "command": "；".join(sources) or "（没有启用的日志源）",
         "preview_hash": str(args.get("preview_hash") or ""),
     }
@@ -139,6 +170,21 @@ _WRITE_SPECS = (
         tool=register_server_services,
         risk_level="medium",
         build_action_details=_register_server_services_action,
+    ),
+    WriteToolSpec(
+        tool=create_alert_rule,
+        risk_level="medium",
+        build_action_details=_create_alert_rule_action,
+    ),
+    WriteToolSpec(
+        tool=start_service,
+        risk_level="high",
+        build_action_details=_start_service_action,
+    ),
+    WriteToolSpec(
+        tool=stop_service,
+        risk_level="high",
+        build_action_details=_stop_service_action,
     ),
     WriteToolSpec(
         tool=restart_service,

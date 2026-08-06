@@ -62,6 +62,17 @@
 
 背景：现在的 chat 图（`plan → call_model ↔ call_tools → reflect`，见 `backend/app/agents/graphs/chat_graph.py`）只有 `query_servers` 一个工具、工具调用循环没有步数上限、前端看不到工具调用过程、也没有子 agent。这组任务把它往"能调多个运维工具、有专业子 agent"的方向推进。
 
+- [ ] **Agent 全程使用简体中文**
+  - Supervisor、四个专家和最终综合节点共享强制简体中文约束；命令、代码、PromQL、服务名和产品专有名词保留原文
+  - 代码与自动化检查完成后保持未勾选，等用户在真实多轮对话中确认不再出现英文过渡语
+- [ ] **systemd 服务启动、停止和重启受控写工具**
+  - `start_service` / `stop_service` / `restart_service` 共用人工审批、独立部署 SSH 身份和 AIOMS 端白名单
+  - 目标服务器新增 root 持有的 `aioms-service-control` 固定网关和第二层白名单；sudoers 不开放任意 `systemctl` 或 Shell
+  - 代码与自动化检查完成后保持未勾选，等用户在真实 web-01 上分别验证拒绝、批准和状态复核
+- [ ] **通过 AI 对话创建预警规则**
+  - `create_alert_rule` 登记为中风险写工具，审批后复用页面相同的 Pydantic 字段校验、PromQL 校验、数据库写入和 Prometheus 热重载
+  - 代码与自动化检查完成后保持未勾选，等用户从对话创建真实规则并在预警规则页面看到运行状态
+
 - [X] **扩充运维工具 + 给工具调用循环加步数上限**
   - 照 `query_servers`（`backend/app/agents/tools/servers.py`）的样子，再写几个运维领域工具（日志检索、告警查询、白名单命令执行等）
   - `call_model ↔ call_tools` 这个循环现在没有步数上限——`reflect` 重试有 `MAX_ATTEMPTS` 兜底，但工具调用这一圈没有，模型如果一直坚持调工具会死循环，要补一个上限
@@ -100,7 +111,7 @@
   - `correlate_incident` 工具：给定业务服务器名 + 时刻，`asyncio.gather` 并发拉齐指标(range)+日志+告警，同一时间窗对齐成横切面报告。实体映射优先使用规范化服务实例，旧 `servers.monitor_labels` 作为兼容回退。经对抗式审查加固（异常兜底、window 校验、自适应 step）。traces 暂缺（单机 PLG 无 Tempo）
 - [ ] **读工具 / 写工具边界划分**（survey 启发 #2）：把纯读诊断工具和有破坏力的写工具分成两类抽象，别混在一起
   - 已新增集中式 `catalog.py`，读工具与写工具分开注册且禁止重叠；原 SSH 白名单命令明确改为只读诊断工具，不再触发审批
-  - 已新增真实写工具 `restart_service`：人工审批 + systemd 服务白名单双重限制，worker 不绑定写工具，执行节点也会拒绝缺少审批决议的调用
+  - 已新增真实写工具 `start_service` / `stop_service` / `restart_service`：人工审批 + AIOMS/目标服务器双端 systemd 白名单，worker 不绑定写工具，执行节点也会拒绝缺少审批决议的调用
   - 单元测试、Ruff 和前端构建已通过；按计划表规则暂不勾选，等用户在运行中的前后端验证读诊断和写审批流程
 
 ### 方向二：从被动问答到事件驱动的主动诊断
@@ -124,7 +135,7 @@ CLAUDE.md 项目定位里"值班/告警诊断"的核心闭环。
 
 对照 survey 模块 5（调研最大的收获：Keep/OpenSRE 的"审批"都是假的、字段声明了没接线）。**只要打算加写操作工具，这一块必须先落地。**
 
-- [ ] **审计日志**：每次工具调用/命令记录 谁/何时/哪台/结果，不可篡改——`run_diagnostic_command` 和 `restart_service` 现在真连 SSH 执行却零审计，这是生产红线
+- [ ] **审计日志**：每次工具调用/命令记录 谁/何时/哪台/结果，不可篡改——`run_diagnostic_command` 和服务控制写工具现在真连 SSH 执行却零审计，这是生产红线
 - [ ] **API 鉴权**：`/chat` 等端点加认证，知道"谁在用 agent"（当前无 auth）
 - [ ] **写操作真审批网关**：LangGraph `interrupt` 卡在等人工确认的状态；并**专门写测试验证"没确认就走不通"**（survey 启发 #3，不能只是工具描述里写一句、或一个没人读取的 flag）
   - interrupt、恢复接口和安全测试已经接线；仍按验收规则保持未勾选，等真实前后端完成“未批准不执行、批准只执行一次”的运行时验证

@@ -6,8 +6,9 @@
 首次安装可以完成：
 
 1. 安装 AIOMS 服务发现所需的只读命令网关和精确 sudoers 权限。
-2. 按需安装 Grafana Alloy 基础组件；服务发现并注册后由 AI 生成日志配置并审批启用。
-3. 按独立开关部署 node_exporter、cAdvisor、MySQL、PostgreSQL 和 Redis exporter。
+2. 为现有 `aioms-deploy` 安装白名单 systemd 服务控制写网关；白名单留空时拒绝全部。
+3. 按需安装 Grafana Alloy 基础组件；服务发现并注册后由 AI 生成日志配置并审批启用。
+4. 按独立开关部署 node_exporter、cAdvisor、MySQL、PostgreSQL 和 Redis exporter。
 
 如果目标服务器还没有 AIOMS 专用 SSH 用户，先使用 `bootstrap/prepare-client.sh` 在客户端
 生成两组密钥和一个独立角色包。服务器管理员只需接收两个公钥和角色配置脚本，不需要接收
@@ -98,6 +99,11 @@ target-server/
 │   ├── aioms-docker-read        # Docker 只读查询网关
 │   ├── aioms-readonly.sudoers   # 最小 sudo 权限模板
 │   └── README.md                # 发现命令与权限边界
+├── actions/
+│   ├── install.sh               # systemd 服务控制写网关安装器
+│   ├── aioms-service-control    # 只接受 start/stop/restart + 白名单 .service
+│   ├── aioms-service-control.sudoers
+│   └── README.md                # 双端白名单和权限边界
 ├── alloy/
 │   ├── install.sh               # Alloy 基础组件/管理员配置安装器
 │   ├── aioms-alloy-apply        # root 所有的固定 AI 配置应用器
@@ -187,6 +193,7 @@ cp metrics/redis-exporter.password.example metrics/redis-exporter.password
 ```ini
 AIOMS_SSH_USER=aioms
 AIOMS_DEPLOY_USER=aioms-deploy
+SERVICE_CONTROL_ALLOWLIST=bt.service,nginx.service
 ENABLE_ALLOY=true
 SERVER_NAME=web01
 LOKI_PUSH_URL=http://监控服务器:3100/loki/api/v1/push
@@ -211,7 +218,8 @@ START_EXPORTERS=true
 | 配置项                             | 何时需要                | 说明                                                             |
 | ---------------------------------- | ----------------------- | ---------------------------------------------------------------- |
 | `AIOMS_SSH_USER`                 | 始终必填                | 已存在的目标服务器 SSH 用户，应与 AIOMS`servers.ssh_user` 一致 |
-| `AIOMS_DEPLOY_USER`              | 启用 Alloy              | bootstrap 创建的部署用户，应与 `servers.deploy_ssh_user` 一致 |
+| `AIOMS_DEPLOY_USER`              | 始终必填                | bootstrap 创建的部署用户，应与 `servers.deploy_ssh_user` 一致 |
+| `SERVICE_CONTROL_ALLOWLIST`      | 使用服务控制 Tool       | 允许启停/重启的完整 `.service` 单元；留空拒绝全部            |
 | `ENABLE_ALLOY`                   | 始终必填                | `true` 安装 Alloy 基础组件，`false` 只安装发现和指标组件     |
 | `SERVER_NAME`                    | 启用 Alloy              | 稳定服务器标签，如`web01`                                      |
 | `LOKI_PUSH_URL`                  | 启用 Alloy              | 从目标服务器可访问的中央 Loki 地址                               |
