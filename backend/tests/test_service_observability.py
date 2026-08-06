@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from app.services import service_observability_service, service_runtime_service
 
@@ -139,6 +140,52 @@ class ServiceMetricDefinitionTests(unittest.TestCase):
                 definition.promql,
             )
             self.assertNotIn('instance="web-01:9100"', definition.promql)
+
+    def test_server_metrics_use_node_exporter_instance(self) -> None:
+        definitions = service_observability_service._server_metric_definitions(
+            "139.196.175.226:9100"
+        )
+
+        self.assertEqual(
+            [definition.key for definition in definitions],
+            [
+                "target_up",
+                "cpu_usage",
+                "memory_usage",
+                "disk_usage",
+                "load_1m",
+                "uptime",
+            ],
+        )
+        for definition in definitions:
+            self.assertIn('instance="139.196.175.226:9100"', definition.promql)
+
+
+class ServerMetricResolutionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_standard_node_exporter_wins_over_database_exporters(self) -> None:
+        server = SimpleNamespace(
+            ip_address="139.196.175.226",
+            monitor_labels=None,
+        )
+        with patch.object(
+            service_observability_service,
+            "prom_label_values",
+            AsyncMock(
+                return_value=[
+                    "139.196.175.226:9104",
+                    "139.196.175.226:9100",
+                    "139.196.175.226:9187",
+                ]
+            ),
+        ):
+            instance, message = (
+                await service_observability_service._resolve_server_metric_instance(
+                    server
+                )
+            )
+
+        self.assertEqual(instance, "139.196.175.226:9100")
+        self.assertIsNone(message)
 
 
 if __name__ == "__main__":

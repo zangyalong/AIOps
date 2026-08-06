@@ -16,7 +16,8 @@ from app.schemas.server import (
     ServerRead,
     ServerUpdate,
 )
-from app.services import server_service
+from app.schemas.service_observability import ServerObservabilityRead
+from app.services import server_service, service_observability_service
 from app.services.target_deployment_service import (
     DeploymentBundleError,
     build_deployment_bundle,
@@ -46,6 +47,17 @@ async def create_server(data: ServerCreate, db: DBSession) -> Server:
 @router.get("/{server_id}", response_model=ServerRead)
 async def get_server(server_id: uuid.UUID, db: DBSession) -> Server:
     return await _get_server_or_404(db, server_id)
+
+
+@router.get(
+    "/{server_id}/observability",
+    response_model=ServerObservabilityRead,
+)
+async def get_server_observability(
+    server_id: uuid.UUID, db: DBSession
+) -> ServerObservabilityRead:
+    server = await _get_server_or_404(db, server_id)
+    return await service_observability_service.get_server_observability(server)
 
 
 @router.patch("/{server_id}", response_model=ServerRead)

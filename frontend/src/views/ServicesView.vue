@@ -13,8 +13,8 @@ import {
   updateService,
   updateServiceInstance,
 } from '../api/services'
-import { fetchServers } from '../api/servers'
-import type { Server } from '../types/server'
+import { fetchServerObservability, fetchServers } from '../api/servers'
+import type { Server, ServerObservability } from '../types/server'
 import type {
   ServiceInput,
   ServiceInstance,
@@ -45,6 +45,9 @@ const observabilityByInstance = ref<Record<string, ServiceObservability>>({})
 const observabilityLoadingIds = ref<Set<string>>(new Set())
 const observabilityErrors = ref<Record<string, string>>({})
 const observabilityMinutes = ref(1440)
+const serverObservabilityById = ref<Record<string, ServerObservability>>({})
+const serverObservabilityLoadingIds = ref<Set<string>>(new Set())
+const serverObservabilityErrors = ref<Record<string, string>>({})
 
 const serviceModal = ref(false)
 const editingService = ref<ServiceRecord | null>(null)
@@ -76,6 +79,17 @@ const selectedService = computed(
 const serverMap = computed(() => new Map(servers.value.map((server) => [server.id, server])))
 const selectedServer = computed(
   () => servers.value.find((server) => server.id === selectedServerId.value) ?? null,
+)
+const selectedServerObservability = computed(() =>
+  selectedServerId.value
+    ? serverObservabilityById.value[selectedServerId.value] ?? null
+    : null,
+)
+const selectedServerInstances = computed(() =>
+  instances.value.filter((instance) => instance.server_id === selectedServerId.value),
+)
+const selectedServerServices = computed(() =>
+  selectedServerId.value ? servicesForServer(selectedServerId.value) : [],
 )
 const allSelectedInstances = computed(() =>
   instances.value.filter((instance) => instance.service_id === selectedId.value),
@@ -251,6 +265,33 @@ async function refreshServerStatuses(serverId: string) {
   await refreshStatuses({ serverId })
 }
 
+function setServerObservabilityLoading(serverId: string, loadingState: boolean) {
+  const next = new Set(serverObservabilityLoadingIds.value)
+  if (loadingState) next.add(serverId)
+  else next.delete(serverId)
+  serverObservabilityLoadingIds.value = next
+}
+
+async function refreshServerObservability(serverId: string) {
+  setServerObservabilityLoading(serverId, true)
+  delete serverObservabilityErrors.value[serverId]
+  try {
+    serverObservabilityById.value[serverId] = await fetchServerObservability(serverId)
+  } catch (e) {
+    serverObservabilityErrors.value[serverId] = e instanceof Error ? e.message : String(e)
+  } finally {
+    setServerObservabilityLoading(serverId, false)
+  }
+}
+
+async function refreshSelectedServerOverview() {
+  if (!selectedServerId.value) return
+  await Promise.all([
+    refreshServerStatuses(selectedServerId.value),
+    refreshServerObservability(selectedServerId.value),
+  ])
+}
+
 async function refreshSelectedStatuses() {
   if (!selectedId.value) return
   await refreshStatuses({
@@ -300,6 +341,14 @@ function formatMetric(metric: ServiceMetric): string {
     return `${value.toFixed(index === 0 ? 0 : 1)} ${units[index]}`
   }
   if (metric.unit === 'seconds') return `${(metric.value * 1000).toFixed(0)} ms`
+  if (metric.unit === 'duration') {
+    const totalMinutes = Math.max(0, Math.floor(metric.value / 60))
+    const days = Math.floor(totalMinutes / 1440)
+    const hours = Math.floor((totalMinutes % 1440) / 60)
+    if (days > 0) return `${days} 天 ${hours} 小时`
+    if (hours > 0) return `${hours} 小时 ${totalMinutes % 60} 分钟`
+    return `${totalMinutes} 分钟`
+  }
   return Number.isInteger(metric.value) ? String(metric.value) : metric.value.toFixed(2)
 }
 
@@ -423,24 +472,28 @@ function isServerExpanded(serverId: string): boolean {
 }
 
 function toggleServer(serverId: string) {
+  selectedServerId.value = serverId
+  void router.push('/services')
+  void refreshSelectedServerOverview()
   const next = new Set(expandedServerIds.value)
   if (next.has(serverId)) {
     next.delete(serverId)
   } else {
     next.add(serverId)
-    selectedServerId.value = serverId
-    void refreshServerStatuses(serverId)
-    if (
-      selectedId.value &&
-      !instances.value.some(
-        (instance) =>
-          instance.service_id === selectedId.value && instance.server_id === serverId,
-      )
-    ) {
-      void router.push('/services')
-    }
   }
   expandedServerIds.value = next
+}
+
+function serverRuntimeCount(status: RuntimeStatus): number {
+  return selectedServerInstances.value.filter(
+    (instance) => instanceStatuses.value[instance.id]?.status === status,
+  ).length
+}
+
+function serverInstancePorts(serviceId: string): string {
+  const ports = instancesForServiceOnServer(serviceId, selectedServerId.value ?? '')
+    .flatMap((instance) => instanceStatuses.value[instance.id]?.ports ?? [])
+  return [...new Set(ports)].join('、') || '未发现监听端口'
 }
 
 function resetServiceForm() {
@@ -897,10 +950,123 @@ function serverStatusLabel(server: Server): string {
 
       </main>
 
+      <main v-else-if="selectedServer" class="service-detail server-detail">
+        <div class="detail-header">
+          <div>
+            <div class="detail-title">
+              <h2>{{ selectedServer.name }}</h2>
+              <span class="server-address-badge">{{ selectedServer.ip_address }}</span>
+              <span class="server-state" :class="`status-${selectedServer.status}`">
+                {{ serverStatusLabel(selectedServer) }}
+              </span>
+            </div>
+            <p>{{ selectedServer.description || '服务器资源与已登记服务运行概览' }}</p>
+          </div>
+          <button type="button" class="btn-secondary" @click="refreshSelectedServerOverview">
+            刷新服务器数据
+          </button>
+        </div>
+
+        <section class="server-summary-grid" aria-label="服务器服务状态摘要">
+          <article class="server-summary-card">
+            <span>已登记服务</span>
+            <strong>{{ selectedServerServices.length }}</strong>
+          </article>
+          <article class="server-summary-card">
+            <span>部署实例</span>
+            <strong>{{ selectedServerInstances.length }}</strong>
+          </article>
+          <article class="server-summary-card summary-running">
+            <span>运行中</span>
+            <strong>{{ serverRuntimeCount('running') }}</strong>
+          </article>
+          <article class="server-summary-card summary-error">
+            <span>异常</span>
+            <strong>{{ serverRuntimeCount('error') }}</strong>
+          </article>
+          <article class="server-summary-card">
+            <span>已停止</span>
+            <strong>{{ serverRuntimeCount('stopped') }}</strong>
+          </article>
+        </section>
+
+        <section class="detail-section server-metrics-section">
+          <div class="section-heading">
+            <div>
+              <h3>服务器关键指标</h3>
+              <p>
+                来源：{{ selectedServerObservability?.metric_instance || '正在匹配 node_exporter' }}
+                <template v-if="selectedServerObservability">
+                  · 更新于 {{ formatLogTime(selectedServerObservability.checked_at) }}
+                </template>
+              </p>
+            </div>
+          </div>
+
+          <p v-if="serverObservabilityLoadingIds.has(selectedServer.id)" class="hint compact">
+            正在读取 Prometheus 服务器指标…
+          </p>
+          <p v-else-if="serverObservabilityErrors[selectedServer.id]" class="error compact">
+            {{ serverObservabilityErrors[selectedServer.id] }}
+          </p>
+          <template v-else-if="selectedServerObservability">
+            <div v-if="selectedServerObservability.metrics.length" class="server-metric-grid">
+              <article
+                v-for="metric in selectedServerObservability.metrics"
+                :key="metric.key"
+                class="server-metric-card"
+                :class="{ bad: metricIsBad(metric) }"
+              >
+                <span>{{ metric.label }}</span>
+                <strong>{{ formatMetric(metric) }}</strong>
+              </article>
+            </div>
+            <p v-else class="data-empty">
+              {{ selectedServerObservability.metric_message }}
+            </p>
+          </template>
+        </section>
+
+        <section class="detail-section">
+          <div class="section-heading">
+            <div>
+              <h3>该服务器上的服务</h3>
+              <p>状态来自目标服务器实时检测，点击服务进入服务级指标与日志详情</p>
+            </div>
+          </div>
+          <p v-if="selectedServerServices.length === 0" class="section-empty">
+            该服务器还没有登记服务。
+          </p>
+          <div v-else class="server-service-list">
+            <button
+              v-for="service in selectedServerServices"
+              :key="service.id"
+              type="button"
+              class="server-service-row"
+              @click="openServiceForServer(service.id, selectedServer.id)"
+            >
+              <span class="server-service-identity">
+                <strong>{{ service.name }}</strong>
+                <small>{{ service.environment }}</small>
+              </span>
+              <span>{{ serviceInstanceCountOnServer(service.id, selectedServer.id) }} 个实例</span>
+              <span class="server-service-ports">{{ serverInstancePorts(service.id) }}</span>
+              <span
+                class="runtime-status prominent"
+                :class="`runtime-${serviceRuntimeStatus(service.id, selectedServer.id)}`"
+              >
+                <span class="status-light" aria-hidden="true" />
+                {{ serviceStatusLabel(service.id, selectedServer.id) }}
+              </span>
+            </button>
+          </div>
+        </section>
+      </main>
+
       <main v-else class="service-placeholder">
         <div>
-          <h2>从左侧菜单选择一个服务</h2>
-          <p>点击服务器名称展开二级服务菜单，再点击服务查看详情。</p>
+          <h2>从左侧菜单选择服务器或服务</h2>
+          <p>点击服务器查看主机指标与服务概览，点击二级服务查看服务指标和日志。</p>
           <button v-if="services.length === 0" type="button" class="btn-primary" @click="openCreateService">
             新增第一个服务
           </button>
@@ -1306,6 +1472,15 @@ button:disabled {
   font-weight: 600;
 }
 
+.server-address-badge {
+  border-radius: 999px;
+  padding: 0.16rem 0.5rem;
+  color: var(--color-text-muted);
+  background: var(--color-bg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.68rem;
+}
+
 .runtime-status {
   display: inline-flex;
   align-items: center;
@@ -1366,6 +1541,41 @@ button:disabled {
   grid-column: auto / -1;
   min-width: 0;
   padding: 1.25rem;
+}
+
+.server-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin-top: 1.25rem;
+}
+
+.server-summary-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.25rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem;
+  background: var(--color-bg);
+}
+
+.server-summary-card span {
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+}
+
+.server-summary-card strong {
+  font-size: 1.25rem;
+}
+
+.server-summary-card.summary-running strong {
+  color: #067647;
+}
+
+.server-summary-card.summary-error strong {
+  color: #b42318;
 }
 
 .detail-header {
@@ -1540,6 +1750,96 @@ button:disabled {
 
 .metric-card.bad strong {
   color: #b42318;
+}
+
+.server-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.server-metric-card {
+  display: flex;
+  min-width: 0;
+  min-height: 92px;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0.8rem;
+  background: var(--color-bg);
+}
+
+.server-metric-card span {
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+}
+
+.server-metric-card strong {
+  color: var(--color-text);
+  font-size: 1.25rem;
+}
+
+.server-metric-card.bad {
+  border-color: #fecdca;
+  background: #fef3f2;
+}
+
+.server-metric-card.bad strong {
+  color: #b42318;
+}
+
+.server-service-list {
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.server-service-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) 90px minmax(180px, 1fr) auto;
+  gap: 0.8rem;
+  align-items: center;
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--color-border);
+  padding: 0.75rem 0.85rem;
+  color: var(--color-text);
+  background: var(--color-surface);
+  text-align: left;
+}
+
+.server-service-row:last-child {
+  border-bottom: 0;
+}
+
+.server-service-row:hover {
+  background: var(--color-bg);
+}
+
+.server-service-identity {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.server-service-identity strong {
+  overflow: hidden;
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-service-identity small,
+.server-service-row > span:not(.server-service-identity) {
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+}
+
+.server-service-ports {
+  overflow-wrap: anywhere;
 }
 
 .log-list {
@@ -1856,6 +2156,18 @@ button:disabled {
     border-right: 0;
     border-bottom: 1px solid var(--color-border);
   }
+
+  .server-summary-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .server-service-row {
+    grid-template-columns: minmax(180px, 1fr) auto auto;
+  }
+
+  .server-service-ports {
+    display: none;
+  }
 }
 
 @media (max-width: 700px) {
@@ -1865,6 +2177,19 @@ button:disabled {
 
   .instance-grid {
     grid-template-columns: 1fr;
+  }
+
+  .server-summary-grid,
+  .server-metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .server-service-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .server-service-row > span:nth-child(2) {
+    display: none;
   }
 
   .form-row {

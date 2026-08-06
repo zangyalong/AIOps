@@ -41,3 +41,11 @@ class ServiceObservabilityRead(BaseModel):
     logs: list[ServiceLogRead]
     metric_message: str | None = None
     log_message: str | None = None
+
+
+class ServerObservabilityRead(BaseModel):
+    server_id: uuid.UUID
+    metric_instance: str | None
+    metrics: list[ServiceMetricRead]
+    metric_message: str | None = None
+    checked_at: datetime

@@ -12,11 +12,16 @@ from app.models.server import Server
 from app.models.service_catalog import Service, ServiceInstance
 from app.schemas.service_observability import (
     LogLevel,
+    ServerObservabilityRead,
     ServiceLogRead,
     ServiceMetricRead,
     ServiceObservabilityRead,
 )
-from app.services.observability_service import loki_query_range, prom_query
+from app.services.observability_service import (
+    loki_query_range,
+    prom_label_values,
+    prom_query,
+)
 
 _LOG_LIMIT = 40
 _MAX_LOG_LINE = 800
@@ -208,6 +213,86 @@ def _metric_definitions(
     return []
 
 
+def _server_metric_definitions(metric_instance: str) -> list[_MetricDefinition]:
+    instance = _escape_label(metric_instance)
+    selector = f'{{instance="{instance}"}}'
+    cpu_selector = f'{{instance="{instance}",mode="idle"}}'
+    filesystem_selector = (
+        f'{{instance="{instance}",fstype!~"tmpfs|overlay|squashfs|fuse.*|virtiofs.*",'
+        'mountpoint!~"/run($|/)|/var/lib/docker($|/)"}'
+    )
+    return [
+        _MetricDefinition(
+            "target_up", "指标采集", "state", f"max(up{selector})"
+        ),
+        _MetricDefinition(
+            "cpu_usage",
+            "CPU 使用率",
+            "percent",
+            "100 - (avg(rate(node_cpu_seconds_total"
+            f"{cpu_selector}[5m])) * 100)",
+        ),
+        _MetricDefinition(
+            "memory_usage",
+            "内存使用率",
+            "percent",
+            f"(1 - (node_memory_MemAvailable_bytes{selector} / "
+            f"node_memory_MemTotal_bytes{selector})) * 100",
+        ),
+        _MetricDefinition(
+            "disk_usage",
+            "磁盘最高使用率",
+            "percent",
+            "max((1 - (node_filesystem_avail_bytes"
+            f"{filesystem_selector} / node_filesystem_size_bytes"
+            f"{filesystem_selector})) * 100)",
+        ),
+        _MetricDefinition(
+            "load_1m", "1 分钟负载", "count", f"max(node_load1{selector})"
+        ),
+        _MetricDefinition(
+            "uptime",
+            "运行时长",
+            "duration",
+            f"max(time() - node_boot_time_seconds{selector})",
+        ),
+    ]
+
+
+async def _resolve_server_metric_instance(
+    server: Server,
+) -> tuple[str | None, str | None]:
+    configured = str((server.monitor_labels or {}).get("instance") or "").strip()
+    if configured:
+        return configured, None
+
+    try:
+        instances = await prom_label_values("instance")
+    except Exception as exc:  # noqa: BLE001 - 转成页面可展示的数据源错误
+        return None, f"自动发现 Prometheus instance 失败：{exc}"
+
+    ip_address = server.ip_address.strip()
+    matches = [
+        item
+        for item in instances
+        if item == ip_address or item.startswith(f"{ip_address}:")
+    ]
+    node_exporter_instance = f"{ip_address}:9100"
+    if node_exporter_instance in matches:
+        return node_exporter_instance, None
+    if len(matches) == 1:
+        return matches[0], None
+    if not matches:
+        return None, (
+            "Prometheus 中没有与该服务器 IP 匹配的 node_exporter Target，"
+            "请确认中央 Prometheus 已采集该服务器的 9100 端口"
+        )
+    return None, (
+        "该服务器匹配到多个 Prometheus Target，但没有标准的 9100 node_exporter："
+        f"{', '.join(sorted(matches))}"
+    )
+
+
 def _first_finite_value(rows: list[dict]) -> float | None:
     for row in rows:
         raw_value = (row.get("value") or [None, None])[1]
@@ -345,4 +430,27 @@ async def get_instance_observability(
         logs=log_rows,
         metric_message=metric_message,
         log_message=log_message,
+    )
+
+
+async def get_server_observability(server: Server) -> ServerObservabilityRead:
+    metric_instance, resolution_message = await _resolve_server_metric_instance(server)
+    if metric_instance is None:
+        return ServerObservabilityRead(
+            server_id=server.id,
+            metric_instance=None,
+            metrics=[],
+            metric_message=resolution_message,
+            checked_at=datetime.now(UTC),
+        )
+
+    metrics, metric_message = await _load_metrics(
+        _server_metric_definitions(metric_instance)
+    )
+    return ServerObservabilityRead(
+        server_id=server.id,
+        metric_instance=metric_instance,
+        metrics=metrics,
+        metric_message=metric_message,
+        checked_at=datetime.now(UTC),
     )

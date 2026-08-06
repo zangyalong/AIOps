@@ -1,3 +1,5 @@
+import type { ServiceMetric } from './service'
+
 // 服务端持久化的服务器状态：unknown=还没测过，其余是最近一次测试连接的结果
 export type ServerStatus = 'unknown' | 'active' | 'unreachable' | 'unconfigured'
 
@@ -89,6 +91,14 @@ export interface Server {
   status: ServerStatus
   created_at: string
   updated_at: string
+}
+
+export interface ServerObservability {
+  server_id: string
+  metric_instance: string | null
+  metrics: ServiceMetric[]
+  metric_message: string | null
+  checked_at: string
 }
 
 export interface ServerCreateInput {

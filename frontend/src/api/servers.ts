@@ -3,6 +3,7 @@ import type {
   DeploymentBundleSecrets,
   Server,
   ServerCreateInput,
+  ServerObservability,
 } from '../types/server'
 
 async function readApiError(res: Response, fallback: string): Promise<Error> {
@@ -27,6 +28,14 @@ export async function fetchServers(): Promise<Server[]> {
   const res = await fetch('/api/servers')
   if (!res.ok) {
     throw new Error(`获取服务器列表失败：${res.status}`)
+  }
+  return res.json()
+}
+
+export async function fetchServerObservability(id: string): Promise<ServerObservability> {
+  const res = await fetch(`/api/servers/${id}/observability`)
+  if (!res.ok) {
+    throw await readApiError(res, '获取服务器指标失败')
   }
   return res.json()
 }
