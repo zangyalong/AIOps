@@ -28,6 +28,11 @@ AIOMS 的 Vue 3 前端，用于多 Agent 运维对话、事件处理、服务目
 - 填写认领人并认领事件
 - 人工标记事件为已解决
 
+### 预警规则
+
+- 通过页面新增、编辑、启停和删除 Prometheus 预警规则
+- 规则保存到数据库；后端自动生成 Prometheus 运行时文件并热重载，无需手工修改 YAML
+
 ### 服务目录
 
 - 新增、编辑和删除逻辑服务，维护环境和服务说明
@@ -84,7 +89,7 @@ FastAPI http://127.0.0.1:8010/incidents
 ```
 
 因此前端代码不需要硬编码后端域名，也不会在本地开发时遇到跨域问题。生产构建后需要由反向代理
-提供等价的 `/api` 转发规则，并把 `/chat/*`、`/incidents`、`/services/*`、`/servers` 等前端路由回退到
+提供等价的 `/api` 转发规则，并把 `/chat/*`、`/incidents`、`/alert-rules`、`/services/*`、`/servers` 等前端路由回退到
 `index.html`，否则直接刷新历史对话 URL 会得到 404。
 
 ## 常用命令
@@ -106,13 +111,14 @@ npm run preview
 
 ```text
 src/
-├── api/          # chat、conversations、incidents、services、servers API 客户端
+├── api/          # chat、conversations、incidents、alertRules、services、servers API 客户端
 ├── components/   # 导航和会话列表等复用组件
 │   └── MarkdownContent.vue # AI Markdown 安全渲染与防横向溢出样式
-├── router/       # /chat、/chat/:conversationId、/incidents、/services、/servers
+├── router/       # /chat、/chat/:conversationId、/incidents、/alert-rules、/services、/servers
 ├── types/        # 与后端 schema 对应的 TypeScript 类型
 ├── views/
 │   ├── ChatView.vue
+│   ├── AlertRulesView.vue
 │   ├── IncidentsView.vue
 │   ├── ServicesView.vue
 │   └── ServersView.vue

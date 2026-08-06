@@ -5,8 +5,8 @@ global:
   scrape_interval: 15s      # 每 15s 抓一次所有 target
   evaluation_interval: 15s  # 每 15s 评估一次告警规则
 
-# 告警规则文件（任务3）。Prometheus 按 evaluation_interval 评估这些规则，命中就把告警置为
-# firing 并推给下面 alerting 里配的 Alertmanager。
+# 告警规则由 AIOMS 前端管理并存入数据库，后端自动生成下面这个运行时文件；不要手工编辑。
+# Prometheus 按 evaluation_interval 评估这些规则，命中就把告警置为 firing 并推给 Alertmanager。
 rule_files:
   - /etc/prometheus/rules/managed_alert_rules.yml
 

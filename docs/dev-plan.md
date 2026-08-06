@@ -32,7 +32,7 @@
   - 代码、后端测试和前端构建完成后保持未勾选，等用户用真实 web-01 服务完成状态、日志和指标验收
 - [ ] **预警规则配置页面**：在 AIOMS 中手动维护 Prometheus 告警规则，并查看 Prometheus / Alertmanager 运行状态
   - 规则保存到数据库，启用规则生成独立 YAML 并热重载 Prometheus；支持 PromQL 校验、严重级别、持续时间、摘要、说明和启停
-  - 旧 YAML 的三条演示规则通过幂等迁移脚本进入 `alert_rules`，Prometheus 只保留 AIOMS 托管的一份规则来源
+  - `alert_rules` 数据库表是唯一配置源；Prometheus YAML 由后端启动和页面操作自动生成并热重载，生成文件不纳入 Git
   - 页面展示规则的正常 / 等待 / 触发状态与 Alertmanager 活跃告警数；Alertmanager 继续只负责告警路由、抑制和通知
   - 原始告警继续在 `alert_events` 保存当前状态，新增 `alert_occurrences` 按触发周期保留事件关联；事件详情可查看本次归并的原始告警
   - 代码与静态检查完成后保持未勾选，等用户创建真实规则并观察到状态变化后再验收
@@ -93,7 +93,7 @@
 - [x] **接 Loki**：把 `search_logs`（`backend/app/agents/tools/logs.py`）从 mock 换成真实日志查询（LogQL）
   - 数据源用 docker-compose 起的 Loki + Promtail（采集容器日志）+ fake-app（造带级别的假日志）；顺带加了 `list_log_services` / `list_metric_instances` 两个发现工具，让 agent 能先查"有哪些服务/实例"再查具体数据
 - [x] **接 Alertmanager**：`query_alerts`（`backend/app/agents/tools/alerts.py`）从种子数据换成查真实 firing 告警（先只读）
-  - 数据源用 docker-compose 起的 Alertmanager + Prometheus 告警规则（3 条 demo 后续已迁入 AIOMS 统一管理）；`query_alerts` 查 `/api/v2/alerts`，可按 severity/instance 过滤。`alert_events` 表 + 种子脚本按选型 C.4 保留不动，留给方向二告警生命周期状态机
+  - 数据源用 docker-compose 起的 Alertmanager + AIOMS 托管的 Prometheus 告警规则；`query_alerts` 查 `/api/v2/alerts`，可按 severity/instance 过滤。`alert_events` 表 + 种子脚本按选型 C.4 保留不动，留给方向二告警生命周期状态机
 - [x] **Grafana 联动**（可选）：agent 能引用/生成 Grafana 面板链接，把结论落到统一仪表盘
   - `grafana_explore_link` 工具：按查询 + 时间窗拼 Grafana Explore 链接（纯字符串，不访问网络），支持 metrics（PromQL）/ logs（LogQL）/ alerts（Prometheus 的 ALERTS 指标）三种。docker-compose 加 grafana + 数据源 provisioning（固定 uid）。后续引入前端 md 渲染即可让链接可点击
 - [x] **关联原语**：实体模型（服务→实例）+ 时间窗对齐——给定告警/时间点，自动拉同一服务、同一窗口的 metrics + logs（+ traces）一起看

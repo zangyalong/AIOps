@@ -11,6 +11,7 @@ AIOMS 的 FastAPI 后端，负责业务 API、LangGraph 多 Agent 工作流、�
 - 工具调用旁白、工具状态与最终回答实时展示，刷新后按同一轨迹重建
 - Supervisor 调度四个专业 Agent
 - Prometheus 指标、Loki 日志、Alertmanager 告警查询；指标工具可按服务器名/IP 自动解析 instance
+- 预警规则通过前端维护并存入数据库，后端自动生成 Prometheus 运行时规则并热重载
 - 服务目录与部署实例；支持服务运行状态、指标和日志查询
 - 指标、日志、告警的同实体时间窗关联
 - Alertmanager webhook、告警去重归组和事件生命周期
@@ -194,6 +195,9 @@ uv run arq app.worker.WorkerSettings
 | `GET/DELETE /conversations/{id}`          | 会话详情、删除会话                |
 | `POST /alerts/webhook`                    | 接收 Alertmanager webhook         |
 | `GET /alerts`                             | 查询已落库告警                    |
+| `GET/POST /alert-rules`                   | 查询、新增预警规则                |
+| `PATCH/DELETE /alert-rules/{id}`          | 修改、删除预警规则                |
+| `POST /alert-rules/apply`                 | 从数据库重新生成并应用规则        |
 | `GET /incidents`                          | 查询关联后的事件                  |
 | `POST /incidents/{id}/ack`                | 认领事件                          |
 | `POST /incidents/{id}/resolve`            | 人工解决事件                      |

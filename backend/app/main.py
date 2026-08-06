@@ -31,7 +31,11 @@ from app.models import (  # noqa: F401  # 注册模型到 Base.metadata
     service_catalog,
 )
 from app.models.base import Base
-from app.services import alert_occurrence_service, chat_run_record_service
+from app.services import (
+    alert_occurrence_service,
+    alert_rule_service,
+    chat_run_record_service,
+)
 from app.services.chat_run_service import ChatRunManager
 
 
@@ -40,6 +44,13 @@ async def lifespan(app: FastAPI):
     # 项目早期没有迁移工具，缺的表在启动时自动建出来；已存在的表不会被改动。
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    # alert_rules 表是唯一配置源；YAML 只是 Prometheus 必需的运行时生成产物。
+    # Prometheus 暂时不可用时文件仍已生成，后端继续启动，用户可稍后在页面重新应用。
+    async with AsyncSessionLocal() as db:
+        try:
+            await alert_rule_service.sync_rules(db)
+        except alert_rule_service.AlertRuleApplyError as exc:
+            print(f"[startup] 预警规则文件已生成，但同步 Prometheus 失败：{exc}")
     async with AsyncSessionLocal() as db:
         backfilled_occurrences = (
             await alert_occurrence_service.backfill_existing_incidents(db)
