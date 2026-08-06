@@ -120,7 +120,7 @@ def _build_prompt(
         )
         lines.append(
             f"提示：优先用 correlate_incident 关联 {srv.name} 在 "
-            f"{incident.created_at.isoformat()} 前后的指标、日志、告警和变更来判断"
+            f"{incident.created_at.isoformat()} 前后的指标、日志和告警来判断"
             f"{service_args}。"
         )
     elif incident.instance:

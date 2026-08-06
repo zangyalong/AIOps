@@ -17,11 +17,6 @@
 
 ## 诊断上下文与运维闭环
 
-- [ ] **变更 / 发布关联**：记录服务发布、回滚、扩缩容和配置变更，并按服务与时间窗为事件诊断补充变更证据
-  - 变更记录模型与 CRUD API / 管理页面：服务、环境、版本或 commit、操作类型、发生时间和说明
-  - 新增只读工具 `query_recent_changes`；`correlate_incident` 自动带上同一服务、同一时间窗的变更
-  - 事件详情展示告警发生前后的变更时间线；事实关联只按实体和时间窗完成，不把时间重合直接断言为根因
-  - 代码、后端测试和前端构建完成后仍保持未勾选，等用户用真实记录完成运行时验收
 - [ ] **服务目录与部署实例**：建立服务、环境、监控标签和服务器归属关系
   - 使用 `services`、`service_instances` 两张规范化表维护逻辑服务和部署实例；事件和自动 triage 优先按实例解析服务，旧 `monitor_labels` 兼容回退
   - 已按实际使用反馈移除负责人、仓库、仪表盘和服务依赖关系，目录聚焦运行状态、指标、日志和实例管理
@@ -102,7 +97,7 @@
 - [x] **Grafana 联动**（可选）：agent 能引用/生成 Grafana 面板链接，把结论落到统一仪表盘
   - `grafana_explore_link` 工具：按查询 + 时间窗拼 Grafana Explore 链接（纯字符串，不访问网络），支持 metrics（PromQL）/ logs（LogQL）/ alerts（Prometheus 的 ALERTS 指标）三种。docker-compose 加 grafana + 数据源 provisioning（固定 uid）。后续引入前端 md 渲染即可让链接可点击
 - [x] **关联原语**：实体模型（服务→实例）+ 时间窗对齐——给定告警/时间点，自动拉同一服务、同一窗口的 metrics + logs（+ traces）一起看
-  - `correlate_incident` 工具：给定业务服务器名 + 时刻，`asyncio.gather` 并发拉齐指标(range)+日志+告警+变更，同一时间窗对齐成横切面报告。实体映射优先使用规范化服务实例，旧 `servers.monitor_labels` 作为兼容回退。经对抗式审查加固（异常兜底、window 校验、自适应 step）。traces 暂缺（单机 PLG 无 Tempo）
+  - `correlate_incident` 工具：给定业务服务器名 + 时刻，`asyncio.gather` 并发拉齐指标(range)+日志+告警，同一时间窗对齐成横切面报告。实体映射优先使用规范化服务实例，旧 `servers.monitor_labels` 作为兼容回退。经对抗式审查加固（异常兜底、window 校验、自适应 step）。traces 暂缺（单机 PLG 无 Tempo）
 - [ ] **读工具 / 写工具边界划分**（survey 启发 #2）：把纯读诊断工具和有破坏力的写工具分成两类抽象，别混在一起
   - 已新增集中式 `catalog.py`，读工具与写工具分开注册且禁止重叠；原 SSH 白名单命令明确改为只读诊断工具，不再触发审批
   - 已新增真实写工具 `restart_service`：人工审批 + systemd 服务白名单双重限制，worker 不绑定写工具，执行节点也会拒绝缺少审批决议的调用

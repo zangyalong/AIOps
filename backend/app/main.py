@@ -10,7 +10,6 @@ from app.agents.graphs.chat_graph import build_chat_graph
 from app.api import (
     alert_rules,
     alerts,
-    changes,
     chat,
     conversations,
     health,
@@ -24,7 +23,6 @@ from app.models import (  # noqa: F401  # 注册模型到 Base.metadata
     alert_event,
     alert_occurrence,
     alert_rule,
-    change_record,
     chat_run,
     conversation,
     incident,
@@ -87,5 +85,4 @@ app.include_router(conversations.router)
 app.include_router(alerts.router)
 app.include_router(alert_rules.router)
 app.include_router(incidents.router)
-app.include_router(changes.router)
 app.include_router(services.router)

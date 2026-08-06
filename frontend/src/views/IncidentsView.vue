@@ -1,19 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { RouterLink } from 'vue-router'
 import {
   acknowledgeIncident,
   fetchIncidentAlertOccurrences,
-  fetchIncidentChanges,
   fetchIncidents,
   resolveIncident,
 } from '../api/incidents'
 import MarkdownContent from '../components/MarkdownContent.vue'
-import type { ChangeRecord, ChangeType } from '../types/change'
 import type {
   AlertOccurrence,
   Incident,
-  IncidentChangeContext,
   IncidentStatus,
 } from '../types/incident'
 
@@ -25,16 +21,9 @@ const selectedIncident = ref<Incident | null>(null)
 const loading = ref(true)
 const error = ref<string | null>(null)
 const pendingAction = ref<string | null>(null)
-const changeContext = ref<IncidentChangeContext | null>(null)
-const changesLoading = ref(false)
-const changesError = ref<string | null>(null)
 const alertOccurrences = ref<AlertOccurrence[]>([])
 const occurrencesLoading = ref(false)
 const occurrencesError = ref<string | null>(null)
-
-type TimelineEntry =
-  | { kind: 'incident'; at: string }
-  | { kind: 'change'; at: string; record: ChangeRecord }
 
 const filters: { value: IncidentFilter; label: string }[] = [
   { value: 'all', label: '全部' },
@@ -49,13 +38,6 @@ const statusLabel: Record<IncidentStatus, string> = {
   resolved: '已解决',
 }
 
-const changeTypeLabel: Record<ChangeType, string> = {
-  deployment: '发布',
-  rollback: '回滚',
-  scaling: '扩缩容',
-  configuration: '配置变更',
-}
-
 const filteredIncidents = computed(() => {
   if (activeFilter.value === 'all') return incidents.value
   return incidents.value.filter((incident) => incident.status === activeFilter.value)
@@ -67,35 +49,6 @@ const statusCounts = computed<Record<IncidentFilter, number>>(() => ({
   acknowledged: incidents.value.filter((incident) => incident.status === 'acknowledged').length,
   resolved: incidents.value.filter((incident) => incident.status === 'resolved').length,
 }))
-
-const changeTimeline = computed<TimelineEntry[]>(() => {
-  if (!selectedIncident.value || !changeContext.value) return []
-  return [
-    { kind: 'incident' as const, at: selectedIncident.value.created_at },
-    ...changeContext.value.changes.map((record) => ({
-      kind: 'change' as const,
-      at: record.occurred_at,
-      record,
-    })),
-  ].sort((left, right) => Date.parse(left.at) - Date.parse(right.at))
-})
-
-async function loadIncidentChanges(incident: Incident) {
-  const incidentId = incident.id
-  changesLoading.value = true
-  changesError.value = null
-  changeContext.value = null
-  try {
-    const result = await fetchIncidentChanges(incidentId)
-    if (selectedIncident.value?.id === incidentId) changeContext.value = result
-  } catch (e) {
-    if (selectedIncident.value?.id === incidentId) {
-      changesError.value = e instanceof Error ? e.message : String(e)
-    }
-  } finally {
-    if (selectedIncident.value?.id === incidentId) changesLoading.value = false
-  }
-}
 
 async function loadAlertOccurrences(incident: Incident) {
   const incidentId = incident.id
@@ -116,15 +69,11 @@ async function loadAlertOccurrences(incident: Incident) {
 
 function openIncident(incident: Incident) {
   selectedIncident.value = incident
-  void loadIncidentChanges(incident)
   void loadAlertOccurrences(incident)
 }
 
 function closeIncident() {
   selectedIncident.value = null
-  changeContext.value = null
-  changesError.value = null
-  changesLoading.value = false
   alertOccurrences.value = []
   occurrencesError.value = null
   occurrencesLoading.value = false
@@ -138,7 +87,6 @@ async function loadIncidents() {
     if (selectedIncident.value) {
       selectedIncident.value =
         incidents.value.find((incident) => incident.id === selectedIncident.value?.id) ?? null
-      if (selectedIncident.value) await loadIncidentChanges(selectedIncident.value)
       if (selectedIncident.value) await loadAlertOccurrences(selectedIncident.value)
     }
   } catch (e) {
@@ -168,11 +116,6 @@ function severityLabel(severity: string): string {
     info: '提示',
   }
   return labels[severity.toLowerCase()] ?? severity
-}
-
-function changeIdentity(record: ChangeRecord): string {
-  if (record.version && record.commit_hash) return `${record.version} · ${record.commit_hash}`
-  return record.version || record.commit_hash || '未填写版本或 commit'
 }
 
 function replaceIncident(updated: Incident) {
@@ -352,57 +295,6 @@ async function resolve(incident: Incident) {
               </div>
             </article>
           </div>
-        </section>
-
-        <section class="timeline-panel">
-          <div class="section-heading">
-            <h3>事件前后变更时间线</h3>
-            <span>前后各 30 分钟</span>
-          </div>
-          <p v-if="changesLoading" class="timeline-state">正在关联变更记录…</p>
-          <p v-else-if="changesError" class="timeline-error">{{ changesError }}</p>
-          <p v-else-if="changeContext && !changeContext.service_name" class="timeline-state">
-            当前实例未配置 service 监控标签，暂时无法关联变更。
-          </p>
-          <p
-            v-else-if="changeContext && changeContext.changes.length === 0"
-            class="timeline-state"
-          >
-            {{ changeContext.service_name }} 在该时间窗内没有变更记录。
-          </p>
-          <ol v-else-if="changeTimeline.length" class="change-timeline">
-            <li
-              v-for="(entry, index) in changeTimeline"
-              :key="entry.kind === 'incident' ? 'incident' : entry.record.id"
-              :class="`timeline-${entry.kind}`"
-            >
-              <time :datetime="entry.at">{{ formatTime(entry.at) }}</time>
-              <span class="timeline-marker" aria-hidden="true" />
-              <div class="timeline-content">
-                <template v-if="entry.kind === 'incident'">
-                  <strong>事件触发</strong>
-                  <p>{{ selectedIncident.alertname }}：{{ selectedIncident.summary || '暂无摘要' }}</p>
-                </template>
-                <template v-else>
-                  <div class="timeline-title">
-                    <strong>{{ changeTypeLabel[entry.record.change_type] }}</strong>
-                    <span>{{ entry.record.service_name }}/{{ entry.record.environment }}</span>
-                  </div>
-                  <p>{{ changeIdentity(entry.record) }}</p>
-                  <p v-if="entry.record.description">{{ entry.record.description }}</p>
-                </template>
-              </div>
-              <span v-if="index < changeTimeline.length - 1" class="timeline-line" />
-            </li>
-          </ol>
-          <p v-if="changeContext?.changes.length" class="timeline-note">
-            时间重合仅作为诊断线索，不代表该变更已经被确认是根因。
-          </p>
-          <RouterLink
-            v-if="changeContext?.service_id"
-            class="service-directory-link"
-            :to="`/services/${changeContext.service_id}`"
-          >查看关联服务 →</RouterLink>
         </section>
 
         <section class="diagnosis-panel">
@@ -794,7 +686,6 @@ button:disabled {
 }
 
 .diagnosis-panel,
-.timeline-panel,
 .occurrences-panel {
   min-width: 0;
   margin-top: 1.4rem;
@@ -875,90 +766,6 @@ button:disabled {
   border-color: #fecdca;
   color: #b42318;
   background: #fef3f2;
-}
-
-.change-timeline {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.change-timeline li {
-  position: relative;
-  display: grid;
-  grid-template-columns: 74px 12px minmax(0, 1fr);
-  gap: 0.55rem;
-  min-height: 64px;
-}
-
-.change-timeline time {
-  padding-top: 0.05rem;
-  color: var(--color-text-muted);
-  font-size: 0.72rem;
-  text-align: right;
-}
-
-.timeline-marker {
-  z-index: 1;
-  width: 10px;
-  height: 10px;
-  margin-top: 0.28rem;
-  border: 2px solid var(--color-surface);
-  border-radius: 50%;
-  background: var(--color-accent);
-  box-shadow: 0 0 0 1px var(--color-accent);
-}
-
-.timeline-incident .timeline-marker {
-  background: #ef4444;
-  box-shadow: 0 0 0 1px #ef4444;
-}
-
-.timeline-line {
-  position: absolute;
-  top: 0.85rem;
-  bottom: -0.25rem;
-  left: calc(74px + 0.55rem + 5px);
-  width: 1px;
-  background: var(--color-border);
-}
-
-.timeline-content {
-  min-width: 0;
-  padding-bottom: 1rem;
-  font-size: 0.82rem;
-}
-
-.timeline-content p {
-  overflow-wrap: anywhere;
-  margin: 0.2rem 0 0;
-  color: var(--color-text-muted);
-}
-
-.timeline-title {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.35rem;
-}
-
-.timeline-title span {
-  color: var(--color-text-muted);
-  font-size: 0.74rem;
-}
-
-.timeline-note {
-  margin: 0.25rem 0 0;
-  color: var(--color-text-muted);
-  font-size: 0.72rem;
-}
-
-.service-directory-link {
-  display: inline-block;
-  margin-top: 0.55rem;
-  color: var(--color-accent);
-  font-size: 0.76rem;
-  text-decoration: none;
 }
 
 .diagnosis-markdown {

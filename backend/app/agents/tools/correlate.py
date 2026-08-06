@@ -1,11 +1,11 @@
-"""关联原语（方向一·任务5）：把可观测性三支柱与变更在同一实体、同一时间窗对齐。
+"""关联原语（方向一·任务5）：把可观测性三支柱在同一实体、同一时间窗对齐。
 
-给定一台服务器（业务名）+ 一个时刻，**并发**拉齐它的指标走势 + 日志 + 正在触发的告警 + 变更，
+给定一台服务器（业务名）+ 一个时刻，**并发**拉齐它的指标走势 + 日志 + 正在触发的告警，
 并置成一份"横切面报告"，便于一眼看清"那会儿这台机器发生了什么"——这是 AI SRE 区别于
 普通 chatbot 的关键：不是逐个支柱单独问，而是把它们在同一实体、同一窗口对齐一起看。
 
 实体怎么映射到监控标签：靠 servers 表的 monitor_labels 列（{"instance": ..., "service": ...}）。
-correlate_incident 收业务服务器名 → 查表拿到监控标签 → 分别去 Prometheus / Loki / Alertmanager / 变更表
+correlate_incident 收业务服务器名 → 查表拿到监控标签 → 分别去 Prometheus / Loki / Alertmanager
 拉数据。关联的"聪明"（判断因果）留给 LLM，这里只干"拉齐 + 裁剪 + 并置"这件确定性的活。
 """
 
@@ -19,10 +19,9 @@ from datetime import datetime, timedelta
 
 from langchain_core.tools import tool
 
-from app.agents.tools.changes import format_change_records
 from app.agents.tools.metrics import PROMQL_TEMPLATES
 from app.db.session import AsyncSessionLocal
-from app.services import change_record_service, server_service, service_catalog_service
+from app.services import server_service, service_catalog_service
 from app.services.observability_service import (
     am_get_alerts,
     loki_query_range,
@@ -44,9 +43,9 @@ async def correlate_incident(
     service: str = "",
     environment: str = "",
 ) -> str:
-    """把一台服务器的指标、日志、告警、变更在同一时间窗对齐，排查"那会儿发生了什么"。
+    """把一台服务器的指标、日志、告警在同一时间窗对齐，排查"那会儿发生了什么"。
 
-    适合"某台机器某个时刻出了问题，一起看看它的指标/日志/告警/变更"这类排查场景（比逐个调
+    适合"某台机器某个时刻出了问题，一起看看它的指标/日志/告警"这类排查场景（比逐个调
     query_metrics / search_logs / query_alerts 更省事、且时间对齐）。
 
     - server：业务服务器名（servers 表里的 name）。需要这台服务器配了 monitor_labels（监控标签映射）。
@@ -114,12 +113,11 @@ async def correlate_incident(
     start = anchor - timedelta(minutes=window_minutes)
     end = anchor + timedelta(minutes=window_minutes)
 
-    # 3. 并发拉四类证据（互不依赖，gather 一起跑）
-    metrics_text, logs_text, alerts_text, changes_text = await asyncio.gather(
+    # 3. 并发拉三类证据（互不依赖，gather 一起跑）
+    metrics_text, logs_text, alerts_text = await asyncio.gather(
         _pull_metrics(instance, start, end),
         _pull_logs(log_service, start, end),
         _pull_alerts(instance),
-        _pull_changes(service_name, service_environment, start, end),
     )
 
     # 4. 并置成一份报告
@@ -138,9 +136,6 @@ async def correlate_incident(
             "",
             "### 告警（当前 firing）",
             alerts_text,
-            "",
-            "### 变更记录",
-            changes_text,
         ]
     )
 
@@ -219,29 +214,6 @@ async def _pull_alerts(instance: str | None) -> str:
             f"- [{lb.get('severity', '?')}] {lb.get('alertname', '?')}：{summary}"
         )
     return "\n".join(lines)
-
-
-async def _pull_changes(
-    service: str | None,
-    environment: str | None,
-    start: datetime,
-    end: datetime,
-) -> str:
-    if not service:
-        return "（未配置 service 标签，无法关联变更）"
-    try:
-        async with AsyncSessionLocal() as db:
-            records = await change_record_service.list_change_records(
-                db,
-                service_name=service,
-                environment=environment,
-                start_at=start,
-                end_at=end,
-                limit=100,
-            )
-    except Exception as exc:  # noqa: BLE001 —— 变更库查询失败不应拖垮其他三类证据
-        return f"查询失败（{exc}）"
-    return format_change_records(records)
 
 
 def _summarize_series(values: list) -> str:

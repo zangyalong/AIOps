@@ -11,9 +11,8 @@ AIOMS 的 FastAPI 后端，负责业务 API、LangGraph 多 Agent 工作流、�
 - 工具调用旁白、工具状态与最终回答实时展示，刷新后按同一轨迹重建
 - Supervisor 调度四个专业 Agent
 - Prometheus 指标、Loki 日志、Alertmanager 告警查询；指标工具可按服务器名/IP 自动解析 instance
-- 服务发布、回滚、扩缩容和配置变更记录 CRUD，以及 `query_recent_changes` 只读工具
 - 服务目录与部署实例；支持服务运行状态、指标和日志查询
-- 指标、日志、告警、变更的同实体时间窗关联
+- 指标、日志、告警的同实体时间窗关联
 - Alertmanager webhook、告警去重归组和事件生命周期
 - Redis/arq 后台自动诊断事件
 - 集中式工具目录：纯读诊断与有副作用写操作分开注册
@@ -27,14 +26,13 @@ FastAPI POST /chat → 创建后台 Chat Run
 LangGraph Supervisor
     ├── metrics_agent         → Prometheus / Grafana
     ├── logs_agent            → Loki / Grafana
-    ├── incident_agent        → Alertmanager / 变更记录 / 服务目录 / 跨信号关联
+    ├── incident_agent        → Alertmanager / 服务目录 / 跨信号关联
     └── infrastructure_agent  → servers 表 / SSH 工具
                                  ├── 只读诊断：直接执行
                                  └── 服务重启：interrupt 人工审批
 
 Alertmanager webhook → PostgreSQL → Redis/arq → Supervisor 自动诊断
-                                               ├── incidents.diagnosis
-                                               └── change_records 时间窗证据
+                                               └── incidents.diagnosis
 ```
 
 四个专家是共享状态的独立 LangGraph 子图，不是包装成普通工具的函数。Supervisor 可以连续委派多个专家，最后由综合节点基于本轮真实工具证据生成一次用户回答并直接返回。
@@ -197,11 +195,8 @@ uv run arq app.worker.WorkerSettings
 | `POST /alerts/webhook`                    | 接收 Alertmanager webhook         |
 | `GET /alerts`                             | 查询已落库告警                    |
 | `GET /incidents`                          | 查询关联后的事件                  |
-| `GET /incidents/{id}/changes`             | 查询事件前后同服务的变更          |
 | `POST /incidents/{id}/ack`                | 认领事件                          |
 | `POST /incidents/{id}/resolve`            | 人工解决事件                      |
-| `GET/POST /changes`                       | 查询、新增变更记录                |
-| `GET/PATCH/DELETE /changes/{id}`          | 查看、修改、删除变更记录          |
 | `GET/POST /services`                      | 查询、新增逻辑服务                |
 | `GET/PATCH/DELETE /services/{id}`         | 查看、修改、删除服务              |
 | `GET/POST /service-instances`             | 查询、新增服务部署实例            |
@@ -210,9 +205,7 @@ uv run arq app.worker.WorkerSettings
 前端开发环境请求 `/api/...`，由 Vite 代理去掉 `/api` 前缀后转发到这里。
 
 新接入的实体应在服务目录创建 `service_instances`，分别填写 `metric_instance`、`log_service` 并绑定
-`server_id`。事件会优先按 `metric_instance` 精确解析逻辑服务，再用服务名和环境关联变更；旧的
-`servers.monitor_labels` 仍作为兼容回退。关联只说明时间与实体重合，Agent 提示词和事件页面都会明确
-它不是已确认的根因。
+`server_id`。关联查询会优先使用规范化服务实例，旧的 `servers.monitor_labels` 仍作为兼容回退。
 
 ## 测试与静态检查
 

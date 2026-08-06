@@ -1,5 +1,3 @@
-import type { ChangeRecord } from './change'
-
 export type IncidentStatus = 'firing' | 'acknowledged' | 'resolved'
 
 export interface Incident {
@@ -17,15 +15,6 @@ export interface Incident {
   resolved_at: string | null
   created_at: string
   updated_at: string
-}
-
-export interface IncidentChangeContext {
-  service_id: string | null
-  service_name: string | null
-  environment: string | null
-  window_start: string
-  window_end: string
-  changes: ChangeRecord[]
 }
 
 export interface AlertOccurrence {

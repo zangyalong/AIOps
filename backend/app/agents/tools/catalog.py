@@ -16,7 +16,6 @@ from langchain_core.tools import BaseTool
 
 from app.agents.tools.actions import restart_service
 from app.agents.tools.alerts import query_alerts
-from app.agents.tools.changes import query_recent_changes
 from app.agents.tools.commands import run_diagnostic_command
 from app.agents.tools.correlate import correlate_incident
 from app.agents.tools.grafana import grafana_explore_link
@@ -130,7 +129,6 @@ READ_TOOLS: tuple[BaseTool, ...] = (
     query_alerts,
     grafana_explore_link,
     correlate_incident,
-    query_recent_changes,
     query_server_services,
     discover_server_services,
     preview_server_log_config,
