@@ -27,6 +27,7 @@ class ChatRun:
     status: ChatRunStatus = "running"
     events: list[ChatStreamEvent] = field(default_factory=list)
     approval_thread_id: str | None = None
+    approval_requires_second_confirmation: bool = False
     task: asyncio.Task[None] | None = None
     condition: asyncio.Condition = field(default_factory=asyncio.Condition)
 
@@ -43,6 +44,10 @@ class ChatRun:
             if event_type == "approval_required":
                 self.status = "waiting_approval"
                 self.approval_thread_id = event.get("thread_id")
+                self.approval_requires_second_confirmation = any(
+                    action.get("risk_level") in {"high", "critical"}
+                    for action in event.get("actions", [])
+                )
             elif event_type == "done":
                 self.status = "completed"
             elif event_type == "error":
@@ -98,6 +103,7 @@ class ChatRunManager:
         *,
         thread_id: str,
         approved: bool,
+        second_confirmation: bool = False,
         producer: EventProducer,
     ) -> ChatRun:
         run = self.get(run_id)
@@ -107,8 +113,15 @@ class ChatRunManager:
             raise ValueError("该对话当前没有等待审批的操作")
         if run.approval_thread_id != thread_id:
             raise ValueError("审批线程与当前挂起操作不匹配")
+        if (
+            approved
+            and run.approval_requires_second_confirmation
+            and not second_confirmation
+        ):
+            raise ValueError("高风险操作必须在详情弹窗中完成二次确认")
 
         run.status = "running"
+        run.approval_requires_second_confirmation = False
         await run.publish(
             {
                 "type": "approval_resolved",

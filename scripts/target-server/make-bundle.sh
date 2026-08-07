@@ -101,7 +101,6 @@ done
 CONFIG_PATH="$(cd -- "$(dirname -- "$CONFIG_PATH")" && pwd)/$(basename -- "$CONFIG_PATH")"
 
 AIOMS_SSH_USER=""
-AIOMS_DEPLOY_USER="aioms-deploy"
 CONFIG_SERVER_NAME=""
 ALLOY_SERVICE_MAP=""
 ENABLE_MYSQL_EXPORTER="false"
@@ -129,7 +128,7 @@ while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
     key="$(trim "${line%%=*}")"
     value="$(trim "${line#*=}")"
     case "$key" in
-        AIOMS_SSH_USER|AIOMS_DEPLOY_USER|SERVER_NAME|ALLOY_SERVICE_MAP|\
+        AIOMS_SSH_USER|SERVER_NAME|ALLOY_SERVICE_MAP|\
         ENABLE_MYSQL_EXPORTER|MYSQL_EXPORTER_CONFIG|ENABLE_POSTGRES_EXPORTER|\
         POSTGRES_EXPORTER_PASSWORD_FILE|ENABLE_REDIS_EXPORTER|REDIS_EXPORTER_PASSWORD_FILE)
             [[ "$SEEN_KEYS" != *"|$key|"* ]] || fail "配置项重复：$key"
@@ -138,7 +137,6 @@ while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
     esac
     case "$key" in
         AIOMS_SSH_USER) AIOMS_SSH_USER="$value" ;;
-        AIOMS_DEPLOY_USER) AIOMS_DEPLOY_USER="$value" ;;
         SERVER_NAME) CONFIG_SERVER_NAME="$value" ;;
         ALLOY_SERVICE_MAP) ALLOY_SERVICE_MAP="$value" ;;
         ENABLE_MYSQL_EXPORTER) ENABLE_MYSQL_EXPORTER="$value" ;;
@@ -152,9 +150,7 @@ done <"$CONFIG_PATH"
 
 readonly USER_PATTERN='^[a-z_][a-z0-9_-]*[$]?$'
 [[ "$AIOMS_SSH_USER" =~ $USER_PATTERN ]] || fail "deploy.conf 的 AIOMS_SSH_USER 不合法"
-[[ "$AIOMS_DEPLOY_USER" =~ $USER_PATTERN ]] ||
-    fail "deploy.conf 的 AIOMS_DEPLOY_USER 不合法"
-[[ "$AIOMS_SSH_USER" != "$AIOMS_DEPLOY_USER" ]] || fail "只读用户和部署用户不能相同"
+[[ "$AIOMS_SSH_USER" != "root" ]] || fail "AIOMS_SSH_USER 不能是 root"
 [[ "$CONFIG_SERVER_NAME" == "$SERVER_NAME" ]] ||
     fail "deploy.conf 的 SERVER_NAME 必须与 --server 一致"
 
@@ -178,8 +174,7 @@ readonly GENERATED_ROOT="$stage_root/generated"
     --server "$SERVER_NAME" \
     --host "$SERVER_HOST" \
     --port "$SSH_PORT" \
-    --readonly-user "$AIOMS_SSH_USER" \
-    --deploy-user "$AIOMS_DEPLOY_USER" \
+    --user "$AIOMS_SSH_USER" \
     --key-dir "$KEY_DIR" \
     --generated-root "$GENERATED_ROOT"
 
@@ -208,9 +203,8 @@ package_tar="$stage_root/target-server.tar"
     tar -xf "$package_tar"
 )
 
-install -m 0644 "$ROLE_SOURCE/readonly.pub" "$ROLE_COPY/readonly.pub"
-install -m 0644 "$ROLE_SOURCE/deploy.pub" "$ROLE_COPY/deploy.pub"
-install -m 0755 "$ROLE_SOURCE/configure-roles.sh" "$ROLE_COPY/configure-roles.sh"
+install -m 0644 "$ROLE_SOURCE/aioms.pub" "$ROLE_COPY/aioms.pub"
+install -m 0755 "$ROLE_SOURCE/configure-role.sh" "$ROLE_COPY/configure-role.sh"
 install -m 0644 \
     "$ROLE_SOURCE/client-connection-info.txt" "$ROLE_COPY/client-connection-info.txt"
 install -m 0644 "$ROLE_SOURCE/SHA256SUMS" "$ROLE_COPY/SHA256SUMS"
@@ -260,9 +254,7 @@ command -v sha256sum >/dev/null 2>&1 || fail "服务器缺少 sha256sum"
     sha256sum -c SHA256SUMS
 )
 
-"\$SCRIPT_DIR/role/configure-roles.sh" \
-    --readonly-user "$AIOMS_SSH_USER" \
-    --deploy-user "$AIOMS_DEPLOY_USER"
+"\$SCRIPT_DIR/role/configure-role.sh" --user "$AIOMS_SSH_USER"
 "\$SCRIPT_DIR/target-server/deploy.sh" \
     --config "\$SCRIPT_DIR/target-server/deploy.conf"
 

@@ -8,16 +8,16 @@ fail() {
 }
 
 usage() {
-    echo "用法：sudo ./actions/install.sh --deploy-user USER --allowlist a.service,b.service"
+    echo "用法：sudo ./actions/install.sh --ssh-user USER --allowlist a.service,b.service"
 }
 
-DEPLOY_USER=""
+SSH_USER=""
 ALLOWLIST=""
 while (($# > 0)); do
     case "$1" in
-        --deploy-user)
-            (($# >= 2)) || fail "--deploy-user 缺少参数"
-            DEPLOY_USER="$2"
+        --ssh-user)
+            (($# >= 2)) || fail "--ssh-user 缺少参数"
+            SSH_USER="$2"
             shift 2
             ;;
         --allowlist)
@@ -34,8 +34,9 @@ while (($# > 0)); do
 done
 
 [[ $EUID -eq 0 ]] || fail "请使用 root 或 sudo 运行"
-[[ "$DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] || fail "部署用户格式不合法"
-id "$DEPLOY_USER" >/dev/null 2>&1 || fail "部署用户不存在：$DEPLOY_USER"
+[[ "$SSH_USER" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] || fail "AIOMS SSH 用户格式不合法"
+[[ "$SSH_USER" != "root" ]] || fail "AIOMS SSH 用户不能是 root"
+id "$SSH_USER" >/dev/null 2>&1 || fail "AIOMS SSH 用户不存在：$SSH_USER"
 command -v visudo >/dev/null 2>&1 || fail "找不到 visudo"
 
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -66,7 +67,7 @@ install -d -o root -g root -m 0755 /etc/aioms
 install -o root -g root -m 0755 "$GATEWAY_SOURCE" /usr/local/sbin/aioms-service-control
 install -o root -g root -m 0644 "$allowlist_tmp" /etc/aioms/service-control.allowlist
 
-sed "s/__AIOMS_DEPLOY_USER__/$DEPLOY_USER/g" "$SUDOERS_TEMPLATE" >"$sudoers_tmp"
+sed "s/__AIOMS_SSH_USER__/$SSH_USER/g" "$SUDOERS_TEMPLATE" >"$sudoers_tmp"
 visudo -cf "$sudoers_tmp" >/dev/null
 install -o root -g root -m 0440 "$sudoers_tmp" /etc/sudoers.d/aioms-service-control
 

@@ -46,11 +46,9 @@ async def record_generated_ssh_keys(
     db: AsyncSession,
     server: Server,
     *,
-    readonly_key_filename: str,
-    deploy_key_filename: str,
+    key_filename: str,
 ) -> Server:
-    server.ssh_key_filename = readonly_key_filename
-    server.deploy_ssh_key_filename = deploy_key_filename
+    server.ssh_key_filename = key_filename
     return await server_repository.save(db, server)
 
 

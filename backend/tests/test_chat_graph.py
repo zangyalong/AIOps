@@ -361,10 +361,52 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(_write_calls, [])
 
         await graph.ainvoke(
-            Command(resume={"approved": True, "reason": "测试批准"}),
+            Command(
+                resume={
+                    "approved": True,
+                    "second_confirmation": True,
+                    "reason": "测试批准",
+                }
+            ),
             config=config,
         )
         self.assertEqual(_write_calls, [("demo", "nginx")])
+
+    async def test_high_risk_write_rejects_missing_second_confirmation(self) -> None:
+        """即使第一次批准，高风险写工具没有详情弹窗二次确认也不能执行。"""
+        chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"] = [
+            _fake_restart_service
+        ]
+        result = await chat_graph.specialist_tools_node(
+            "infrastructure_agent",
+            {
+                "messages": [],
+                "work_messages": [
+                    AIMessage(
+                        "",
+                        tool_calls=[
+                            {
+                                "name": "restart_service",
+                                "args": {
+                                    "server_name": "demo",
+                                    "service_name": "nginx.service",
+                                },
+                                "id": "missing-second-confirmation",
+                                "type": "tool_call",
+                            }
+                        ],
+                    )
+                ],
+                "reports": {},
+                "specialist_instruction": "",
+                "tool_iterations": 0,
+                "allow_write_tools": True,
+                "approval": {"approved": True, "reason": "只做了第一次确认"},
+            },
+        )
+
+        self.assertIn("缺少详情弹窗二次确认", str(result["messages"][0].content))
+        self.assertEqual(_write_calls, [])
 
     async def test_write_tool_node_rejects_missing_approval_decision(self) -> None:
         """即使绕过图路由直达执行节点，没有审批决议也必须硬拒绝。"""

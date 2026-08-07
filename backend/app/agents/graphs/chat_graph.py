@@ -170,8 +170,9 @@ SPECIALIST_PROMPTS: dict[AgentName, str] = {
         "会上传固定映射并启动或重载 Alloy，必须单独提交人工审批，不能和其他 Tool 同批调用。"
         "用户明确要求启动、停止或重启 systemd 服务时，必须先用 query_servers 核对服务器，再用 "
         "run_diagnostic_command 检查目标单元和当前状态；核对完成后分别调用 start_service、"
-        "stop_service 或 restart_service。三者都是高风险写工具，必须单独等待人工审批，不能用"
-        "诊断工具替代或拼接写命令。若部署身份、固定写网关或白名单未配置，必须明确说明未执行。"
+        "stop_service 或 restart_service。启动是中风险操作，需要一次人工确认；停止和重启是高风险"
+        "操作，需要审批卡片和详情弹窗两步确认。三者都必须单独等待审批，不能用诊断工具替代或"
+        "拼接写命令。若 SSH 身份、固定写网关或白名单未配置，必须明确说明未执行。"
         "完成调查后输出一份给 Supervisor 的简短证据报告，不要假装直接回复最终用户。"
     ),
 }
@@ -522,6 +523,16 @@ async def specialist_tools_node(agent_name: AgentName, state: SpecialistState) -
             result = _tool_message(
                 tool_call=tool_call,
                 content=f"用户拒绝执行该操作（{reason}）。请不要重试。",
+                status="error",
+            )
+        elif (
+            is_write_tool(name)
+            and describe_write_action(tool_call)["risk_level"] in {"high", "critical"}
+            and not decision.get("second_confirmation", False)
+        ):
+            result = _tool_message(
+                tool_call=tool_call,
+                content="高风险写操作缺少详情弹窗二次确认，已拒绝执行。",
                 status="error",
             )
         else:

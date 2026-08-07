@@ -105,8 +105,7 @@ async def download_deployment_bundle(
         await server_service.record_generated_ssh_keys(
             db,
             server,
-            readonly_key_filename=artifact.readonly_key_filename,
-            deploy_key_filename=artifact.deploy_key_filename,
+            key_filename=artifact.key_filename,
         )
     except Exception:
         cleanup_bundle(artifact.temporary_root)

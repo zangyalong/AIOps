@@ -30,8 +30,7 @@ class DeploymentBundleArtifact:
     archive_path: Path
     temporary_root: Path
     sha256: str
-    readonly_key_filename: str
-    deploy_key_filename: str
+    key_filename: str
 
 
 def _bool(value: bool) -> str:
@@ -84,14 +83,13 @@ def validate_bundle_secrets(
 def render_deploy_config(
     server: Server, config: TargetDeploymentConfig, *, redis_has_password: bool
 ) -> str:
-    if not server.ssh_user or not server.deploy_ssh_user:
-        raise DeploymentBundleError("请先填写日常只读 SSH 用户和审批后部署 SSH 用户")
+    if not server.ssh_user:
+        raise DeploymentBundleError("请先填写非 root 的 AIOMS SSH 用户")
 
     return "\n".join(
         [
             "# 由 AIOMS 服务器编辑页生成；数据库密码保存在同包的独立凭据文件中。",
             f"AIOMS_SSH_USER={server.ssh_user}",
-            f"AIOMS_DEPLOY_USER={server.deploy_ssh_user}",
             f"SERVICE_CONTROL_ALLOWLIST={_service_control_allowlist()}",
             f"ENABLE_ALLOY={_bool(config.enable_alloy)}",
             f"SERVER_NAME={server.name}",
@@ -176,14 +174,12 @@ def _validate_server_identity(server: Server) -> None:
         raise DeploymentBundleError("服务器地址不能为空或包含换行")
     if server.ssh_port is not None and not 1 <= server.ssh_port <= 65535:
         raise DeploymentBundleError("SSH 端口必须在 1 到 65535 之间")
-    for label, user in (
-        ("日常只读 SSH 用户", server.ssh_user),
-        ("审批后部署 SSH 用户", server.deploy_ssh_user),
+    if (
+        not server.ssh_user
+        or not SSH_USER_PATTERN.fullmatch(server.ssh_user)
+        or server.ssh_user == "root"
     ):
-        if not user or not SSH_USER_PATTERN.fullmatch(user) or user == "root":
-            raise DeploymentBundleError(f"{label}格式不合法且不能使用 root")
-    if server.ssh_user == server.deploy_ssh_user:
-        raise DeploymentBundleError("日常只读 SSH 用户和审批后部署 SSH 用户不能相同")
+        raise DeploymentBundleError("AIOMS SSH 用户格式不合法且不能使用 root")
 
 
 def cleanup_bundle(temporary_root: Path) -> None:
@@ -259,8 +255,7 @@ async def build_deployment_bundle(
             archive_path=archive_path,
             temporary_root=temporary_root,
             sha256=sha256,
-            readonly_key_filename=f"{server.name}-{server.ssh_user}",
-            deploy_key_filename=f"{server.name}-{server.deploy_ssh_user}",
+            key_filename=f"{server.name}-{server.ssh_user}",
         )
     except Exception:
         cleanup_bundle(temporary_root)

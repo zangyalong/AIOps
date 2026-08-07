@@ -84,8 +84,8 @@ AI 先调用只读 `discover_server_services`，再把选中的 systemd、Docker
 高风险写 Tool `apply_server_log_config` 会：
 
 1. 重新读取服务目录，核对摘要和每项映射，变化时拒绝应用并要求重新预览。
-2. 使用服务器记录中的独立 `deploy_ssh_user` / `deploy_ssh_key_filename`。
-3. 只把自动生成的映射上传到 `/var/lib/aioms-deploy/incoming/services.map`。
+2. 使用服务器记录中的非 root `ssh_user` / `ssh_key_filename`；读写共用身份，但权限仍由固定网关隔离。
+3. 只把自动生成的映射上传到 `/var/lib/aioms/incoming/services.map`。
 4. 只执行 `sudo /usr/local/sbin/aioms-target-deploy apply-alloy`。
 5. root 应用器再次校验文件所有者、权限、大小和格式，运行 `alloy validate`，备份旧配置后
    启动或重载 Alloy；失败时尝试恢复旧配置。
@@ -104,7 +104,7 @@ Docker socket 通常赋予接近 root 的容器控制能力。服务目录中存
 sudo ./install.sh \
   --server web01 \
   --loki-url http://监控服务器:3100/loki/api/v1/push \
-  --deploy-user aioms-deploy \
+  --ssh-user aioms \
   --map ./services.map \
   --allow-docker-socket
 ```
@@ -124,7 +124,7 @@ sudo setfacl -R -d -m u:alloy:rx /var/log/mysql
 /etc/alloy/config.alloy                      # Alloy 实际运行配置
 /usr/local/libexec/aioms/generate-alloy-config
 /usr/local/libexec/aioms/apply-alloy-config
-/var/lib/aioms-deploy/incoming/               # 仅部署用户可写的暂存目录
+/var/lib/aioms/incoming/                      # 仅 aioms 用户可写的暂存目录
 ```
 
 ## 6. 检查与排错

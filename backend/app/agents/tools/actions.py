@@ -17,9 +17,9 @@ from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.services import server_service
 from app.services.ssh_service import (
-    SSHDeployNotConfigured,
     SSHKeyMissing,
-    build_deploy_connect_params,
+    SSHNotConfigured,
+    build_connect_params,
 )
 
 SERVICE_CONTROL_GATEWAY = "/usr/local/sbin/aioms-service-control"
@@ -64,11 +64,11 @@ async def _control_service(
         return f"没有找到名称或 IP 为 {server_name} 的服务器，请先确认服务器。"
 
     try:
-        params = build_deploy_connect_params(server)
-    except SSHDeployNotConfigured:
+        params = build_connect_params(server)
+    except SSHNotConfigured:
         return (
-            f"{server.name} 没有配置审批后部署 SSH 身份，无法{action_label}服务。"
-            "请先配置 deploy_ssh_user / deploy_ssh_key_filename。"
+            f"{server.name} 没有配置 AIOMS SSH 身份，无法{action_label}服务。"
+            "请先配置 ssh_user / ssh_key_filename。"
         )
     except SSHKeyMissing as exc:
         return f"{exc}，请确认已经放到 {exc.key_path.parent} 目录下。"
@@ -102,7 +102,7 @@ async def _control_service(
 async def start_service(server_name: str, service_name: str) -> str:
     """启动指定服务器上明确加入白名单的 systemd 服务。
 
-    这是高风险写操作：必须先由用户在审批卡片中确认，并通过目标服务器固定写网关执行。
+    这是中风险写操作：必须先由用户在审批卡片中确认，并通过目标服务器固定写网关执行。
     """
     return await _control_service("start", server_name, service_name)
 
@@ -111,7 +111,7 @@ async def start_service(server_name: str, service_name: str) -> str:
 async def stop_service(server_name: str, service_name: str) -> str:
     """停止指定服务器上明确加入白名单的 systemd 服务。
 
-    这是高风险写操作：必须先由用户在审批卡片中确认，并通过目标服务器固定写网关执行。
+    这是高风险写操作：必须经过审批卡片和详情弹窗两步确认，再通过固定写网关执行。
     """
     return await _control_service("stop", server_name, service_name)
 
@@ -120,6 +120,6 @@ async def stop_service(server_name: str, service_name: str) -> str:
 async def restart_service(server_name: str, service_name: str) -> str:
     """重启指定服务器上明确加入白名单的 systemd 服务。
 
-    这是高风险写操作：必须先由用户在审批卡片中确认，并通过目标服务器固定写网关执行。
+    这是高风险写操作：必须经过审批卡片和详情弹窗两步确认，再通过固定写网关执行。
     """
     return await _control_service("restart", server_name, service_name)

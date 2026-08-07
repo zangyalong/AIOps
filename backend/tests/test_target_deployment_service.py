@@ -22,7 +22,6 @@ def make_server() -> Server:
         ip_address="192.0.2.10",
         ssh_port=22,
         ssh_user="aioms",
-        deploy_ssh_user="aioms-deploy",
     )
 
 
@@ -43,6 +42,8 @@ class TargetDeploymentServiceTests(unittest.TestCase):
             )
 
         self.assertIn("SERVER_NAME=web01\n", rendered)
+        self.assertIn("AIOMS_SSH_USER=aioms\n", rendered)
+        self.assertNotIn("AIOMS_DEPLOY_USER", rendered)
         self.assertIn("ALLOW_DOCKER_SOCKET=true\n", rendered)
         self.assertIn("ALLOY_SERVICE_MAP=\n", rendered)
         self.assertIn("START_ALLOY=false\n", rendered)

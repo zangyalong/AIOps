@@ -159,8 +159,6 @@ class ServerBase(BaseModel):
     ssh_port: int | None = None
     ssh_user: str | None = None
     ssh_key_filename: str | None = None
-    deploy_ssh_user: str | None = None
-    deploy_ssh_key_filename: str | None = None
     deployment_config: TargetDeploymentConfig | None = None
 
 
@@ -175,8 +173,6 @@ class ServerUpdate(BaseModel):
     ssh_port: int | None = None
     ssh_user: str | None = None
     ssh_key_filename: str | None = None
-    deploy_ssh_user: str | None = None
-    deploy_ssh_key_filename: str | None = None
     deployment_config: TargetDeploymentConfig | None = None
 
 

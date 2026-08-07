@@ -22,13 +22,6 @@ class Server(Base, UUIDMixin, TimestampMixin):
     # 密钥内容本身放仓库根目录 ssh/ 下，不进数据库、不进仓库。
     ssh_key_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    # 服务器写 Tool 使用独立部署身份，不能复用上面的日常只读密钥。SSH 端口与主机地址仍
-    # 复用本服务器记录；只有经过审批的部署 Tool 会读取这两个字段。
-    deploy_ssh_user: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    deploy_ssh_key_filename: Mapped[str | None] = mapped_column(
-        String(255), nullable=True
-    )
-
     # 最近一次"测试连接"的结果，持久化下来，刷新页面不丢：
     # unknown（还没测过）/ active / unreachable / unconfigured
     status: Mapped[str] = mapped_column(

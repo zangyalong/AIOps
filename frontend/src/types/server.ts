@@ -85,8 +85,6 @@ export interface Server {
   ssh_port: number | null
   ssh_user: string | null
   ssh_key_filename: string | null
-  deploy_ssh_user: string | null
-  deploy_ssh_key_filename: string | null
   deployment_config: TargetDeploymentConfig | null
   status: ServerStatus
   created_at: string
@@ -124,8 +122,6 @@ export interface ServerCreateInput {
   ssh_port?: number | null
   ssh_user?: string | null
   ssh_key_filename?: string | null
-  deploy_ssh_user?: string | null
-  deploy_ssh_key_filename?: string | null
   deployment_config?: TargetDeploymentConfig | null
 }
 

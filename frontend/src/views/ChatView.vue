@@ -30,6 +30,7 @@ type TimelineItem =
       riskLevel?: 'medium' | 'high' | 'critical'
       status: 'pending' | 'approved' | 'rejected' | 'failed'
     }
+type ApprovalItem = Extract<TimelineItem, { kind: 'approval' }>
 
 const timeline = ref<TimelineItem[]>([])
 const input = ref('')
@@ -45,6 +46,8 @@ const messagesEl = ref<HTMLElement | null>(null)
 // 当前是否有一个写操作挂在审批门上等裁决。非空时输入框禁用（先处理确认再继续对话），
 // 记住要恢复哪条挂起（threadId）——裁决时按 threadId 把这次挂起的所有待批行一起翻状态。
 const pendingApproval = ref<{ runId: string; threadId: string } | null>(null)
+// 高风险操作第一次点击“执行”时只打开详情弹窗；弹窗确认后才真正恢复后端运行。
+const confirmationApproval = ref<ApprovalItem | null>(null)
 const activeRunId = ref<string | null>(null)
 const lastEventSequence = ref(0)
 let subscriptionController: AbortController | null = null
@@ -88,9 +91,12 @@ const WRITE_TOOLS = new Set([
   'run_whitelisted_command',
 ])
 
-const MEDIUM_RISK_TOOLS = new Set(['register_server_services', 'create_alert_rule'])
-const HIGH_RISK_TOOLS = new Set([
+const MEDIUM_RISK_TOOLS = new Set([
+  'register_server_services',
+  'create_alert_rule',
   'start_service',
+])
+const HIGH_RISK_TOOLS = new Set([
   'stop_service',
   'restart_service',
   'apply_server_log_config',
@@ -125,9 +131,31 @@ function historyRiskLevel(name: string): 'medium' | 'high' | undefined {
 }
 
 function riskLevelLabel(level: 'medium' | 'high' | 'critical'): string {
-  if (level === 'medium') return '配置写入'
+  if (level === 'medium') return '中风险'
   if (level === 'critical') return '严重风险'
   return '高风险'
+}
+
+function requiresSecondConfirmation(item: ApprovalItem): boolean {
+  return item.riskLevel === 'high' || item.riskLevel === 'critical'
+}
+
+function requestApproval(item: ApprovalItem) {
+  if (sending.value || item.status !== 'pending') return
+  if (requiresSecondConfirmation(item)) {
+    confirmationApproval.value = item
+    return
+  }
+  void decide(true, false)
+}
+
+function closeConfirmation() {
+  if (!sending.value) confirmationApproval.value = null
+}
+
+async function confirmHighRiskApproval() {
+  await decide(true, true)
+  if (!error.value) confirmationApproval.value = null
 }
 
 function scrollToBottom() {
@@ -218,6 +246,7 @@ async function consume(stream: AsyncGenerator<ChatStreamEvent>) {
       if (pendingApproval.value?.threadId === event.thread_id) {
         pendingApproval.value = null
       }
+      confirmationApproval.value = null
       assistantOpen = false
     } else if (event.type === 'done') {
       conversationId.value = event.conversation_id
@@ -297,7 +326,7 @@ async function send() {
 
 // 对当前挂起的写操作作出裁决：批准就真去执行，拒绝就回喂"已拒绝"让 agent 改口。两种都从挂起点
 // 续跑同一轮对话（可能又冒出下一张待批卡片，consume 里会照样处理）。
-async function decide(approved: boolean) {
+async function decide(approved: boolean, secondConfirmation = false) {
   const pending = pendingApproval.value
   if (!pending || sending.value) return
 
@@ -312,6 +341,7 @@ async function decide(approved: boolean) {
       conversationId: conversationId.value as string,
       threadId: pending.threadId,
       approved,
+      secondConfirmation,
     })
     void attachRun(pending.runId, after)
   } catch (e) {
@@ -327,6 +357,7 @@ function resetConversation() {
   activeRunId.value = null
   lastEventSequence.value = 0
   pendingApproval.value = null
+  confirmationApproval.value = null
   sending.value = false
   error.value = null
   assistantOpen = false
@@ -435,6 +466,7 @@ async function loadConversation(id: string) {
   conversationId.value = id
   activeRunId.value = null
   pendingApproval.value = null
+  confirmationApproval.value = null
   lastEventSequence.value = 0
   sending.value = false
   error.value = null
@@ -553,7 +585,7 @@ onBeforeUnmount(() => {
                 <span v-if="item.label" class="approval-loc">· {{ item.label }}</span>
               </span>
               <span v-if="item.status === 'pending'" class="approval-btns">
-                <button type="button" class="approve" :disabled="sending" @click="decide(true)">执行</button>
+                <button type="button" class="approve" :disabled="sending" @click="requestApproval(item)">执行</button>
                 <button type="button" class="reject" :disabled="sending" @click="decide(false)">不执行</button>
               </span>
             </div>
@@ -572,6 +604,45 @@ onBeforeUnmount(() => {
           />
           <button type="submit" :disabled="sending || !!pendingApproval">发送</button>
         </form>
+      </div>
+    </div>
+
+    <div
+      v-if="confirmationApproval"
+      class="confirm-backdrop"
+      role="presentation"
+      @click.self="closeConfirmation"
+    >
+      <div class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title">
+        <div class="confirm-header">
+          <span class="confirm-warning" aria-hidden="true">!</span>
+          <div>
+            <h2 id="confirm-title">再次确认高风险操作</h2>
+            <p>这一步确认后才会向目标服务器的固定写网关提交操作。</p>
+          </div>
+        </div>
+        <dl class="confirm-details">
+          <div>
+            <dt>风险等级</dt>
+            <dd>{{ riskLevelLabel(confirmationApproval.riskLevel ?? 'high') }}</dd>
+          </div>
+          <div v-if="confirmationApproval.label">
+            <dt>目标</dt>
+            <dd>{{ confirmationApproval.label }}</dd>
+          </div>
+          <div>
+            <dt>具体操作</dt>
+            <dd><code>{{ confirmationApproval.command }}</code></dd>
+          </div>
+        </dl>
+        <p class="confirm-tip">请核对服务器、服务名称和动作。确认后操作可能造成服务中断。</p>
+        <p v-if="error" class="confirm-error">{{ error }}</p>
+        <div class="confirm-actions">
+          <button type="button" class="confirm-cancel" :disabled="sending" @click="closeConfirmation">取消</button>
+          <button type="button" class="confirm-submit" :disabled="sending" @click="confirmHighRiskApproval">
+            {{ sending ? '提交中…' : '确认执行' }}
+          </button>
+        </div>
       </div>
     </div>
   </section>
@@ -821,6 +892,128 @@ h1 {
 .approval-btns button:disabled {
   opacity: 0.6;
   cursor: default;
+}
+
+.confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background: rgb(15 23 42 / 42%);
+}
+
+.confirm-dialog {
+  width: min(480px, 100%);
+  padding: 1.25rem;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 18px 50px rgb(15 23 42 / 18%);
+}
+
+.confirm-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.confirm-warning {
+  display: grid;
+  flex: 0 0 2rem;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border-radius: 50%;
+  background: #fff1f0;
+  color: var(--color-status-unreachable);
+  font-weight: 700;
+}
+
+.confirm-header h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.confirm-header p {
+  margin: 0.3rem 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.confirm-details {
+  margin: 1rem 0;
+  padding: 0.75rem;
+  border-radius: var(--radius);
+  background: #f8f9fa;
+}
+
+.confirm-details > div {
+  display: grid;
+  grid-template-columns: 5rem minmax(0, 1fr);
+  gap: 0.6rem;
+  padding: 0.3rem 0;
+}
+
+.confirm-details dt {
+  color: var(--color-text-muted);
+  font-size: 0.82rem;
+}
+
+.confirm-details dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.85rem;
+}
+
+.confirm-details code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+}
+
+.confirm-tip {
+  margin: 0;
+  color: var(--color-status-unreachable);
+  font-size: 0.82rem;
+}
+
+.confirm-error {
+  margin: 0.5rem 0 0;
+  color: var(--color-status-unreachable);
+  font-size: 0.82rem;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin-top: 1.25rem;
+}
+
+.confirm-actions button {
+  padding: 0.5rem 1rem;
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+}
+
+.confirm-cancel {
+  border: 1px solid var(--color-border);
+  background: #ffffff;
+  color: var(--color-text);
+}
+
+.confirm-submit {
+  border: 1px solid var(--color-status-unreachable);
+  background: var(--color-status-unreachable);
+  color: #ffffff;
+}
+
+.confirm-actions button:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 
 .hint {

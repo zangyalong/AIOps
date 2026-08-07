@@ -21,6 +21,9 @@ class ResumeApprovalRequest(BaseModel):
     conversation_id: uuid.UUID
     thread_id: str
     approved: bool
+    # high / critical 操作必须经过审批卡片 + 详情弹窗两步确认。后端仍校验这个标记，
+    # 防止前端漏做弹窗时直接恢复高风险写工具。
+    second_confirmation: bool = False
     # 拒绝时可选带一句理由，会回喂给 agent 让它据此向用户说明
     reason: str | None = None
 

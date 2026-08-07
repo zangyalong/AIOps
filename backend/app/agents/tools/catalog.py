@@ -178,7 +178,7 @@ _WRITE_SPECS = (
     ),
     WriteToolSpec(
         tool=start_service,
-        risk_level="high",
+        risk_level="medium",
         build_action_details=_start_service_action,
     ),
     WriteToolSpec(

@@ -15,9 +15,9 @@ from pydantic import BaseModel, Field, field_validator
 from app.db.session import AsyncSessionLocal
 from app.services import server_service, service_catalog_service
 from app.services.ssh_service import (
-    SSHDeployNotConfigured,
     SSHKeyMissing,
-    build_deploy_connect_params,
+    SSHNotConfigured,
+    build_connect_params,
 )
 
 RuntimeType = Literal["systemd", "docker", "process"]
@@ -27,8 +27,8 @@ _SAFE_ENVIRONMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,49}")
 _SAFE_RUNTIME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.@:-]{0,199}")
 _HASH = re.compile(r"[0-9a-f]{64}")
 _MAX_MAPPINGS = 100
-_REMOTE_TEMP_MAP = "/var/lib/aioms-deploy/incoming/.services.map.upload"
-_REMOTE_MAP = "/var/lib/aioms-deploy/incoming/services.map"
+_REMOTE_TEMP_MAP = "/var/lib/aioms/incoming/.services.map.upload"
+_REMOTE_MAP = "/var/lib/aioms/incoming/services.map"
 _APPLY_COMMAND = "sudo -n -- /usr/local/sbin/aioms-target-deploy apply-alloy"
 
 
@@ -114,14 +114,18 @@ def _render_services_map(mappings: list[LogMappingItem]) -> str:
     return "\n".join(lines) + "\n"
 
 
-async def _build_snapshot(server_name: str) -> tuple[object | None, LogConfigSnapshot | None]:
+async def _build_snapshot(
+    server_name: str,
+) -> tuple[object | None, LogConfigSnapshot | None]:
     warnings: list[str] = []
     mappings: list[LogMappingItem] = []
     async with AsyncSessionLocal() as db:
         server = await server_service.get_server_by_name_or_ip(db, server_name)
         if server is None:
             return None, None
-        instances = await service_catalog_service.list_instances(db, server_id=server.id)
+        instances = await service_catalog_service.list_instances(
+            db, server_id=server.id
+        )
         for instance in instances:
             if not instance.runtime_type or not instance.runtime_name:
                 warnings.append(f"实例 {instance.name} 没有运行时身份，已跳过")
@@ -141,8 +145,9 @@ async def _build_snapshot(server_name: str) -> tuple[object | None, LogConfigSna
             if not _SAFE_RUNTIME.fullmatch(instance.runtime_name):
                 warnings.append(f"实例 {instance.name} 的运行对象格式不合法，已跳过")
                 continue
-            if instance.runtime_type == "systemd" and not instance.runtime_name.endswith(
-                ".service"
+            if (
+                instance.runtime_type == "systemd"
+                and not instance.runtime_name.endswith(".service")
             ):
                 warnings.append(
                     f"systemd 实例 {instance.name} 不是准确的 .service 单元，已跳过"
@@ -222,7 +227,9 @@ async def preview_server_log_config(server_name: str) -> str:
         return f"没有找到名称或 IP 为 {server_name} 的服务器，请先确认服务器。"
     payload = _snapshot_payload(snapshot)
     if not snapshot.mappings:
-        payload["next_action"] = "该服务器没有带运行时身份的服务实例，请先发现并注册服务。"
+        payload["next_action"] = (
+            "该服务器没有带运行时身份的服务实例，请先发现并注册服务。"
+        )
     elif snapshot.source_count == 0:
         payload["next_action"] = "当前只有 process 实例，无法自动生成可采集日志源。"
     else:
@@ -241,7 +248,8 @@ async def apply_server_log_config(
     """审批后应用服务目录生成的 Alloy 配置，并启动或重载 Alloy。
 
     工具会重新读取服务目录并核对预览哈希与每项映射；不会接受任意配置正文。核对成功后使用
-    服务器独立部署密钥上传到固定暂存路径，再调用唯一允许的 root 网关子命令。
+    与只读查询共用服务器的非 root AIOMS SSH 身份上传到固定暂存路径，再调用唯一允许的
+    root 网关子命令。SSH 身份本身不能执行任意 root 命令。
     """
     server, snapshot = await _build_snapshot(server_name)
     if server is None or snapshot is None:
@@ -258,14 +266,14 @@ async def apply_server_log_config(
         )
 
     try:
-        params = build_deploy_connect_params(server)
-    except SSHDeployNotConfigured:
+        params = build_connect_params(server)
+    except SSHNotConfigured:
         return (
-            f"{snapshot.server_name} 没有配置部署 SSH 身份"
-            "（deploy_ssh_user / deploy_ssh_key_filename），未修改服务器。"
+            f"{snapshot.server_name} 没有配置 AIOMS SSH 身份"
+            "（ssh_user / ssh_key_filename），未修改服务器。"
         )
     except SSHKeyMissing as exc:
-        return f"{exc}，请确认部署私钥已经放到 {exc.key_path.parent} 目录下。"
+        return f"{exc}，请确认 AIOMS 私钥已经放到 {exc.key_path.parent} 目录下。"
 
     try:
         async with asyncssh.connect(

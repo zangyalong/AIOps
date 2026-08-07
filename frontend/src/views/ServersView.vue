@@ -42,8 +42,6 @@ const form = reactive<ServerForm>({
   ssh_port: null,
   ssh_user: '',
   ssh_key_filename: '',
-  deploy_ssh_user: '',
-  deploy_ssh_key_filename: '',
   deployment_config: createDefaultDeploymentConfig(),
 })
 
@@ -74,8 +72,6 @@ function resetForm() {
   form.ssh_port = null
   form.ssh_user = ''
   form.ssh_key_filename = ''
-  form.deploy_ssh_user = ''
-  form.deploy_ssh_key_filename = ''
   form.deployment_config = createDefaultDeploymentConfig()
   Object.assign(deploymentSecrets, createEmptyDeploymentSecrets())
   formError.value = null
@@ -95,8 +91,6 @@ function openEditModal(server: Server) {
   form.ssh_port = server.ssh_port
   form.ssh_user = server.ssh_user ?? ''
   form.ssh_key_filename = server.ssh_key_filename ?? ''
-  form.deploy_ssh_user = server.deploy_ssh_user ?? ''
-  form.deploy_ssh_key_filename = server.deploy_ssh_key_filename ?? ''
   form.deployment_config = {
     ...createDefaultDeploymentConfig(),
     ...(server.deployment_config ?? {}),
@@ -126,8 +120,6 @@ function buildPayload(): ServerCreateInput | null {
     ssh_port: form.ssh_port || null,
     ssh_user: form.ssh_user?.trim() || null,
     ssh_key_filename: form.ssh_key_filename?.trim() || null,
-    deploy_ssh_user: form.deploy_ssh_user?.trim() || null,
-    deploy_ssh_key_filename: form.deploy_ssh_key_filename?.trim() || null,
     deployment_config: { ...form.deployment_config },
   }
 }
@@ -180,9 +172,8 @@ async function saveAndGenerateBundle() {
 
     const download = await generateDeploymentBundle(saved.id, deploymentSecrets)
     downloadBlob(download.blob, download.filename)
-    if (saved.ssh_user && saved.deploy_ssh_user) {
+    if (saved.ssh_user) {
       form.ssh_key_filename = `${saved.name}-${saved.ssh_user}`
-      form.deploy_ssh_key_filename = `${saved.name}-${saved.deploy_ssh_user}`
     }
     bundleMessage.value = download.sha256
       ? `安装包已下载，SHA-256：${download.sha256}`
@@ -297,20 +288,15 @@ const sortedServers = computed(() =>
           <label>描述<input v-model="form.description" placeholder="可选" /></label>
 
           <div class="ssh-group">
-            <p class="group-title">日常只读 SSH</p>
-            <p class="group-hint">可选。填全后用于测试连接、服务发现和只读诊断。</p>
+            <p class="group-title">AIOMS SSH 身份</p>
+            <p class="group-hint">
+              可选。使用一个非 root 用户完成只读查询和审批后的白名单操作；不会开放任意 systemctl、shell 或 root 登录。
+            </p>
             <div class="form-row">
               <label>端口<input v-model.number="form.ssh_port" type="number" placeholder="22" /></label>
               <label>用户名<input v-model="form.ssh_user" placeholder="比如 opsuser" /></label>
             </div>
             <label>私钥文件名<input v-model="form.ssh_key_filename" placeholder="ssh/ 目录下的文件名，比如 aioms-test" /></label>
-          </div>
-
-          <div class="ssh-group">
-            <p class="group-title">审批后部署 SSH</p>
-            <p class="group-hint">可选。只供经过审批的配置写 Tool 使用，不会回退到日常只读密钥。</p>
-            <label>部署用户名<input v-model="form.deploy_ssh_user" placeholder="比如 aioms-deploy" /></label>
-            <label>部署私钥文件名<input v-model="form.deploy_ssh_key_filename" placeholder="比如 web01-aioms-deploy" /></label>
           </div>
 
           <TargetDeploymentConfigForm

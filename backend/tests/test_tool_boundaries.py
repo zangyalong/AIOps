@@ -107,6 +107,15 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(action["server_name"], "demo")
         self.assertIn("aioms-service-control restart nginx.service", action["command"])
 
+        start_action = catalog.describe_write_action(
+            {
+                "id": "start-1",
+                "name": "start_service",
+                "args": {"server_name": "demo", "service_name": "bt.service"},
+            }
+        )
+        self.assertEqual(start_action["risk_level"], "medium")
+
         stop_action = catalog.describe_write_action(
             {
                 "id": "stop-1",
@@ -193,10 +202,10 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("白名单为空", result)
         connect.assert_not_called()
 
-    async def test_service_control_executes_fixed_gateway_with_deploy_identity(
+    async def test_service_control_executes_fixed_gateway_with_shared_aioms_identity(
         self,
     ) -> None:
-        """三种动作都只能通过部署身份调用固定网关。"""
+        """三种动作都通过同一个非 root AIOMS 身份调用固定网关。"""
         server = SimpleNamespace(name="demo", ip_address="127.0.0.1")
         params = SimpleNamespace(
             host="127.0.0.1",
@@ -218,7 +227,7 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
                 "get_server_by_name_or_ip",
                 AsyncMock(return_value=server),
             ),
-            patch.object(actions, "build_deploy_connect_params", return_value=params),
+            patch.object(actions, "build_connect_params", return_value=params),
             patch.object(
                 actions.asyncssh,
                 "connect",

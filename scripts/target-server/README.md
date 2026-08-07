@@ -6,19 +6,19 @@
 首次安装可以完成：
 
 1. 安装 AIOMS 服务发现所需的只读命令网关和精确 sudoers 权限。
-2. 为现有 `aioms-deploy` 安装白名单 systemd 服务控制写网关；白名单留空时拒绝全部。
+2. 为同一个非 root `aioms` 用户安装白名单 systemd 服务控制写网关；白名单留空时拒绝全部。
 3. 按需安装 Grafana Alloy 基础组件；服务发现并注册后由 AI 生成日志配置并审批启用。
 4. 按独立开关部署 node_exporter、cAdvisor、MySQL、PostgreSQL 和 Redis exporter。
 
 如果目标服务器还没有 AIOMS 专用 SSH 用户，先使用 `bootstrap/prepare-client.sh` 在客户端
-生成两组密钥和一个独立角色包。服务器管理员只需接收两个公钥和角色配置脚本，不需要接收
+生成一组密钥和一个独立角色包。服务器管理员只需接收一个公钥和角色配置脚本，不需要接收
 完整运行包，也不需要把 root 密码或私钥交给 AIOMS。
 
 ## 先分清目标服务器和中央监控服务器
 
 | 位置                      | 本配置包负责                                                | 本配置包不负责                                                                |
 | ------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| 目标服务器（如`web01`） | 首次 bootstrap 可创建两个 SSH 用户并安装公钥；日常包负责发现网关、可选 Alloy 和 exporter | 不接收管理员私钥，不自动创建数据库监控账号，不修改防火墙 |
+| 目标服务器（如`web01`） | 首次 bootstrap 可创建一个非 root SSH 用户并安装公钥；日常包负责固定读写网关、可选 Alloy 和 exporter | 不接收管理员私钥，不自动创建数据库监控账号，不修改防火墙 |
 | 中央监控服务器            | 无                                                          | Loki、Prometheus、Alertmanager、Grafana 仍按中央监控栈单独部署                |
 
 Alloy 和全部 exporter 都是可选组件。只做服务发现时关闭所有采集开关；需要日志时启用
@@ -35,12 +35,11 @@ psql -d aioms -v ON_ERROR_STOP=1 \
 
 在 AIOMS 前端打开“服务器 → 编辑”，依次填写：
 
-1. 日常只读 SSH：端口和用户名（例如 `22`、`aioms`）。
-2. 审批后部署 SSH：独立用户名（例如 `aioms-deploy`）。
-3. 环境部署：环境名、Loki 地址，以及 Alloy、node_exporter、cAdvisor 和数据库 exporter 开关。
-4. 启用数据库 exporter 时，填写连接参数和本次打包密码。
+1. AIOMS SSH 身份：端口和非 root 用户名（例如 `22`、`aioms`）。
+2. 环境部署：环境名、Loki 地址，以及 Alloy、node_exporter、cAdvisor 和数据库 exporter 开关。
+3. 启用数据库 exporter 时，填写连接参数和本次打包密码。
 
-点击“保存并下载一键安装包”。后端会生成或复用两组 Ed25519 密钥，私钥只保留在后端的
+点击“保存并下载一键安装包”。后端会生成或复用一组 Ed25519 密钥，私钥只保留在后端的
 `SSH_KEY_DIR`，浏览器下载 `aioms-<server>.tar.gz`。非敏感环境配置会随服务器记录保存；
 数据库密码不会写入数据库或返回服务器详情，只会进入当次压缩包的独立凭据文件，响应完成后
 服务端临时目录会被删除。
@@ -66,7 +65,6 @@ cp deploy.conf.example deploy.conf
 
 ```text
 ssh/web01-aioms                         # 私钥，只留在 AIOMS 后端机器
-ssh/web01-aioms-deploy
 scripts/target-server/dist/aioms-web01.tar.gz
 ```
 
@@ -78,7 +76,7 @@ cd aioms-web01
 sudo ./install.sh
 ```
 
-这一条命令内部依次配置两种 SSH 角色、安装 discovery、按开关安装基础指标和未配置服务映射的
+这一条命令内部依次配置单一 SSH 角色、安装 discovery 和固定写网关、按开关安装基础指标及未配置服务映射的
 Alloy。完成后即可回到 AIOMS 对话中发现、注册服务，再预览并审批应用日志配置。压缩包不含
 私钥；如果启用了数据库 exporter，会包含配置引用的监控凭据，因此仍要通过受控渠道传输。
 
@@ -91,7 +89,7 @@ target-server/
 ├── deploy.conf.example          # 每台服务器的部署参数模板
 ├── bootstrap/
 │   ├── prepare-client.sh        # 客户端生成两组密钥和独立角色包
-│   ├── server-bootstrap.sh      # 角色包中 configure-roles.sh 的源文件
+│   ├── server-bootstrap.sh      # 角色包中 configure-role.sh 的源文件
 │   └── README.md                # 首次引导的完整操作流程
 ├── discovery/
 │   ├── install.sh               # 只读发现网关安装器，由 deploy.sh 调用
@@ -148,7 +146,7 @@ scripts/target-server/bootstrap/prepare-client.sh \
 ```
 
 私钥保存在项目根目录 `ssh/`，不会进入角色包。可单独复制的角色包生成在
-`scripts/target-server/bootstrap/generated/web01/`，内容只有两个公钥、`configure-roles.sh`、
+`scripts/target-server/bootstrap/generated/web01/`，内容只有一个公钥、`configure-role.sh`、
 连接说明和 SHA-256 清单。把这个 `web01` 目录复制给服务器管理员即可，不需要同时打包完整
 `target-server` 目录或部署凭据。
 
@@ -157,18 +155,14 @@ scripts/target-server/bootstrap/prepare-client.sh \
 ```bash
 cd /tmp/aioms-role-web01
 sha256sum -c SHA256SUMS
-sudo ./configure-roles.sh \
-  --readonly-user aioms \
-  --deploy-user aioms-deploy
+sudo ./configure-role.sh --user aioms
 ```
 
-bootstrap 创建或复用：
-
-- `aioms`：日常只读 SSH 身份；发现网关和对应 sudoers 在后续部署运行包时安装。
-- `aioms-deploy`：只能触发 root 所有的固定部署入口，不能指定任意脚本或配置路径。
+bootstrap 创建或复用一个 `aioms` 普通用户。它既用于只读查询，也用于审批后调用固定写网关；
+用户自身不能指定任意 root 脚本、配置路径、`systemctl`、Shell 或 Docker 命令。
 
 角色脚本还会生成 `/usr/local/sbin/aioms-target-deploy` 和
-`/etc/sudoers.d/aioms-deploy`，并预留 root 所有的 `/opt/aioms-target-server/`。它不会复制运行
+`/etc/sudoers.d/aioms-target-deploy`，并预留 root 所有的 `/opt/aioms-target-server/`。它不会复制运行
 包、安装发现网关、启动 Alloy 或 exporter。完整文件位置、验证命令和密钥边界见
 [`bootstrap/README.md`](bootstrap/README.md)。
 
@@ -192,7 +186,6 @@ cp metrics/redis-exporter.password.example metrics/redis-exporter.password
 
 ```ini
 AIOMS_SSH_USER=aioms
-AIOMS_DEPLOY_USER=aioms-deploy
 SERVICE_CONTROL_ALLOWLIST=bt.service,nginx.service
 ENABLE_ALLOY=true
 SERVER_NAME=web01
@@ -217,8 +210,7 @@ START_EXPORTERS=true
 
 | 配置项                             | 何时需要                | 说明                                                             |
 | ---------------------------------- | ----------------------- | ---------------------------------------------------------------- |
-| `AIOMS_SSH_USER`                 | 始终必填                | 已存在的目标服务器 SSH 用户，应与 AIOMS`servers.ssh_user` 一致 |
-| `AIOMS_DEPLOY_USER`              | 始终必填                | bootstrap 创建的部署用户，应与 `servers.deploy_ssh_user` 一致 |
+| `AIOMS_SSH_USER`                 | 始终必填                | 非 root AIOMS SSH 用户，应与 `servers.ssh_user` 一致；读写能力都只能经过固定网关 |
 | `SERVICE_CONTROL_ALLOWLIST`      | 使用服务控制 Tool       | 允许启停/重启的完整 `.service` 单元；留空拒绝全部            |
 | `ENABLE_ALLOY`                   | 始终必填                | `true` 安装 Alloy 基础组件，`false` 只安装发现和指标组件     |
 | `SERVER_NAME`                    | 启用 Alloy              | 稳定服务器标签，如`web01`                                      |
@@ -428,7 +420,7 @@ sudoers 不直接开放任意 `docker`、`ss`、`ps`、`systemctl` 或 Shell，�
 /usr/local/sbin/aioms-service-read
 ```
 
-部署用户另有一个精确入口：
+同一个 `aioms` 用户还可调用两个精确部署入口：
 
 ```text
 /usr/local/sbin/aioms-target-deploy apply
@@ -437,11 +429,11 @@ sudoers 不直接开放任意 `docker`、`ss`、`ps`、`systemctl` 或 Shell，�
 
 `apply` 只能调用 `/opt/aioms-target-server/deploy.sh`，并且只能读取同目录下由 root 持有且
 group/other 不可写的 `deploy.conf`。固定部署目录本身也必须由 root 持有且 group/other 不可
-写；在管理员尚未安装这两个文件时，入口会拒绝执行。部署账号不能把上传目录中的脚本交给
+写；在管理员尚未安装这两个文件时，入口会拒绝执行。AIOMS 账号不能把上传目录中的脚本交给
 root 执行。
 
 `apply-alloy` 不接受路径或配置参数，只调用 root 所有的固定应用器。部署 Tool 只能把自动生成的
-`services.map` 上传到 `/var/lib/aioms-deploy/incoming/`；应用器重新校验文件所有者、权限、大小
+`services.map` 上传到 `/var/lib/aioms/incoming/`；应用器重新校验文件所有者、权限、大小
 和映射格式，从 `/etc/aioms/alloy-target.conf` 读取管理员确定的服务器名、Loki 地址和 Docker
 socket 策略。自动流程拒绝 `file` 日志源，不能借 Alloy 读取任意文件。
 
@@ -465,7 +457,7 @@ Socket，只对监听结果中的纯数字 PID 定点读取进程详情，不读
 
 ### `用户 aioms 不存在`
 
-先按“零、首次 SSH 初始化”生成角色包，由服务器管理员执行 `configure-roles.sh`，再重新部署
+先按“零、首次 SSH 初始化”生成角色包，由服务器管理员执行 `configure-role.sh`，再重新部署
 完整运行包。日常 `deploy.sh` 不负责创建账号或写入 SSH 公钥。
 
 ### 映射包含 Docker 日志，但没有授权

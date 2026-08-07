@@ -45,13 +45,14 @@
 - [ ] **服务运行时身份与 web01 Alloy 日志接入**：把发现结果中的运行类型/运行对象正式存入服务实例，并提供目标服务器 Alloy 快速配置包
   - `service_instances` 增加 `runtime_type` / `runtime_name`，发现注册、CRUD API 和前端实例详情使用同一份身份；已有数据库通过随附 SQL 手动加列
   - `scripts/target-server/alloy/` 提供安装、配置模板、服务映射和检查说明；Alloy 部署在目标服务器，从 journald、Docker 和已明确登记的文件读取日志并推送中央 Loki
-  - 首次部署不再要求手填服务映射：先安装 discovery、基础指标和未启动的 Alloy；服务注册后由只读 Tool 生成映射预览，再由独立部署身份和高风险审批 Tool 通过固定网关应用并重载
+  - 首次部署不再要求手填服务映射：先安装 discovery、基础指标和未启动的 Alloy；服务注册后由只读 Tool 生成映射预览，再由同一非 root AIOMS 身份和高风险审批 Tool 通过固定网关应用并重载
   - Loki 新日志统一使用 `service/environment/server/runtime_type/runtime_name`，迁移期兼容旧 `service_name` 查询
   - 代码和静态检查完成后保持未勾选，等用户在真实 `web01` 安装 Alloy 并从 AIOMS 查询到日志后再验收
 - [ ] **业务资产扫描与目标服务器配置包**：默认盘点 systemd、Docker、TCP/UDP/Unix Socket 服务，只对监听 PID 补充进程详情，不再读取整机进程表
   - 提供目标服务器只读 Docker / 服务发现包装脚本、精确 sudoers 模板、安装脚本和逐项参数说明
   - 根目录新增白名单解析的 `deploy.conf` 与一键 `deploy.sh`，统一安装只读发现网关和可选 Alloy，并提供从打包、上传到验证的目标服务器配置指南
-  - 首次 bootstrap 在客户端生成只读/部署两组 SSH 密钥和独立角色包（两个公钥、角色脚本与校验清单），无需携带完整 target-server；服务器脚本只创建账号、安装公钥和 root 所有的固定部署入口，运行包由管理员后续独立部署
+  - 首次 bootstrap 在客户端生成一组 SSH 密钥和单角色包（一个公钥、角色脚本与校验清单），无需携带完整 target-server；服务器脚本只创建一个非 root `aioms` 账号、安装公钥和 root 所有的固定部署入口，运行包由管理员后续独立部署
+  - API、ORM 和服务器编辑页只保留 `ssh_user` / `ssh_key_filename`；旧双角色数据库列提供独立手工清理脚本，不在启动时自动删除
   - 服务器编辑页新增“环境部署”配置：保存非敏感参数，数据库密码仅在生成压缩包时一次性使用；后端生成不含私钥的一键安装包供下载
   - 同一配置通过独立开关部署 node_exporter、cAdvisor、MySQL/PostgreSQL/Redis exporter；数据库凭据使用被忽略的独立文件，中央 Prometheus 抓取使用随附模板手工接入
   - 代码和静态检查完成后保持未勾选，等用户在真实服务器安装配置包并完成资产扫描验收
@@ -66,7 +67,8 @@
   - Supervisor、四个专家和最终综合节点共享强制简体中文约束；命令、代码、PromQL、服务名和产品专有名词保留原文
   - 代码与自动化检查完成后保持未勾选，等用户在真实多轮对话中确认不再出现英文过渡语
 - [ ] **systemd 服务启动、停止和重启受控写工具**
-  - `start_service` / `stop_service` / `restart_service` 共用人工审批、独立部署 SSH 身份和 AIOMS 端白名单
+  - `start_service` / `stop_service` / `restart_service` 共用一个非 root AIOMS SSH 身份、固定写网关和 AIOMS 端白名单
+  - 启动为中风险，只需审批卡片一次确认；停止、重启为高风险，先点审批卡片，再在展示目标与动作的弹窗中二次确认，后端拒绝缺少二次确认标记的高风险恢复请求
   - 目标服务器新增 root 持有的 `aioms-service-control` 固定网关和第二层白名单；sudoers 不开放任意 `systemctl` 或 Shell
   - 代码与自动化检查完成后保持未勾选，等用户在真实 web-01 上分别验证拒绝、批准和状态复核
 - [ ] **通过 AI 对话创建预警规则**

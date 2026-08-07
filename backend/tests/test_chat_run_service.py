@@ -108,3 +108,41 @@ class ChatRunManagerTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(replay[0]["approved"])
         self.assertEqual(run.status, "completed")
+
+    async def test_high_risk_resume_requires_second_confirmation(self) -> None:
+        manager = ChatRunManager()
+
+        async def approval_producer():
+            yield {
+                "type": "approval_required",
+                "thread_id": "high-risk-thread",
+                "conversation_id": "conversation-4",
+                "actions": [{"risk_level": "high", "title": "停止服务"}],
+            }
+
+        run = manager.start(uuid.uuid4(), approval_producer)
+        await run.task
+
+        async def resumed_producer():
+            yield {"type": "done", "conversation_id": "conversation-4"}
+
+        with self.assertRaisesRegex(ValueError, "详情弹窗"):
+            await manager.resume(
+                run.id,
+                thread_id="high-risk-thread",
+                approved=True,
+                producer=resumed_producer,
+            )
+
+        self.assertEqual(run.status, "waiting_approval")
+        self.assertEqual([event["type"] for event in run.events], ["approval_required"])
+
+        await manager.resume(
+            run.id,
+            thread_id="high-risk-thread",
+            approved=True,
+            second_confirmation=True,
+            producer=resumed_producer,
+        )
+        await run.task
+        self.assertEqual(run.status, "completed")

@@ -103,6 +103,7 @@ export async function resumeApproval(params: {
   conversationId: string
   threadId: string
   approved: boolean
+  secondConfirmation?: boolean
   reason?: string
 }): Promise<ChatRun> {
   const res = await fetch('/api/chat/resume', {
@@ -113,6 +114,7 @@ export async function resumeApproval(params: {
       conversation_id: params.conversationId,
       thread_id: params.threadId,
       approved: params.approved,
+      second_confirmation: params.secondConfirmation ?? false,
       reason: params.reason ?? null,
     }),
   })

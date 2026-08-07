@@ -1,12 +1,9 @@
 # AIOMS 目标服务器一键部署配置
 # 复制为 deploy.conf 后修改；不要在值两侧添加引号。
 
-# 必填：AIOMS 后端通过 SSH 登录目标服务器时使用的现有 Linux 用户。
-# 部署脚本不会创建该用户，也不会修改 authorized_keys。
+# 必填：AIOMS 后端通过 SSH 登录目标服务器时使用的普通 Linux 用户。
+# 同一身份通过 root 持有的固定网关执行只读和审批后的白名单操作，不开放任意 root 命令。
 AIOMS_SSH_USER=aioms
-
-# bootstrap 创建的独立部署用户，只用于审批后的配置写 Tool。
-AIOMS_DEPLOY_USER=aioms-deploy
 
 # Agent 经人工审批后允许启停/重启的 systemd 单元。必须写完整 .service 名；留空拒绝全部。
 SERVICE_CONTROL_ALLOWLIST=

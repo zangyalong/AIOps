@@ -112,7 +112,9 @@ class ServerLogConfigTest(unittest.IsolatedAsyncioTestCase):
         payload = json.loads(result)
         self.assertEqual(payload["preview_hash"], snapshot.preview_hash)
         self.assertEqual(payload["source_count"], 1)
-        self.assertIn("orders-api|prod|docker|orders-api|docker|-", payload["services_map"])
+        self.assertIn(
+            "orders-api|prod|docker|orders-api|docker|-", payload["services_map"]
+        )
 
     async def test_apply_rejects_changed_preview_before_connecting(self) -> None:
         snapshot = _snapshot()
@@ -142,8 +144,8 @@ class ServerLogConfigTest(unittest.IsolatedAsyncioTestCase):
         params = SimpleNamespace(
             host="192.0.2.10",
             port=22,
-            username="aioms-deploy",
-            client_keys=["deploy-key"],
+            username="aioms",
+            client_keys=["aioms-key"],
         )
         with (
             patch.object(
@@ -152,7 +154,7 @@ class ServerLogConfigTest(unittest.IsolatedAsyncioTestCase):
                 AsyncMock(return_value=(server, snapshot)),
             ),
             patch.object(
-                server_log_config, "build_deploy_connect_params", return_value=params
+                server_log_config, "build_connect_params", return_value=params
             ),
             patch.object(
                 server_log_config.asyncssh, "connect", return_value=connection

@@ -23,10 +23,6 @@ class SSHKeyMissing(Exception):
         super().__init__(f"密钥文件不存在：{key_path}")
 
 
-class SSHDeployNotConfigured(Exception):
-    """服务器没有配置独立部署身份。"""
-
-
 @dataclass
 class SSHConnectParams:
     host: str
@@ -50,20 +46,5 @@ def build_connect_params(server: Server) -> SSHConnectParams:
         host=server.ip_address,
         port=server.ssh_port or 22,
         username=server.ssh_user,
-        client_keys=[str(key_path)],
-    )
-
-
-def build_deploy_connect_params(server: Server) -> SSHConnectParams:
-    """返回写 Tool 专用的部署连接参数，绝不回退到日常只读密钥。"""
-    if not (server.deploy_ssh_user and server.deploy_ssh_key_filename):
-        raise SSHDeployNotConfigured
-    key_path = settings.ssh_key_dir / server.deploy_ssh_key_filename
-    if not key_path.is_file():
-        raise SSHKeyMissing(key_path)
-    return SSHConnectParams(
-        host=server.ip_address,
-        port=server.ssh_port or 22,
-        username=server.deploy_ssh_user,
         client_keys=[str(key_path)],
     )

@@ -44,7 +44,6 @@ done
 [[ -f "$CONFIG_PATH" ]] || fail "找不到配置文件：$CONFIG_PATH（请先复制 deploy.conf.example）"
 
 AIOMS_SSH_USER=""
-AIOMS_DEPLOY_USER="aioms-deploy"
 SERVICE_CONTROL_ALLOWLIST=""
 ENABLE_ALLOY="true"
 SERVER_NAME=""
@@ -96,7 +95,6 @@ set_config_value() {
 
     case "$key" in
         AIOMS_SSH_USER) AIOMS_SSH_USER="$value" ;;
-        AIOMS_DEPLOY_USER) AIOMS_DEPLOY_USER="$value" ;;
         SERVICE_CONTROL_ALLOWLIST) SERVICE_CONTROL_ALLOWLIST="$value" ;;
         ENABLE_ALLOY) ENABLE_ALLOY="$value" ;;
         SERVER_NAME) SERVER_NAME="$value" ;;
@@ -176,8 +174,9 @@ validate_http_url() {
 }
 
 [[ -n "$AIOMS_SSH_USER" ]] || fail "AIOMS_SSH_USER 不能为空"
-[[ "$AIOMS_DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] ||
-    fail "AIOMS_DEPLOY_USER 格式不合法"
+[[ "$AIOMS_SSH_USER" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] ||
+    fail "AIOMS_SSH_USER 格式不合法"
+[[ "$AIOMS_SSH_USER" != "root" ]] || fail "AIOMS_SSH_USER 不能是 root"
 validate_boolean "ENABLE_ALLOY" "$ENABLE_ALLOY"
 validate_boolean "ALLOW_DOCKER_SOCKET" "$ALLOW_DOCKER_SOCKET"
 validate_boolean "START_ALLOY" "$START_ALLOY"
@@ -212,7 +211,7 @@ if [[ "$ENABLE_ALLOY" == "true" ]]; then
     alloy_args=(
         --server "$SERVER_NAME"
         --loki-url "$LOKI_PUSH_URL"
-        --deploy-user "$AIOMS_DEPLOY_USER"
+        --ssh-user "$AIOMS_SSH_USER"
         --apt-repo-url "$ALLOY_APT_REPO_URL"
         --apt-gpg-key-url "$ALLOY_APT_GPG_KEY_URL"
         --rpm-repo-url "$ALLOY_RPM_REPO_URL"
@@ -350,7 +349,7 @@ echo "[1/4] 安装 AIOMS 只读服务发现网关"
 
 echo "[2/4] 安装 AIOMS 服务控制写网关"
 "$SCRIPT_DIR/actions/install.sh" \
-    --deploy-user "$AIOMS_DEPLOY_USER" \
+    --ssh-user "$AIOMS_SSH_USER" \
     --allowlist "$SERVICE_CONTROL_ALLOWLIST"
 
 if [[ "$ENABLE_ALLOY" == "true" ]]; then

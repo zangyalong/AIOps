@@ -14,7 +14,7 @@ usage() {
   sudo ./install.sh \
     --server web01 \
     --loki-url http://监控服务器:3100/loki/api/v1/push \
-    --deploy-user aioms-deploy \
+    --ssh-user aioms \
     --install-only \
     [--allow-docker-socket]
 
@@ -22,7 +22,7 @@ usage() {
   sudo ./install.sh \
     --server web01 \
     --loki-url http://监控服务器:3100/loki/api/v1/push \
-    --deploy-user aioms-deploy \
+    --ssh-user aioms \
     --map ./services.map \
     [--allow-docker-socket] \
     [--no-start]
@@ -46,12 +46,12 @@ readonly TARGET_CONFIG="$AIOMS_CONFIG_DIR/alloy-target.conf"
 readonly LIBEXEC_DIR="/usr/local/libexec/aioms"
 readonly INSTALLED_GENERATOR="$LIBEXEC_DIR/generate-alloy-config"
 readonly INSTALLED_APPLIER="$LIBEXEC_DIR/apply-alloy-config"
-readonly DEPLOY_STATE_DIR="/var/lib/aioms-deploy"
+readonly DEPLOY_STATE_DIR="/var/lib/aioms"
 readonly DEPLOY_INCOMING_DIR="$DEPLOY_STATE_DIR/incoming"
 
 SERVER_NAME=""
 LOKI_PUSH_URL=""
-DEPLOY_USER="aioms-deploy"
+SSH_USER="aioms"
 SERVICE_MAP=""
 ALLOW_DOCKER_SOCKET=false
 INSTALL_ONLY=false
@@ -74,9 +74,9 @@ while (($# > 0)); do
             LOKI_PUSH_URL="$2"
             shift 2
             ;;
-        --deploy-user)
-            (($# >= 2)) || fail "--deploy-user 缺少参数"
-            DEPLOY_USER="$2"
+        --ssh-user)
+            (($# >= 2)) || fail "--ssh-user 缺少参数"
+            SSH_USER="$2"
             shift 2
             ;;
         --map)
@@ -145,8 +145,9 @@ validate_http_url() {
 [[ "$SERVER_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$ ]] || fail "必须提供合法 --server"
 [[ "$LOKI_PUSH_URL" =~ ^https?://[^[:space:]]+/loki/api/v1/push$ ]] ||
     fail "--loki-url 必须是 http(s)://.../loki/api/v1/push"
-[[ "$DEPLOY_USER" =~ $USER_PATTERN ]] || fail "--deploy-user 格式不合法"
-id "$DEPLOY_USER" >/dev/null 2>&1 || fail "部署用户不存在：$DEPLOY_USER"
+[[ "$SSH_USER" =~ $USER_PATTERN ]] || fail "--ssh-user 格式不合法"
+[[ "$SSH_USER" != "root" ]] || fail "--ssh-user 不能是 root"
+id "$SSH_USER" >/dev/null 2>&1 || fail "AIOMS SSH 用户不存在：$SSH_USER"
 validate_http_url "--apt-repo-url" "$APT_REPO_URL"
 validate_http_url "--apt-gpg-key-url" "$APT_GPG_KEY_URL"
 validate_http_url "--rpm-repo-url" "$RPM_REPO_URL"
@@ -289,7 +290,7 @@ for journal_group in adm systemd-journal; do
 done
 
 install -d -o root -g root -m 0755 "$LIBEXEC_DIR" "$AIOMS_CONFIG_DIR" "$DEPLOY_STATE_DIR"
-install -d -o "$DEPLOY_USER" -g "$(id -gn "$DEPLOY_USER")" -m 0700 "$DEPLOY_INCOMING_DIR"
+install -d -o "$SSH_USER" -g "$(id -gn "$SSH_USER")" -m 0700 "$DEPLOY_INCOMING_DIR"
 install -o root -g root -m 0755 "$SCRIPT_DIR/generate-config.sh" "$INSTALLED_GENERATOR"
 install -o root -g root -m 0755 "$SCRIPT_DIR/aioms-alloy-apply" "$INSTALLED_APPLIER"
 
@@ -302,7 +303,7 @@ cat >"$temp_target_config" <<EOF
 SERVER_NAME=$SERVER_NAME
 LOKI_PUSH_URL=$LOKI_PUSH_URL
 ALLOW_DOCKER_SOCKET=$ALLOW_DOCKER_SOCKET
-DEPLOY_USER=$DEPLOY_USER
+SSH_USER=$SSH_USER
 EOF
 install -o root -g root -m 0600 "$temp_target_config" "$TARGET_CONFIG"
 rm -f -- "$temp_target_config"

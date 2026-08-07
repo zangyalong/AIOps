@@ -133,12 +133,14 @@ async def chat_resume(
             data.run_id,
             thread_id=data.thread_id,
             approved=data.approved,
+            second_confirmation=data.second_confirmation,
             producer=lambda: chat_service.resume_chat_turn(
                 graph,
                 conversation.id,
                 uuid.UUID(run.id),
                 data.thread_id,
                 data.approved,
+                data.second_confirmation,
                 data.reason,
             ),
         )

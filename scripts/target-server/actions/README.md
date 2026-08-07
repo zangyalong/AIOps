@@ -1,6 +1,6 @@
 # systemd 服务控制写网关
 
-本目录为 `aioms-deploy` 安装一个固定的 root 包装器，只接受：
+本目录为非 root `aioms` 用户安装一个固定的 root 包装器，只接受：
 
 ```text
 start SERVICE.service
