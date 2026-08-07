@@ -506,6 +506,7 @@ async def prepare_chat_turn(
             "supervisor_rounds": 0,
             "allow_write_tools": True,
             "approval": None,
+            "operation_run_id": str(chat_run.id),
         },
     )
 

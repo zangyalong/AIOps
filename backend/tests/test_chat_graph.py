@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import unittest
+import uuid
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableLambda
@@ -9,6 +13,14 @@ from langchain_core.tools import tool
 from langgraph.types import Command
 
 from app.agents.graphs import chat_graph
+
+
+class _SessionContext:
+    async def __aenter__(self) -> AsyncMock:
+        return AsyncMock()
+
+    async def __aexit__(self, *args: object) -> None:
+        del args
 
 
 def _initial_state(*, allow_write_tools: bool) -> dict:
@@ -243,7 +255,30 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
 
         graph = chat_graph.build_chat_graph()
         config = {"configurable": {"thread_id": "catalog-approval-test"}}
-        await graph.ainvoke(_initial_state(allow_write_tools=True), config=config)
+        run_id = uuid.uuid4()
+        state = _initial_state(allow_write_tools=True)
+        state["operation_run_id"] = str(run_id)
+        operation_id = uuid.uuid4()
+        ensure_pending = AsyncMock(
+            return_value=SimpleNamespace(
+                id=operation_id,
+                request_hash="a" * 64,
+                expires_at=datetime.now(UTC) + timedelta(minutes=15),
+            )
+        )
+        with (
+            patch.object(
+                chat_graph,
+                "AsyncSessionLocal",
+                return_value=_SessionContext(),
+            ),
+            patch.object(
+                chat_graph.operation_record_service,
+                "ensure_pending",
+                ensure_pending,
+            ),
+        ):
+            await graph.ainvoke(state, config=config)
         snapshot = await graph.aget_state(config)
 
         self.assertTrue(snapshot.interrupts)
@@ -252,6 +287,9 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(action["server_name"], "web01")
         self.assertEqual(action["environment"], "prod")
         self.assertIn("uvicorn ← process/uvicorn:tcp-8010", action["command"])
+        self.assertEqual(action["operation_id"], str(operation_id))
+        self.assertEqual(action["request_hash"], "a" * 64)
+        ensure_pending.assert_awaited_once()
 
     async def test_unattended_worker_cannot_reach_write_approval(self) -> None:
         """即使假模型越权提出 SSH，allow_write_tools=False 也会在工具层硬拒绝且不挂起。"""
@@ -371,6 +409,70 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
             config=config,
         )
         self.assertEqual(_write_calls, [("demo", "nginx")])
+
+    async def test_persisted_write_is_authorized_before_executor_and_finished(
+        self,
+    ) -> None:
+        chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"] = [
+            _fake_restart_service
+        ]
+        run_id = uuid.uuid4()
+        authorize = AsyncMock(return_value=SimpleNamespace(status="executing"))
+        finish = AsyncMock()
+        state = _initial_state(allow_write_tools=True)
+        state.update(
+            {
+                "work_messages": [
+                    AIMessage(
+                        "",
+                        tool_calls=[
+                            {
+                                "name": "restart_service",
+                                "args": {
+                                    "server_name": "demo",
+                                    "service_name": "nginx",
+                                },
+                                "id": "persisted-restart",
+                                "type": "tool_call",
+                            }
+                        ],
+                    )
+                ],
+                "approval": {
+                    "approved": True,
+                    "second_confirmation": True,
+                    "reason": "值班员确认",
+                },
+                "operation_run_id": str(run_id),
+            }
+        )
+
+        with (
+            patch.object(
+                chat_graph,
+                "AsyncSessionLocal",
+                return_value=_SessionContext(),
+            ),
+            patch.object(
+                chat_graph.operation_record_service,
+                "authorize_execution",
+                authorize,
+            ),
+            patch.object(
+                chat_graph.operation_record_service,
+                "finish_execution",
+                finish,
+            ),
+        ):
+            result = await chat_graph.specialist_tools_node(
+                "infrastructure_agent",
+                state,
+            )
+
+        self.assertEqual(_write_calls, [("demo", "nginx")])
+        authorize.assert_awaited_once()
+        finish.assert_awaited_once()
+        self.assertEqual(result["messages"][0].status, "success")
 
     async def test_high_risk_write_rejects_missing_second_confirmation(self) -> None:
         """即使第一次批准，高风险写工具没有详情弹窗二次确认也不能执行。"""

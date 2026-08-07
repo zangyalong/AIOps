@@ -14,6 +14,7 @@ from app.api import (
     conversations,
     health,
     incidents,
+    operations,
     servers,
     services,
 )
@@ -27,6 +28,7 @@ from app.models import (  # noqa: F401  # 注册模型到 Base.metadata
     conversation,
     incident,
     message,
+    operation_record,
     server,
     service_catalog,
 )
@@ -35,6 +37,7 @@ from app.services import (
     alert_occurrence_service,
     alert_rule_service,
     chat_run_record_service,
+    operation_record_service,
 )
 from app.services.chat_run_service import ChatRunManager
 
@@ -56,16 +59,19 @@ async def lifespan(app: FastAPI):
             await alert_occurrence_service.backfill_existing_incidents(db)
         )
     if backfilled_occurrences:
-        print(
-            "[startup] 已为 "
-            f"{backfilled_occurrences} 条历史事件补齐原始告警快照"
-        )
+        print(f"[startup] 已为 {backfilled_occurrences} 条历史事件补齐原始告警快照")
     async with AsyncSessionLocal() as db:
         stale_runs = await chat_run_record_service.fail_incomplete_runs(db)
     if stale_runs:
         print(
             f"[startup] 已把 {stale_runs} 个失去内存 checkpoint 的 Chat Run 标记为失败"
         )
+    async with AsyncSessionLocal() as db:
+        incomplete_operations = (
+            await operation_record_service.fail_incomplete_operations(db)
+        )
+    if incomplete_operations:
+        print(f"[startup] 已把 {incomplete_operations} 条中断的操作记录标记为失败")
 
     # arq 连接池：webhook 用它往队列塞诊断作业。Redis 没起时也别让后端崩——置 None，
     # webhook 会跳过入队（只是暂时没有自动诊断，落库照常）。
@@ -97,3 +103,4 @@ app.include_router(alerts.router)
 app.include_router(alert_rules.router)
 app.include_router(incidents.router)
 app.include_router(services.router)
+app.include_router(operations.router)

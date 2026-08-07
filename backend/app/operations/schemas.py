@@ -2,13 +2,36 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, Literal
 
 OperationEffect = Literal["read", "write"]
 RiskLevel = Literal["low", "medium", "high", "critical"]
 PolicyResult = Literal["allow", "approval_required", "deny"]
+
+
+def _freeze_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {str(key): _freeze_json(item) for key, item in value.items()}
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_json(item) for item in value)
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    raise TypeError(f"操作参数包含不可序列化类型：{type(value).__name__}")
+
+
+def _thaw_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _thaw_json(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_json(item) for item in value]
+    return value
 
 
 @dataclass(frozen=True)
@@ -28,6 +51,12 @@ class OperationCall:
     name: str
     args: Mapping[str, Any]
 
+    def __post_init__(self) -> None:
+        frozen_args = _freeze_json(dict(self.args))
+        # allow_nan=False 保证摘要在不同 JSON 实现中仍有唯一、可移植的表示。
+        json.dumps(_thaw_json(frozen_args), ensure_ascii=False, allow_nan=False)
+        object.__setattr__(self, "args", frozen_args)
+
     @classmethod
     def from_tool_call(cls, tool_call: Mapping[str, Any]) -> OperationCall:
         name = str(tool_call.get("name") or "").strip()
@@ -46,9 +75,30 @@ class OperationCall:
         return {
             "id": self.id,
             "name": self.name,
-            "args": dict(self.args),
+            "args": self.normalized_args(),
             "type": "tool_call",
         }
+
+    def normalized_args(self) -> dict[str, Any]:
+        """返回可存入 JSONB、可交给工具校验的独立参数副本。"""
+        return _thaw_json(self.args)
+
+    def request_hash(self, spec: OperationSpec) -> str:
+        """对操作名、安全属性和规范化参数计算不可变审批摘要。"""
+        payload = {
+            "name": self.name,
+            "effect": spec.effect,
+            "risk_level": spec.risk_level,
+            "args": self.normalized_args(),
+        }
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode()
+        return hashlib.sha256(encoded).hexdigest()
 
 
 @dataclass(frozen=True)

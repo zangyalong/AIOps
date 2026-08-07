@@ -60,7 +60,9 @@ from app.agents.tools.service_discovery import (
 )
 from app.agents.tools.service_topology import query_server_services
 from app.core.config import settings
+from app.db.session import AsyncSessionLocal
 from app.operations.schemas import ApprovalDecision, OperationCall, OperationContext
+from app.services import operation_record_service
 
 AgentName = Literal[
     "metrics_agent",
@@ -252,6 +254,8 @@ class ChatState(TypedDict):
     # 聊天请求允许写工具进入审批门；无人值守 worker 必须传 False，从源头不把写工具挂给模型。
     allow_write_tools: bool
     approval: dict | None
+    # 交互式会话绑定持久化 chat_run；无人值守任务为 None，不会产生写操作记录。
+    operation_run_id: str | None
 
 
 class SpecialistState(TypedDict):
@@ -264,6 +268,7 @@ class SpecialistState(TypedDict):
     tool_iterations: int
     allow_write_tools: bool
     approval: dict | None
+    operation_run_id: str | None
 
 
 class SupervisorDecision(BaseModel):
@@ -532,9 +537,12 @@ async def specialist_tools_node(agent_name: AgentName, state: SpecialistState) -
         approval=approval,
     )
     results: list[BaseMessage] = []
+    raw_run_id = state.get("operation_run_id")
+    operation_run_id = uuid.UUID(raw_run_id) if raw_run_id else None
 
     for tool_call in last.tool_calls:
         name = tool_call["name"]
+        audit_started = False
         if name not in tool_map:
             result: BaseMessage = _tool_message(
                 tool_call=tool_call,
@@ -548,6 +556,19 @@ async def specialist_tools_node(agent_name: AgentName, state: SpecialistState) -
                     operation_call,
                     operation_context,
                 )
+                if prepared.spec.effect == "write" and operation_run_id is not None:
+                    persisted_approval = approval or ApprovalDecision(
+                        approved=False,
+                        reason=prepared.decision.reason,
+                    )
+                    async with AsyncSessionLocal() as db:
+                        record = await operation_record_service.authorize_execution(
+                            db,
+                            chat_run_id=operation_run_id,
+                            prepared=prepared,
+                            approval=persisted_approval,
+                        )
+                    audit_started = record.status == "executing"
                 if prepared.decision.result != "allow":
                     result = _tool_message(
                         tool_call=tool_call,
@@ -575,7 +596,27 @@ async def specialist_tools_node(agent_name: AgentName, state: SpecialistState) -
                     content=content,
                     status=status,
                 )
+                if audit_started and operation_run_id is not None:
+                    async with AsyncSessionLocal() as db:
+                        await operation_record_service.finish_execution(
+                            db,
+                            chat_run_id=operation_run_id,
+                            tool_call_id=operation_call.id,
+                            result=content if status == "success" else None,
+                            error=str(content) if status == "error" else None,
+                        )
             except Exception as exc:  # noqa: BLE001 - 每个 call 都必须返回协议消息
+                if audit_started and operation_run_id is not None:
+                    try:
+                        async with AsyncSessionLocal() as db:
+                            await operation_record_service.finish_execution(
+                                db,
+                                chat_run_id=operation_run_id,
+                                tool_call_id=str(tool_call.get("id") or ""),
+                                error=f"{type(exc).__name__}: {exc}",
+                            )
+                    except Exception as audit_exc:  # noqa: BLE001
+                        print(f"[operation-audit] 记录执行失败时出错：{audit_exc}")
                 result = _tool_message(
                     tool_call=tool_call,
                     content=f"工具 {name} 执行失败：{type(exc).__name__}: {exc}",
@@ -598,6 +639,8 @@ async def approval_node(state: SpecialistState) -> dict:
     assert isinstance(last, AIMessage)
     context = OperationContext(write_enabled=True, approval=None)
     pending: list[dict] = []
+    raw_run_id = state.get("operation_run_id")
+    operation_run_id = uuid.UUID(raw_run_id) if raw_run_id else None
     for tool_call in last.tool_calls:
         if not is_write_tool(tool_call["name"]):
             continue
@@ -606,7 +649,22 @@ async def approval_node(state: SpecialistState) -> dict:
             context,
         )
         if prepared.approval_view is not None:
-            pending.append(dict(prepared.approval_view))
+            approval_view = dict(prepared.approval_view)
+            if operation_run_id is not None:
+                async with AsyncSessionLocal() as db:
+                    record = await operation_record_service.ensure_pending(
+                        db,
+                        chat_run_id=operation_run_id,
+                        prepared=prepared,
+                    )
+                approval_view.update(
+                    {
+                        "operation_id": str(record.id),
+                        "request_hash": record.request_hash,
+                        "expires_at": record.expires_at.isoformat(),
+                    }
+                )
+            pending.append(approval_view)
     decision = interrupt({"actions": pending})
     return {"approval": decision}
 
