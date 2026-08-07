@@ -74,6 +74,7 @@ const TOOL_LABELS: Record<string, string> = {
   restart_service: '重启服务',
   create_alert_rule: '创建预警规则',
   apply_server_log_config: '应用服务器日志配置',
+  deploy_server_environment: '自动部署服务器环境',
   run_whitelisted_command: '执行远程命令（旧记录）',
 }
 function toolLabel(name: string): string {
@@ -88,6 +89,7 @@ const WRITE_TOOLS = new Set([
   'stop_service',
   'restart_service',
   'apply_server_log_config',
+  'deploy_server_environment',
   'run_whitelisted_command',
 ])
 
@@ -100,6 +102,7 @@ const HIGH_RISK_TOOLS = new Set([
   'stop_service',
   'restart_service',
   'apply_server_log_config',
+  'deploy_server_environment',
 ])
 
 function historyApprovalCommand(name: string, args: Record<string, unknown>): string {
@@ -120,6 +123,9 @@ function historyApprovalCommand(name: string, args: Record<string, unknown>): st
       )
       .join('、')
     return `注册到 ${String(args.environment ?? 'prod')} 环境：${names || '（无服务明细）'}`
+  }
+  if (name === 'deploy_server_environment') {
+    return `自动部署 ${String(args.server_name ?? '?')} 的环境配置`
   }
   return String(args.command ?? name)
 }

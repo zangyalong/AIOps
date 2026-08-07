@@ -13,7 +13,7 @@ defineProps<{
       <div>
         <p class="group-title">环境部署</p>
         <p class="group-hint">
-          保存组件开关和连接参数，并生成可拿到目标服务器执行的一键安装包。
+          首次下载并执行安装包；以后可保存配置后直接自动部署，无需重复下载。
         </p>
       </div>
       <label class="compact-field">
@@ -98,7 +98,7 @@ defineProps<{
         </label>
         <label>Docker 网络<input v-model="config.mysql_exporter_network" placeholder="host" /></label>
         <label>
-          本次打包密码
+          本次部署密码
           <input v-model="secrets.mysql_password" type="password" autocomplete="new-password" />
         </label>
       </div>
@@ -117,7 +117,7 @@ defineProps<{
         <label>监控用户名<input v-model="config.postgres_exporter_user" /></label>
         <label>Docker 网络<input v-model="config.postgres_exporter_network" placeholder="host" /></label>
         <label>
-          本次打包密码
+          本次部署密码
           <input v-model="secrets.postgres_password" type="password" autocomplete="new-password" />
         </label>
       </div>
@@ -135,8 +135,12 @@ defineProps<{
         <label>连接地址<input v-model="config.redis_exporter_address" /></label>
         <label>监控用户名（可空）<input v-model="config.redis_exporter_user" /></label>
         <label>Docker 网络<input v-model="config.redis_exporter_network" placeholder="host" /></label>
-        <label>
-          本次打包密码（无认证可空）
+        <label class="checkbox-row">
+          <input v-model="config.redis_use_password" type="checkbox" />
+          Redis 需要密码认证
+        </label>
+        <label v-if="config.redis_use_password">
+          本次部署密码
           <input v-model="secrets.redis_password" type="password" autocomplete="new-password" />
         </label>
       </div>
@@ -147,7 +151,7 @@ defineProps<{
       安装时拉取镜像并启动已启用的 exporter
     </label>
     <p class="secret-note">
-      数据库密码不会保存到服务器记录；它们只用于本次生成的压缩包，下载结束后前端立即清空。
+      数据库密码不会保存到服务器记录；下载或自动部署完成后前端立即清空。首次启用密码认证时必须填写，后续留空会复用目标服务器已有凭据。
     </p>
   </div>
 </template>

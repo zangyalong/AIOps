@@ -86,6 +86,7 @@ class TargetDeploymentConfig(BaseModel):
     )
 
     enable_redis_exporter: bool = False
+    redis_use_password: bool = False
     redis_exporter_image: str = Field(
         default="quay.io/oliver006/redis_exporter:v1.88.0",
         min_length=1,
@@ -140,7 +141,7 @@ class TargetDeploymentConfig(BaseModel):
 
 
 class DeploymentBundleSecrets(BaseModel):
-    """只用于本次打包，服务端不会把这些字段保存到数据库。"""
+    """只用于本次下载或自动部署请求，服务端不会把这些字段保存到数据库。"""
 
     mysql_password: SecretStr | None = None
     postgres_password: SecretStr | None = None
@@ -149,6 +150,15 @@ class DeploymentBundleSecrets(BaseModel):
 
 class DeploymentBundleRequest(BaseModel):
     secrets: DeploymentBundleSecrets = Field(default_factory=DeploymentBundleSecrets)
+
+
+class DeploymentApplyRequest(BaseModel):
+    secrets: DeploymentBundleSecrets = Field(default_factory=DeploymentBundleSecrets)
+
+
+class DeploymentApplyResult(BaseModel):
+    status: Literal["applied"]
+    detail: str
 
 
 class ServerBase(BaseModel):

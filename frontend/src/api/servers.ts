@@ -119,3 +119,29 @@ export async function generateDeploymentBundle(
     sha256: res.headers.get('X-Checksum-SHA256'),
   }
 }
+
+export interface DeploymentApplyResult {
+  status: 'applied'
+  detail: string
+}
+
+export async function deployServerEnvironment(
+  id: string,
+  secrets: DeploymentBundleSecrets,
+): Promise<DeploymentApplyResult> {
+  const res = await fetch(`/api/servers/${id}/deploy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      secrets: {
+        mysql_password: secrets.mysql_password || null,
+        postgres_password: secrets.postgres_password || null,
+        redis_password: secrets.redis_password || null,
+      },
+    }),
+  })
+  if (!res.ok) {
+    throw await readApiError(res, '自动部署服务器环境失败')
+  }
+  return res.json()
+}

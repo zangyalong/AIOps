@@ -255,8 +255,9 @@ command -v sha256sum >/dev/null 2>&1 || fail "服务器缺少 sha256sum"
 )
 
 "\$SCRIPT_DIR/role/configure-role.sh" --user "$AIOMS_SSH_USER"
-"\$SCRIPT_DIR/target-server/deploy.sh" \
-    --config "\$SCRIPT_DIR/target-server/deploy.conf"
+"\$SCRIPT_DIR/target-server/install-runtime.sh" "\$SCRIPT_DIR/target-server"
+"/opt/aioms-target-server/deploy.sh" \
+    --config "/opt/aioms-target-server/deploy.conf"
 
 echo "AIOMS 目标服务器首次安装完成。"
 echo "现在可以在 AIOMS 对话中发现并注册 $SERVER_NAME 上的服务。"

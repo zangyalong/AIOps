@@ -52,9 +52,9 @@ def _secret_value(secret: SecretStr | None, label: str) -> str | None:
     return value
 
 
-def _service_control_allowlist() -> str:
+def _normalize_service_control_allowlist(raw_allowlist: str) -> str:
     services: list[str] = []
-    for raw in settings.service_control_allowlist.split(","):
+    for raw in raw_allowlist.split(","):
         service = raw.strip()
         if not service:
             continue
@@ -64,6 +64,12 @@ def _service_control_allowlist() -> str:
             )
         services.append(service)
     return ",".join(sorted(set(services)))
+
+
+def _service_control_allowlist() -> str:
+    return _normalize_service_control_allowlist(
+        settings.service_control_allowlist
+    )
 
 
 def validate_bundle_secrets(
@@ -77,20 +83,34 @@ def validate_bundle_secrets(
         raise DeploymentBundleError("启用 MySQL exporter 时必须填写本次打包密码")
     if config.enable_postgres_exporter and postgres_password is None:
         raise DeploymentBundleError("启用 PostgreSQL exporter 时必须填写本次打包密码")
+    if (
+        config.enable_redis_exporter
+        and config.redis_use_password
+        and redis_password is None
+    ):
+        raise DeploymentBundleError("启用 Redis exporter 密码认证时必须填写本次打包密码")
     return mysql_password, postgres_password, redis_password
 
 
 def render_deploy_config(
-    server: Server, config: TargetDeploymentConfig, *, redis_has_password: bool
+    server: Server,
+    config: TargetDeploymentConfig,
+    *,
+    redis_has_password: bool,
+    service_control_allowlist: str | None = None,
 ) -> str:
-    if not server.ssh_user:
-        raise DeploymentBundleError("请先填写非 root 的 AIOMS SSH 用户")
+    _validate_server_identity(server)
+    allowlist = (
+        _service_control_allowlist()
+        if service_control_allowlist is None
+        else _normalize_service_control_allowlist(service_control_allowlist)
+    )
 
     return "\n".join(
         [
             "# 由 AIOMS 服务器编辑页生成；数据库密码保存在同包的独立凭据文件中。",
             f"AIOMS_SSH_USER={server.ssh_user}",
-            f"SERVICE_CONTROL_ALLOWLIST={_service_control_allowlist()}",
+            f"SERVICE_CONTROL_ALLOWLIST={allowlist}",
             f"ENABLE_ALLOY={_bool(config.enable_alloy)}",
             f"SERVER_NAME={server.name}",
             f"LOKI_PUSH_URL={config.loki_push_url}",
@@ -187,7 +207,10 @@ def cleanup_bundle(temporary_root: Path) -> None:
 
 
 async def build_deployment_bundle(
-    server: Server, secrets: DeploymentBundleSecrets
+    server: Server,
+    secrets: DeploymentBundleSecrets,
+    *,
+    service_control_allowlist: str | None = None,
 ) -> DeploymentBundleArtifact:
     _validate_server_identity(server)
     try:
@@ -205,7 +228,12 @@ async def build_deployment_bundle(
         redis_has_password = write_database_credentials(assets_dir, config, secrets)
         _write_private_file(
             config_path,
-            render_deploy_config(server, config, redis_has_password=redis_has_password),
+            render_deploy_config(
+                server,
+                config,
+                redis_has_password=redis_has_password,
+                service_control_allowlist=service_control_allowlist,
+            ),
         )
 
         script_path = settings.target_server_scripts_dir / "make-bundle.sh"

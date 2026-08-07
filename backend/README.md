@@ -120,8 +120,8 @@ SSH 私钥默认放在仓库根目录的 `ssh/`，数据库只保存私钥文件
 只读查询和审批后的固定网关写操作统一使用 `ssh_user` / `ssh_key_filename` 对应的非 root
 AIOMS 身份；目标服务器 sudoers 只授权 root 持有的白名单包装器，不开放任意 `systemctl`、
 Shell、Docker 或 root 登录。服务器编辑页还会把
-非敏感部署参数保存在 `servers.deployment_config`；数据库 exporter 密码只用于当次打包，
-不会落库。已有数据库先执行：
+非敏感部署参数保存在 `servers.deployment_config`；数据库 exporter 密码只用于当次下载或部署
+请求，不会落库。已有数据库先执行：
 
 ```bash
 psql -d aioms -v ON_ERROR_STOP=1 \
@@ -138,6 +138,11 @@ psql -d aioms -v ON_ERROR_STOP=1 \
 `POST /servers/{server_id}/deployment-bundle` 会在后端临时目录生成不含私钥的安装包并直接下载，
 响应完成后清理临时配置和数据库凭据。后端运行机器需要有 Bash、`ssh-keygen`、`tar` 和
 `sha256sum`（macOS 可使用 `shasum`），并且 `SSH_KEY_DIR` 对后端进程可写。
+
+首次安装包会把 root 所有的固定部署程序安装到 `/opt/aioms-target-server`。此后页面按钮或高风险
+写 Tool 可调用 `POST /servers/{server_id}/deploy`：后端只上传经过 Pydantic 校验的配置与本次
+请求凭据，再通过 `aioms-target-deploy apply-config` 固定网关应用。Tool 不接收数据库密码，
+只复用目标服务器已有凭据；首次启用数据库密码认证需从服务器页面提交。
 
 真实目标服务器需要安装只读 Docker / 业务资产发现网关和 sudoers，文件、安装位置、参数及
 验证方法见 [`scripts/target-server/README.md`](../scripts/target-server/README.md)。
@@ -197,6 +202,8 @@ uv run arq app.worker.WorkerSettings
 | `GET/POST /servers`                       | 查询、新增服务器                  |
 | `PATCH/DELETE /servers/{id}`              | 修改、删除服务器                  |
 | `POST /servers/{id}/test-connection`      | 测试 SSH 连接                     |
+| `POST /servers/{id}/deployment-bundle`    | 下载首次目标服务器安装包          |
+| `POST /servers/{id}/deploy`               | 自动应用已保存的目标服务器配置    |
 | `GET /conversations`                      | 会话列表                          |
 | `GET/DELETE /conversations/{id}`          | 会话详情、删除会话                |
 | `POST /alerts/webhook`                    | 接收 Alertmanager webhook         |

@@ -60,11 +60,13 @@ sudo ./configure-role.sh --user aioms
 
 ```text
 sudo /usr/local/sbin/aioms-target-deploy apply
+sudo /usr/local/sbin/aioms-target-deploy apply-config
 sudo /usr/local/sbin/aioms-target-deploy apply-alloy
 ```
 
 `apply` 只能读取 `/opt/aioms-target-server/` 中 root 持有且不可被 `aioms` 修改的固定脚本与
-配置；`apply-alloy` 只能调用 root 持有的固定应用器。后续 `discovery/install.sh` 和
+配置；`apply-config` 只接收 `/var/lib/aioms/incoming/` 中经过校验的配置与凭据，再调用同一个
+root 固定部署脚本；`apply-alloy` 只能调用 root 持有的固定应用器。后续 `discovery/install.sh` 和
 `actions/install.sh` 会在对应包装器安装完成后，再为同一用户增加精确 sudoers 权限。
 
 ## 3. 客户端配置与验证

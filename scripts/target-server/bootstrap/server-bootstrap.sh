@@ -159,11 +159,12 @@ fail() {
 }
 
 [[ $EUID -eq 0 ]] || fail "该入口只能通过 sudo 运行"
-[[ $# -eq 1 ]] || fail "只允许 apply 或 apply-alloy 固定子命令"
+[[ $# -eq 1 ]] || fail "只允许 apply、apply-config 或 apply-alloy 固定子命令"
 
 readonly INSTALL_DIR="/opt/aioms-target-server"
 readonly DEPLOY_SCRIPT="$INSTALL_DIR/deploy.sh"
 readonly CONFIG_PATH="$INSTALL_DIR/deploy.conf"
+readonly CONFIG_APPLY_HELPER="$INSTALL_DIR/apply-incoming-config.sh"
 readonly ALLOY_APPLY_HELPER="/usr/local/libexec/aioms/apply-alloy-config"
 
 verify_root_owned() {
@@ -195,8 +196,14 @@ case "$1" in
         verify_root_owned "$ALLOY_APPLY_HELPER" "Alloy 应用器"
         exec "$ALLOY_APPLY_HELPER"
         ;;
+    apply-config)
+        [[ -f "$CONFIG_APPLY_HELPER" && -x "$CONFIG_APPLY_HELPER" && ! -L "$CONFIG_APPLY_HELPER" ]] ||
+            fail "找不到 root 所有的环境配置应用器：$CONFIG_APPLY_HELPER"
+        verify_root_owned "$CONFIG_APPLY_HELPER" "环境配置应用器"
+        exec "$CONFIG_APPLY_HELPER"
+        ;;
     *)
-        fail "只允许：sudo /usr/local/sbin/aioms-target-deploy apply 或 apply-alloy"
+        fail "只允许：sudo /usr/local/sbin/aioms-target-deploy apply、apply-config 或 apply-alloy"
         ;;
 esac
 EOF
@@ -214,6 +221,7 @@ install_deploy_sudoers() {
 # 由 AIOMS configure-role.sh 生成。
 # aioms 普通账号只能应用管理员放在 /opt/aioms-target-server/ 下的 root 所有配置。
 Cmnd_Alias AIOMS_TARGET_DEPLOY = /usr/local/sbin/aioms-target-deploy apply, \
+    /usr/local/sbin/aioms-target-deploy apply-config, \
     /usr/local/sbin/aioms-target-deploy apply-alloy
 
 $AIOMS_USER ALL=(root) NOPASSWD: AIOMS_TARGET_DEPLOY
@@ -239,6 +247,7 @@ echo
 echo "AIOMS SSH 角色初始化完成。"
 echo "普通账号：$AIOMS_USER"
 echo "固定部署入口：sudo $DEPLOY_GATEWAY apply"
+echo "自动配置入口：sudo $DEPLOY_GATEWAY apply-config"
 echo "Alloy 配置入口：sudo $DEPLOY_GATEWAY apply-alloy"
 echo "部署暂存目录：$DEPLOY_INCOMING_DIR"
 echo "部署目录已预留：$INSTALL_ROOT"

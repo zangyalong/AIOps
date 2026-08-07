@@ -19,6 +19,7 @@ from app.agents.tools.alert_rules import create_alert_rule
 from app.agents.tools.alerts import query_alerts
 from app.agents.tools.commands import run_diagnostic_command
 from app.agents.tools.correlate import correlate_incident
+from app.agents.tools.deployment import deploy_server_environment
 from app.agents.tools.grafana import grafana_explore_link
 from app.agents.tools.logs import list_log_services, search_logs
 from app.agents.tools.metrics import (
@@ -149,6 +150,19 @@ def _apply_server_log_config_action(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _deploy_server_environment_action(args: dict[str, Any]) -> dict[str, Any]:
+    server = str(args.get("server_name") or "?")
+    return {
+        "kind": "server_environment_deploy",
+        "title": f"自动部署 {server} 的环境配置",
+        "server_name": server,
+        "command": (
+            "上传服务器页面保存的组件配置，并调用固定入口 "
+            "aioms-target-deploy apply-config"
+        ),
+    }
+
+
 READ_TOOLS: tuple[BaseTool, ...] = (
     query_servers,
     run_diagnostic_command,
@@ -195,6 +209,11 @@ _WRITE_SPECS = (
         tool=apply_server_log_config,
         risk_level="high",
         build_action_details=_apply_server_log_config_action,
+    ),
+    WriteToolSpec(
+        tool=deploy_server_environment,
+        risk_level="high",
+        build_action_details=_deploy_server_environment_action,
     ),
 )
 

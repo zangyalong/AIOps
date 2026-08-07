@@ -11,13 +11,19 @@ from app.dependencies import DBSession
 from app.models.server import Server
 from app.schemas.server import (
     ConnectionTestResult,
+    DeploymentApplyRequest,
+    DeploymentApplyResult,
     DeploymentBundleRequest,
     ServerCreate,
     ServerRead,
     ServerUpdate,
 )
 from app.schemas.service_observability import ServerObservabilityRead
-from app.services import server_service, service_observability_service
+from app.services import (
+    environment_deployment_service,
+    server_service,
+    service_observability_service,
+)
 from app.services.target_deployment_service import (
     DeploymentBundleError,
     build_deployment_bundle,
@@ -97,7 +103,16 @@ async def download_deployment_bundle(
     """生成不含私钥的首次安装包；数据库凭据只存在于响应期临时目录。"""
     server = await _get_server_or_404(db, server_id)
     try:
-        artifact = await build_deployment_bundle(server, data.secrets)
+        allowlist = (
+            await environment_deployment_service.service_control_allowlist_for_server(
+                db, server
+            )
+        )
+        artifact = await build_deployment_bundle(
+            server,
+            data.secrets,
+            service_control_allowlist=allowlist,
+        )
     except DeploymentBundleError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -118,3 +133,19 @@ async def download_deployment_bundle(
         headers={"X-Checksum-SHA256": artifact.sha256},
         background=BackgroundTask(cleanup_bundle, artifact.temporary_root),
     )
+
+
+@router.post("/{server_id}/deploy", response_model=DeploymentApplyResult)
+async def deploy_server_environment(
+    server_id: uuid.UUID,
+    data: DeploymentApplyRequest,
+    db: DBSession,
+) -> DeploymentApplyResult:
+    server = await _get_server_or_404(db, server_id)
+    try:
+        detail = await environment_deployment_service.apply_saved_environment(
+            db, server, data.secrets
+        )
+    except environment_deployment_service.EnvironmentDeploymentError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return DeploymentApplyResult(status="applied", detail=detail)

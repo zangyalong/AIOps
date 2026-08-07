@@ -58,6 +58,7 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("create_alert_rule", catalog.WRITE_TOOLS_BY_NAME)
         self.assertIn("register_server_services", catalog.WRITE_TOOLS_BY_NAME)
         self.assertIn("apply_server_log_config", catalog.WRITE_TOOLS_BY_NAME)
+        self.assertIn("deploy_server_environment", catalog.WRITE_TOOLS_BY_NAME)
         self.assertFalse(
             set(catalog.READ_TOOLS_BY_NAME) & set(catalog.WRITE_TOOLS_BY_NAME)
         )
@@ -87,6 +88,15 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
             {
                 tool.name
                 for tool in chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"]
+            },
+        )
+        self.assertIn(
+            "deploy_server_environment",
+            {
+                tool.name
+                for tool in chat_graph.SPECIALIST_WRITE_TOOLS[
+                    "infrastructure_agent"
+                ]
             },
         )
         self.assertIn(
@@ -187,6 +197,17 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(log_action["risk_level"], "high")
         self.assertEqual(log_action["kind"], "server_log_config_apply")
         self.assertIn("orders-api ← docker/orders-api", log_action["command"])
+
+        deployment_action = catalog.describe_write_action(
+            {
+                "id": "deploy-1",
+                "name": "deploy_server_environment",
+                "args": {"server_name": "web01"},
+            }
+        )
+        self.assertEqual(deployment_action["risk_level"], "high")
+        self.assertEqual(deployment_action["kind"], "server_environment_deploy")
+        self.assertIn("aioms-target-deploy apply-config", deployment_action["command"])
 
     async def test_restart_service_rejects_unregistered_instance_before_ssh(
         self,

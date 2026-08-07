@@ -37,12 +37,17 @@ psql -d aioms -v ON_ERROR_STOP=1 \
 
 1. AIOMS SSH 身份：端口和非 root 用户名（例如 `22`、`aioms`）。
 2. 环境部署：环境名、Loki 地址，以及 Alloy、node_exporter、cAdvisor 和数据库 exporter 开关。
-3. 启用数据库 exporter 时，填写连接参数和本次打包密码。
+3. 启用数据库 exporter 时，填写连接参数和本次部署密码。
 
-点击“保存并下载一键安装包”。后端会生成或复用一组 Ed25519 密钥，私钥只保留在后端的
+首次点击“保存并下载首次安装包”。后端会生成或复用一组 Ed25519 密钥，私钥只保留在后端的
 `SSH_KEY_DIR`，浏览器下载 `aioms-<server>.tar.gz`。非敏感环境配置会随服务器记录保存；
-数据库密码不会写入数据库或返回服务器详情，只会进入当次压缩包的独立凭据文件，响应完成后
-服务端临时目录会被删除。
+数据库密码不会写入数据库或返回服务器详情，只会进入当次压缩包或自动部署请求的独立凭据
+文件，请求完成后服务端临时数据会被清理。
+
+首次安装完成后，修改环境部署配置可直接点击“保存并自动部署”，也可以在 AI 对话中要求部署
+该服务器。按钮可提交本次数据库密码；高风险 Tool 经过人工审批后只复用目标服务器已有凭据，
+不接收密码。配置更新不再要求重新下载压缩包；只有固定部署程序自身升级时才需要管理员重新
+执行新的首次安装包。
 
 首次部署仍不填写服务器上的服务清单。安装完成后由 AI 对话运行发现 Tool，注册服务，再生成
 并审批应用 Alloy 服务映射，所以服务发现能力不会被前置手工配置替代。
@@ -421,10 +426,11 @@ sudoers 不直接开放任意 `docker`、`ss`、`ps`、`systemctl` 或 Shell，�
 /usr/local/sbin/aioms-service-read
 ```
 
-同一个 `aioms` 用户还可调用两个精确部署入口：
+同一个 `aioms` 用户还可调用三个精确部署入口：
 
 ```text
 /usr/local/sbin/aioms-target-deploy apply
+/usr/local/sbin/aioms-target-deploy apply-config
 /usr/local/sbin/aioms-target-deploy apply-alloy
 ```
 
@@ -432,6 +438,11 @@ sudoers 不直接开放任意 `docker`、`ss`、`ps`、`systemctl` 或 Shell，�
 group/other 不可写的 `deploy.conf`。固定部署目录本身也必须由 root 持有且 group/other 不可
 写；在管理员尚未安装这两个文件时，入口会拒绝执行。AIOMS 账号不能把上传目录中的脚本交给
 root 执行。
+
+`apply-config` 不接受路径或 Shell 参数，只读取 `/var/lib/aioms/incoming/` 下固定命名的配置、
+部署清单和可选数据库凭据。root 固定应用器会校验上传用户、权限、文件类型、大小和清单字段，
+部署失败时恢复并重新应用上一版配置。自动部署只能更新这些配置数据，不能上传或替换 root
+执行脚本。
 
 `apply-alloy` 不接受路径或配置参数，只调用 root 所有的固定应用器。部署 Tool 只能把自动生成的
 `services.map` 上传到 `/var/lib/aioms/incoming/`；应用器重新校验文件所有者、权限、大小

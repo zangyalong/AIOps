@@ -33,6 +33,7 @@ from app.agents.tools.catalog import (
 )
 from app.agents.tools.commands import run_diagnostic_command
 from app.agents.tools.correlate import correlate_incident
+from app.agents.tools.deployment import deploy_server_environment
 from app.agents.tools.grafana import grafana_explore_link
 from app.agents.tools.logs import list_log_services, search_logs
 from app.agents.tools.metrics import (
@@ -99,6 +100,7 @@ SPECIALIST_WRITE_TOOLS: dict[AgentName, list[BaseTool]] = {
         stop_service,
         restart_service,
         apply_server_log_config,
+        deploy_server_environment,
     ],
 }
 
@@ -168,6 +170,10 @@ SPECIALIST_PROMPTS: dict[AgentName, str] = {
         "映射容器日志，process 标记 none。只有用户明确要求应用、启用或更新配置时，才把预览"
         "返回的 preview_hash 和 mappings 原样传给 apply_server_log_config；它是高风险写工具，"
         "会上传固定映射并启动或重载 Alloy，必须单独提交人工审批，不能和其他 Tool 同批调用。"
+        "用户明确要求部署、更新或重新应用某台服务器已保存的环境配置时，调用 "
+        "deploy_server_environment；它会上传服务器页面保存的配置并通过固定网关应用，是高风险"
+        "写工具，必须单独提交审批。Tool 不接收数据库密码，首次配置数据库 exporter 密码时必须"
+        "让用户使用服务器页面的“保存并自动部署”。"
         "用户明确要求启动、停止或重启 systemd 服务时，必须先用 query_servers 核对服务器，再用 "
         "run_diagnostic_command 检查目标单元和当前状态；核对完成后分别调用 start_service、"
         "stop_service 或 restart_service。启动是中风险操作，需要一次人工确认；停止和重启是高风险"

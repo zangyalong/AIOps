@@ -62,6 +62,20 @@ class TargetDeploymentServiceTests(unittest.TestCase):
                 Path(temporary_dir), config, DeploymentBundleSecrets()
             )
 
+    def test_password_protected_redis_requires_one_time_password(self) -> None:
+        config = TargetDeploymentConfig(
+            enable_redis_exporter=True,
+            redis_use_password=True,
+        )
+
+        with (
+            tempfile.TemporaryDirectory() as temporary_dir,
+            self.assertRaisesRegex(DeploymentBundleError, "Redis exporter.*必须填写"),
+        ):
+            write_database_credentials(
+                Path(temporary_dir), config, DeploymentBundleSecrets()
+            )
+
     def test_credentials_are_written_as_private_separate_files(self) -> None:
         config = TargetDeploymentConfig(
             enable_mysql_exporter=True,

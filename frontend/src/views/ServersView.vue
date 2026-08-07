@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import {
   createServer,
   deleteServer,
+  deployServerEnvironment,
   fetchServers,
   generateDeploymentBundle,
   testServerConnection,
@@ -29,8 +30,11 @@ const showModal = ref(false)
 const editingServer = ref<Server | null>(null)
 const saving = ref(false)
 const generatingBundle = ref(false)
+const deploying = ref(false)
 const formError = ref<string | null>(null)
 const bundleMessage = ref<string | null>(null)
+const deploymentMessages = reactive<Record<string, string>>({})
+const deployingServerIds = ref<Set<string>>(new Set())
 const deploymentSecrets = reactive<DeploymentBundleSecrets>(createEmptyDeploymentSecrets())
 type ServerForm = Omit<ServerCreateInput, 'deployment_config'> & {
   deployment_config: TargetDeploymentConfig
@@ -187,6 +191,58 @@ async function saveAndGenerateBundle() {
   }
 }
 
+async function saveAndDeploy() {
+  if (
+    !confirm(
+      '确定保存并自动部署当前环境配置？\n\n部署会更新监控组件和服务控制白名单，属于高风险操作。',
+    )
+  ) {
+    return
+  }
+  deploying.value = true
+  formError.value = null
+  bundleMessage.value = null
+  try {
+    const saved = await persistForm()
+    if (!saved) return
+    const result = await deployServerEnvironment(saved.id, deploymentSecrets)
+    bundleMessage.value = result.detail
+    deploymentMessages[saved.id] = '最近一次自动部署成功'
+    await loadServers()
+  } catch (e) {
+    formError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    Object.assign(deploymentSecrets, createEmptyDeploymentSecrets())
+    deploying.value = false
+  }
+}
+
+async function deploySavedConfiguration(server: Server) {
+  if (
+    !confirm(
+      `确定自动部署 ${server.name} 已保存的环境配置？\n\n数据库 exporter 将复用目标服务器已有凭据。`,
+    )
+  ) {
+    return
+  }
+  deployingServerIds.value = new Set([...deployingServerIds.value, server.id])
+  delete deploymentMessages[server.id]
+  error.value = null
+  try {
+    const result = await deployServerEnvironment(
+      server.id,
+      createEmptyDeploymentSecrets(),
+    )
+    deploymentMessages[server.id] = result.detail
+  } catch (e) {
+    deploymentMessages[server.id] = e instanceof Error ? e.message : String(e)
+  } finally {
+    const next = new Set(deployingServerIds.value)
+    next.delete(server.id)
+    deployingServerIds.value = next
+  }
+}
+
 async function remove(server: Server) {
   if (!confirm(`确定删除 ${server.name}？`)) return
   try {
@@ -263,11 +319,22 @@ const sortedServers = computed(() =>
           <div><dt>描述</dt><dd>{{ server.description || '无描述' }}</dd></div>
         </dl>
         <p v-if="state.detail" class="detail">{{ state.detail }}</p>
+        <p v-if="deploymentMessages[server.id]" class="detail deployment-detail">
+          {{ deploymentMessages[server.id] }}
+        </p>
         <div class="card-actions">
           <button type="button" class="btn-ghost" @click="testConnection(server)" :disabled="state.status === 'testing'">
             {{ state.status === 'testing' ? '测试中…' : '测试连接' }}
           </button>
           <button type="button" class="btn-ghost" @click="openEditModal(server)">编辑</button>
+          <button
+            type="button"
+            class="btn-ghost deploy"
+            :disabled="deployingServerIds.has(server.id) || !server.ssh_user || !server.ssh_key_filename"
+            @click="deploySavedConfiguration(server)"
+          >
+            {{ deployingServerIds.has(server.id) ? '部署中…' : '自动部署' }}
+          </button>
           <button type="button" class="btn-ghost danger" @click="remove(server)">删除</button>
         </div>
       </li>
@@ -311,12 +378,20 @@ const sortedServers = computed(() =>
             <button
               type="button"
               class="btn-bundle"
-              :disabled="saving || generatingBundle"
+              :disabled="saving || generatingBundle || deploying"
               @click="saveAndGenerateBundle"
             >
-              {{ generatingBundle ? '生成中…' : '保存并下载一键安装包' }}
+              {{ generatingBundle ? '生成中…' : '保存并下载首次安装包' }}
             </button>
-            <button type="submit" class="btn-primary" :disabled="saving || generatingBundle">
+            <button
+              type="button"
+              class="btn-primary"
+              :disabled="saving || generatingBundle || deploying || !editingServer"
+              @click="saveAndDeploy"
+            >
+              {{ deploying ? '部署中…' : '保存并自动部署' }}
+            </button>
+            <button type="submit" class="btn-primary" :disabled="saving || generatingBundle || deploying">
               {{ saving ? '保存中…' : '保存' }}
             </button>
           </div>
@@ -531,8 +606,23 @@ h1 {
 
 .card-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   margin-top: 1rem;
+}
+
+.card-actions .btn-ghost {
+  min-width: calc(50% - 0.25rem);
+}
+
+.btn-ghost.deploy {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface));
+}
+
+.deployment-detail {
+  color: var(--color-status-active);
 }
 
 .hint {

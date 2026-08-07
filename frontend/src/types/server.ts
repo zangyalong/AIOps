@@ -25,6 +25,7 @@ export interface TargetDeploymentConfig {
   postgres_exporter_user: string
   postgres_exporter_network: string
   enable_redis_exporter: boolean
+  redis_use_password: boolean
   redis_exporter_image: string
   redis_exporter_address: string
   redis_exporter_user: string
@@ -61,6 +62,7 @@ export function createDefaultDeploymentConfig(): TargetDeploymentConfig {
     postgres_exporter_user: 'aioms_exporter',
     postgres_exporter_network: 'host',
     enable_redis_exporter: false,
+    redis_use_password: false,
     redis_exporter_image: 'quay.io/oliver006/redis_exporter:v1.88.0',
     redis_exporter_address: 'redis://127.0.0.1:6379',
     redis_exporter_user: '',
