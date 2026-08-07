@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 from app.agents.graphs import chat_graph
 from app.agents.tools import actions, catalog
+from app.operations.executors import service_control
 
 
 class _SessionContext:
@@ -115,9 +116,7 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
             "deploy_server_environment",
             {
                 tool.name
-                for tool in chat_graph.SPECIALIST_WRITE_TOOLS[
-                    "infrastructure_agent"
-                ]
+                for tool in chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"]
             },
         )
         self.assertIn(
@@ -128,9 +127,7 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
             "update_server_file",
             {
                 tool.name
-                for tool in chat_graph.SPECIALIST_WRITE_TOOLS[
-                    "infrastructure_agent"
-                ]
+                for tool in chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"]
             },
         )
         self.assertIn("必须使用简体中文", chat_graph.SIMPLIFIED_CHINESE_REQUIREMENT)
@@ -266,22 +263,22 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         """服务未登记时，即使审批层误放行，工具自身也不能连接 SSH。"""
-        server = SimpleNamespace(
-            id="server-id", name="demo", ip_address="127.0.0.1"
-        )
+        server = SimpleNamespace(id="server-id", name="demo", ip_address="127.0.0.1")
         with (
-            patch.object(actions, "AsyncSessionLocal", return_value=_SessionContext()),
             patch.object(
-                actions.server_service,
+                service_control, "AsyncSessionLocal", return_value=_SessionContext()
+            ),
+            patch.object(
+                service_control.server_service,
                 "get_server_by_name_or_ip",
                 AsyncMock(return_value=server),
             ),
             patch.object(
-                actions.service_catalog_service,
+                service_control.service_catalog_service,
                 "get_instance_by_runtime_identity",
                 AsyncMock(return_value=None),
             ),
-            patch.object(actions.asyncssh, "connect") as connect,
+            patch.object(service_control.asyncssh, "connect") as connect,
         ):
             result = await actions.restart_service.ainvoke(
                 {"server_name": "demo", "service_name": "nginx.service"}
@@ -293,23 +290,23 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
     async def test_restart_service_rejects_disabled_control_authorization(
         self,
     ) -> None:
-        server = SimpleNamespace(
-            id="server-id", name="demo", ip_address="127.0.0.1"
-        )
+        server = SimpleNamespace(id="server-id", name="demo", ip_address="127.0.0.1")
         instance = SimpleNamespace(control_enabled=False)
         with (
-            patch.object(actions, "AsyncSessionLocal", return_value=_SessionContext()),
             patch.object(
-                actions.server_service,
+                service_control, "AsyncSessionLocal", return_value=_SessionContext()
+            ),
+            patch.object(
+                service_control.server_service,
                 "get_server_by_name_or_ip",
                 AsyncMock(return_value=server),
             ),
             patch.object(
-                actions.service_catalog_service,
+                service_control.service_catalog_service,
                 "get_instance_by_runtime_identity",
                 AsyncMock(return_value=instance),
             ),
-            patch.object(actions.asyncssh, "connect") as connect,
+            patch.object(service_control.asyncssh, "connect") as connect,
         ):
             result = await actions.restart_service.ainvoke(
                 {"server_name": "demo", "service_name": "nginx.service"}
@@ -322,9 +319,7 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         """三种动作都通过同一个非 root AIOMS 身份调用固定网关。"""
-        server = SimpleNamespace(
-            id="server-id", name="demo", ip_address="127.0.0.1"
-        )
+        server = SimpleNamespace(id="server-id", name="demo", ip_address="127.0.0.1")
         instance = SimpleNamespace(control_enabled=True)
         params = SimpleNamespace(
             host="127.0.0.1",
@@ -335,20 +330,22 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         connection = _FakeConnection()
 
         with (
-            patch.object(actions, "AsyncSessionLocal", return_value=_SessionContext()),
             patch.object(
-                actions.server_service,
+                service_control, "AsyncSessionLocal", return_value=_SessionContext()
+            ),
+            patch.object(
+                service_control.server_service,
                 "get_server_by_name_or_ip",
                 AsyncMock(return_value=server),
             ),
             patch.object(
-                actions.service_catalog_service,
+                service_control.service_catalog_service,
                 "get_instance_by_runtime_identity",
                 AsyncMock(return_value=instance),
             ),
-            patch.object(actions, "build_connect_params", return_value=params),
+            patch.object(service_control, "build_connect_params", return_value=params),
             patch.object(
-                actions.asyncssh,
+                service_control.asyncssh,
                 "connect",
                 return_value=_ConnectionContext(connection),
             ),
@@ -376,26 +373,26 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("当前状态：inactive", stop_result)
 
     async def test_docker_control_reuses_service_tools_and_gateway(self) -> None:
-        server = SimpleNamespace(
-            id="server-id", name="demo", ip_address="127.0.0.1"
-        )
+        server = SimpleNamespace(id="server-id", name="demo", ip_address="127.0.0.1")
         instance = SimpleNamespace(control_enabled=True)
         connection = _FakeConnection()
 
         with (
-            patch.object(actions, "AsyncSessionLocal", return_value=_SessionContext()),
             patch.object(
-                actions.server_service,
+                service_control, "AsyncSessionLocal", return_value=_SessionContext()
+            ),
+            patch.object(
+                service_control.server_service,
                 "get_server_by_name_or_ip",
                 AsyncMock(return_value=server),
             ),
             patch.object(
-                actions.service_catalog_service,
+                service_control.service_catalog_service,
                 "get_instance_by_runtime_identity",
                 AsyncMock(return_value=instance),
             ) as get_instance,
             patch.object(
-                actions,
+                service_control,
                 "build_connect_params",
                 return_value=SimpleNamespace(
                     host="127.0.0.1",
@@ -405,7 +402,7 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
                 ),
             ),
             patch.object(
-                actions.asyncssh,
+                service_control.asyncssh,
                 "connect",
                 return_value=_ConnectionContext(connection),
             ),

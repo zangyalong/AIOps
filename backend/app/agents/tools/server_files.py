@@ -6,7 +6,6 @@ import difflib
 import hashlib
 import json
 import re
-import secrets
 import shlex
 from dataclasses import dataclass
 
@@ -16,6 +15,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.db.session import AsyncSessionLocal
 from app.models.server import Server
+from app.operations.executors import server_file as server_file_executor
 from app.services import server_service
 from app.services.ssh_service import (
     SSHConnectParams,
@@ -25,8 +25,6 @@ from app.services.ssh_service import (
 )
 
 FILE_READ_GATEWAY = "/usr/local/sbin/aioms-file-read"
-FILE_WRITE_GATEWAY = "/usr/local/sbin/aioms-file-write"
-REMOTE_INCOMING_DIR = "/var/lib/aioms/file-incoming"
 MAX_FILE_BYTES = 65_536
 MAX_DIFF_CHARS = 12_000
 _SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
@@ -335,63 +333,16 @@ async def update_server_file(
     这是高风险写操作。执行前重新读取文件并核对旧哈希、预览哈希和差异；随后上传到固定暂存目录，
     由 root 网关备份、保留所有权与权限并原子替换。不能写入敏感凭据或任意未授权路径。
     """
-    content_error = _validate_new_content(new_content)
-    if content_error:
-        return f"已拒绝写入：{content_error}。"
-    server, error = await _resolve_server(server_name)
-    if server is None:
-        return error or "服务器不存在"
-    snapshot, read_error = await _read_snapshot(server, path)
-    if snapshot is None:
-        return read_error or "读取失败"
-    if snapshot.redacted:
-        return "当前文件包含敏感字段，禁止通过通用工具整文件覆盖。"
-    current_preview = _build_preview(snapshot, new_content)
-    if not current_preview["changed"]:
-        return "新旧内容相同，没有修改服务器。"
-    if current_preview["diff_truncated"]:
-        return "完整差异超过审批展示上限，已拒绝通过通用工具写入。"
-    if (
-        snapshot.sha256 != expected_sha256
-        or current_preview["preview_hash"] != preview_hash
-        or current_preview["preview_diff"] != preview_diff
-    ):
-        return "文件内容或审批差异已变化，请重新生成预览并再次确认。"
-
-    params, connect_error = _connect_params_or_error(server)
-    if params is None:
-        return connect_error or "SSH 配置不可用"
-    token = secrets.token_hex(16)
-    remote_path = f"{REMOTE_INCOMING_DIR}/{token}"
-    command = shlex.join(
-        (
-            "sudo",
-            "-n",
-            "--",
-            FILE_WRITE_GATEWAY,
-            "apply",
-            snapshot.path,
-            snapshot.sha256,
-            token,
-        )
+    return await server_file_executor.update_server_file(
+        server_name,
+        path,
+        new_content,
+        expected_sha256,
+        preview_hash,
+        preview_diff,
+        validate_content=_validate_new_content,
+        resolve_server=_resolve_server,
+        read_snapshot=_read_snapshot,
+        build_preview=_build_preview,
+        connect_params=_connect_params_or_error,
     )
-    try:
-        async with asyncssh.connect(
-            params.host,
-            port=params.port,
-            username=params.username,
-            client_keys=params.client_keys,
-            known_hosts=None,
-            connect_timeout=5,
-        ) as conn:
-            async with conn.start_sftp_client() as sftp:
-                async with sftp.open(remote_path, "x") as remote_file:
-                    await remote_file.write(new_content)
-                await sftp.chmod(remote_path, 0o600)
-            result = await conn.run(command, check=False, timeout=30)
-    except (asyncssh.Error, OSError, TimeoutError) as exc:
-        return f"连接、上传或更新目标服务器文件失败：{exc}"
-    output = f"{result.stdout or ''}{result.stderr or ''}".strip()
-    if result.exit_status != 0:
-        return f"更新文件失败（exit={result.exit_status}）：{output or '无输出'}"
-    return output or f"已更新 {snapshot.path}。"

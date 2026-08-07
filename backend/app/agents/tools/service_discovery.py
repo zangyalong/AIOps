@@ -23,8 +23,8 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.db.session import AsyncSessionLocal
 from app.models.server import Server
+from app.operations.executors import service_catalog as service_catalog_executor
 from app.services import server_service, service_catalog_service
-from app.services.service_catalog_service import DiscoveredServiceRegistration
 from app.services.ssh_service import (
     SSHKeyMissing,
     SSHNotConfigured,
@@ -674,81 +674,10 @@ async def register_server_services(
     进程。environment 默认 prod；用户明确指定其他环境时必须使用用户给出的值。重复调用会跳过
     已登记实例。
     """
-    identifier = server_name.strip()
-    target_environment = environment.strip()
-    async with AsyncSessionLocal() as db:
-        server = await server_service.get_server_by_name_or_ip(db, identifier)
-    if server is None:
-        return f'没有找到名称或 IP 为 "{identifier}" 的已纳管服务器。'
-
-    try:
-        discovered = await _discover_runtime_services(server)
-    except ValueError as exc:
-        return str(exc)
-
-    actual = {
-        (candidate.runtime_type, candidate.runtime_name): candidate
-        for candidate in discovered.candidates
-    }
-    requested: list[DiscoveredServiceRegistration] = []
-    missing: list[str] = []
-    seen: set[tuple[str, str]] = set()
-    for item in services:
-        key = (item.runtime_type, item.runtime_name)
-        if key in seen:
-            continue
-        seen.add(key)
-        candidate = actual.get(key)
-        if candidate is None:
-            missing.append(f"{item.runtime_type}/{item.runtime_name}")
-            continue
-        description = f"由 AI 从 {server.name} 的 {item.runtime_type} 运行时发现并注册"
-        if candidate.image:
-            description += f"；镜像={candidate.image}"
-        if candidate.status:
-            description += f"；状态={candidate.status}"
-        if candidate.ports:
-            description += f"；监听端口={','.join(candidate.ports)}"
-        if candidate.user:
-            description += f"；运行用户={candidate.user}"
-        if candidate.command:
-            description += f"；启动命令={candidate.command}"
-        requested.append(
-            DiscoveredServiceRegistration(
-                service_name=item.service_name,
-                instance_name=_instance_name(
-                    server.name, item.runtime_type, item.runtime_name
-                ),
-                runtime_type=item.runtime_type,
-                runtime_name=item.runtime_name,
-                description=description,
-            )
-        )
-
-    if not requested:
-        suffix = f"；当前未发现：{'、'.join(missing)}" if missing else ""
-        return f"没有可注册的真实运行时服务，服务目录未修改{suffix}。"
-
-    async with AsyncSessionLocal() as db:
-        result = await service_catalog_service.register_discovered_services(
-            db,
-            server=server,
-            environment=target_environment,
-            registrations=requested,
-        )
-
-    lines = [
-        (
-            f"已把 {server.name} 上的服务注册到 {target_environment} 环境："
-            f"新增 {result.created_services} 个逻辑服务、"
-            f"新增 {result.created_instances} 个部署实例、"
-            f"跳过 {result.skipped_instances} 个已登记实例。"
-        )
-    ]
-    if missing:
-        lines.append(
-            "以下审批候选在执行前复查时已不存在，未写入：" + "、".join(missing) + "。"
-        )
-    if discovered.warnings:
-        lines.append("扫描提示：" + "；".join(discovered.warnings))
-    return "\n".join(lines)
+    return await service_catalog_executor.register_server_services(
+        server_name,
+        services,
+        environment,
+        discover_runtime_services=_discover_runtime_services,
+        build_instance_name=_instance_name,
+    )

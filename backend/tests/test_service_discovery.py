@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from app.agents.tools import service_discovery
+from app.operations.executors import service_catalog as service_catalog_executor
 from app.services import service_catalog_service
 from app.services.service_catalog_service import (
     DiscoveredServiceRegistration,
@@ -289,12 +290,12 @@ class ServiceDiscoveryToolTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(
-                service_discovery,
+                service_catalog_executor,
                 "AsyncSessionLocal",
                 return_value=_SessionContext(),
             ),
             patch.object(
-                service_discovery.server_service,
+                service_catalog_executor.server_service,
                 "get_server_by_name_or_ip",
                 AsyncMock(return_value=server),
             ),
@@ -304,7 +305,7 @@ class ServiceDiscoveryToolTest(unittest.IsolatedAsyncioTestCase):
                 AsyncMock(return_value=discovered),
             ) as rediscover,
             patch.object(
-                service_discovery.service_catalog_service,
+                service_catalog_executor.service_catalog_service,
                 "register_discovered_services",
                 register,
             ),
@@ -360,12 +361,12 @@ class ServiceDiscoveryToolTest(unittest.IsolatedAsyncioTestCase):
         register = AsyncMock()
         with (
             patch.object(
-                service_discovery,
+                service_catalog_executor,
                 "AsyncSessionLocal",
                 return_value=_SessionContext(),
             ),
             patch.object(
-                service_discovery.server_service,
+                service_catalog_executor.server_service,
                 "get_server_by_name_or_ip",
                 AsyncMock(return_value=server),
             ),
@@ -379,7 +380,7 @@ class ServiceDiscoveryToolTest(unittest.IsolatedAsyncioTestCase):
                 ),
             ),
             patch.object(
-                service_discovery.service_catalog_service,
+                service_catalog_executor.service_catalog_service,
                 "register_discovered_services",
                 register,
             ),

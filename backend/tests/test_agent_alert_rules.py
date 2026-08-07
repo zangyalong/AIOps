@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from app.agents.tools import alert_rules
+from app.operations.executors import alert_rule as alert_rule_executor
 
 
 class _SessionContext:
@@ -25,10 +26,12 @@ class AgentAlertRuleToolTest(unittest.IsolatedAsyncioTestCase):
         )
         with (
             patch.object(
-                alert_rules, "AsyncSessionLocal", return_value=_SessionContext()
+                alert_rule_executor,
+                "AsyncSessionLocal",
+                return_value=_SessionContext(),
             ),
             patch.object(
-                alert_rules.alert_rule_service,
+                alert_rule_executor.alert_rule_service,
                 "create_rule",
                 AsyncMock(return_value=saved),
             ) as create_rule,
@@ -51,7 +54,7 @@ class AgentAlertRuleToolTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_create_alert_rule_rejects_invalid_name_before_database(self) -> None:
         with patch.object(
-            alert_rules.alert_rule_service, "create_rule", AsyncMock()
+            alert_rule_executor.alert_rule_service, "create_rule", AsyncMock()
         ) as create_rule:
             result = await alert_rules.create_alert_rule.ainvoke(
                 {

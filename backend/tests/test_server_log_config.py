@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from app.agents.tools import server_log_config
+from app.operations.executors import log_config as log_config_executor
 
 
 def _snapshot() -> server_log_config.LogConfigSnapshot:
@@ -124,7 +125,7 @@ class ServerLogConfigTest(unittest.IsolatedAsyncioTestCase):
                 "_build_snapshot",
                 AsyncMock(return_value=(SimpleNamespace(name="web01"), snapshot)),
             ),
-            patch.object(server_log_config.asyncssh, "connect") as connect,
+            patch.object(log_config_executor.asyncssh, "connect") as connect,
         ):
             result = await server_log_config.apply_server_log_config.ainvoke(
                 {
@@ -154,10 +155,10 @@ class ServerLogConfigTest(unittest.IsolatedAsyncioTestCase):
                 AsyncMock(return_value=(server, snapshot)),
             ),
             patch.object(
-                server_log_config, "build_connect_params", return_value=params
+                log_config_executor, "build_connect_params", return_value=params
             ),
             patch.object(
-                server_log_config.asyncssh, "connect", return_value=connection
+                log_config_executor.asyncssh, "connect", return_value=connection
             ),
         ):
             result = await server_log_config.apply_server_log_config.ainvoke(
@@ -170,11 +171,11 @@ class ServerLogConfigTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(connection.sftp.content, snapshot.services_map)
         self.assertEqual(
-            connection.sftp.opened_path, server_log_config._REMOTE_TEMP_MAP
+            connection.sftp.opened_path, log_config_executor.REMOTE_TEMP_MAP
         )
         self.assertEqual(
             connection.sftp.rename_call,
-            (server_log_config._REMOTE_TEMP_MAP, server_log_config._REMOTE_MAP),
+            (log_config_executor.REMOTE_TEMP_MAP, log_config_executor.REMOTE_MAP),
         )
-        self.assertEqual(connection.commands, [server_log_config._APPLY_COMMAND])
+        self.assertEqual(connection.commands, [log_config_executor.APPLY_COMMAND])
         self.assertIn("已在 web01 应用 1 个日志源", result)
