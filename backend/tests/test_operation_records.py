@@ -10,6 +10,7 @@ from app.models.operation_record import OperationRecord
 from app.operations.schemas import (
     ApprovalDecision,
     OperationCall,
+    OperationContext,
     OperationSpec,
     PolicyDecision,
     PreparedOperation,
@@ -34,6 +35,12 @@ def _prepared(
             effect="write",
             risk_level="high",
         ),
+        context=OperationContext(
+            actor_id="operator-1",
+            actor_role="operator",
+            run_mode="interactive",
+            environment="production",
+        ),
         decision=PolicyDecision(result=result, reason=reason),
         approval_view={"title": "重启 nginx.service"},
     )
@@ -50,8 +57,13 @@ def _record(
         effect="write",
         risk_level=prepared.spec.risk_level,
         normalized_args=prepared.call.normalized_args(),
-        request_hash=prepared.call.request_hash(prepared.spec),
+        request_hash=prepared.call.request_hash(prepared.spec, prepared.context),
         approval_view=dict(prepared.approval_view or {}),
+        actor_id=prepared.context.actor_id,
+        actor_role=prepared.context.actor_role,
+        run_mode=prepared.context.run_mode,
+        environment=prepared.context.environment,
+        policy_reason=prepared.decision.reason or None,
         status=status,
         expires_at=datetime.now(UTC) + timedelta(minutes=5),
     )
@@ -72,6 +84,22 @@ class OperationCallBindingTest(unittest.TestCase):
         )
 
         self.assertEqual(first.request_hash(spec), second.request_hash(spec))
+        production = OperationContext(
+            actor_id="operator-1",
+            actor_role="operator",
+            run_mode="interactive",
+            environment="production",
+        )
+        non_production = OperationContext(
+            actor_id="operator-1",
+            actor_role="operator",
+            run_mode="interactive",
+            environment="non_production",
+        )
+        self.assertNotEqual(
+            first.request_hash(spec, production),
+            first.request_hash(spec, non_production),
+        )
         self.assertIsInstance(first.args, MappingProxyType)
         with self.assertRaises(TypeError):
             first.args["environment"] = "dev"
@@ -91,10 +119,17 @@ class OperationCallBindingTest(unittest.TestCase):
                 "normalized_args",
                 "request_hash",
                 "approval_view",
+                "actor_id",
+                "actor_role",
+                "run_mode",
+                "environment",
+                "policy_reason",
                 "status",
                 "approved",
                 "second_confirmation",
                 "approval_reason",
+                "approver_id",
+                "approver_role",
                 "decision_at",
                 "started_at",
                 "finished_at",
@@ -154,12 +189,16 @@ class OperationRecordServiceTest(unittest.IsolatedAsyncioTestCase):
                     approved=True,
                     second_confirmation=True,
                     reason="值班员确认",
+                    approver_id="approver-1",
+                    approver_role="approver",
                 ),
             )
 
         self.assertEqual(result.status, "executing")
         self.assertTrue(result.approved)
         self.assertTrue(result.second_confirmation)
+        self.assertEqual(result.approver_id, "approver-1")
+        self.assertEqual(result.approver_role, "approver")
         self.assertIsNotNone(result.started_at)
 
     async def test_denied_and_expired_requests_never_enter_executing(self) -> None:

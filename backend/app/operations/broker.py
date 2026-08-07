@@ -32,7 +32,11 @@ class OperationBroker:
         context: OperationContext,
     ) -> PreparedOperation:
         operation = self._registry.require(call.name)
-        decision = evaluate_operation(operation.spec, context)
+        resolved_context = context.for_call(
+            call,
+            environment_arg=operation.spec.environment_arg,
+        )
+        decision = evaluate_operation(operation.spec, resolved_context)
         approval_view = None
         if decision.result == "approval_required":
             builder = operation.build_approval_view
@@ -42,6 +46,7 @@ class OperationBroker:
         return PreparedOperation(
             call=call,
             spec=operation.spec,
+            context=resolved_context,
             decision=decision,
             approval_view=approval_view,
         )

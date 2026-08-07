@@ -30,7 +30,7 @@ def _now() -> datetime:
 
 
 def _validate_binding(record: OperationRecord, prepared: PreparedOperation) -> None:
-    current_hash = prepared.call.request_hash(prepared.spec)
+    current_hash = prepared.call.request_hash(prepared.spec, prepared.context)
     if (
         record.operation_name != prepared.call.name
         or record.request_hash != current_hash
@@ -68,8 +68,13 @@ async def ensure_pending(
             effect=prepared.spec.effect,
             risk_level=prepared.spec.risk_level,
             normalized_args=prepared.call.normalized_args(),
-            request_hash=prepared.call.request_hash(prepared.spec),
+            request_hash=prepared.call.request_hash(prepared.spec, prepared.context),
             approval_view=dict(prepared.approval_view),
+            actor_id=prepared.context.actor_id,
+            actor_role=prepared.context.actor_role,
+            run_mode=prepared.context.run_mode,
+            environment=prepared.context.environment,
+            policy_reason=prepared.decision.reason or None,
             status="pending_approval",
             expires_at=now + APPROVAL_TTL,
         ),
@@ -81,7 +86,7 @@ async def authorize_execution(
     *,
     chat_run_id: uuid.UUID,
     prepared: PreparedOperation,
-    approval: ApprovalDecision,
+    approval: ApprovalDecision | None,
 ) -> OperationRecord:
     """校验审批绑定并原子推进为 executing；非 allow 决议落为 denied。"""
     record = await operation_record_repository.get_by_run_and_tool_call(
@@ -99,9 +104,13 @@ async def authorize_execution(
         )
 
     now = _now()
-    record.approved = approval.approved
-    record.second_confirmation = approval.second_confirmation
-    record.approval_reason = approval.reason
+    if approval is not None:
+        record.approved = approval.approved
+        record.second_confirmation = approval.second_confirmation
+        record.approval_reason = approval.reason
+        record.approver_id = approval.approver_id
+        record.approver_role = approval.approver_role
+    record.policy_reason = prepared.decision.reason or None
     record.decision_at = now
     if record.expires_at <= now:
         record.status = "expired"

@@ -35,6 +35,23 @@ class OperationRecord(Base, UUIDMixin):
             "'completed', 'failed', 'expired')",
             name="ck_operation_records_status",
         ),
+        CheckConstraint(
+            "actor_role IN ('viewer', 'operator', 'approver', 'admin', 'system')",
+            name="ck_operation_records_actor_role",
+        ),
+        CheckConstraint(
+            "run_mode IN ('interactive', 'unattended')",
+            name="ck_operation_records_run_mode",
+        ),
+        CheckConstraint(
+            "environment IN ('production', 'non_production', 'unknown')",
+            name="ck_operation_records_environment",
+        ),
+        CheckConstraint(
+            "approver_role IS NULL OR approver_role IN "
+            "('viewer', 'operator', 'approver', 'admin', 'system')",
+            name="ck_operation_records_approver_role",
+        ),
         UniqueConstraint(
             "chat_run_id",
             "tool_call_id",
@@ -56,6 +73,11 @@ class OperationRecord(Base, UUIDMixin):
     normalized_args: Mapped[dict] = mapped_column(JSONB, nullable=False)
     request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     approval_view: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    actor_role: Mapped[str] = mapped_column(String(20), nullable=False)
+    run_mode: Mapped[str] = mapped_column(String(20), nullable=False)
+    environment: Mapped[str] = mapped_column(String(30), nullable=False)
+    policy_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     status: Mapped[str] = mapped_column(
         String(30),
@@ -66,6 +88,8 @@ class OperationRecord(Base, UUIDMixin):
     approved: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     second_confirmation: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     approval_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    approver_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    approver_role: Mapped[str | None] = mapped_column(String(20), nullable=True)
     decision_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

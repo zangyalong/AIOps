@@ -305,6 +305,11 @@ def _registered_write_operation(write_spec: WriteToolSpec) -> RegisteredOperatio
             name=write_spec.tool.name,
             effect="write",
             risk_level=write_spec.risk_level,
+            environment_arg=(
+                "environment"
+                if write_spec.tool.name == register_server_services.name
+                else None
+            ),
         ),
         executor=execute,
         build_approval_view=build_approval_view,
@@ -359,7 +364,13 @@ def describe_write_action(tool_call: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(f"{call.name or '未知工具'} 不是已注册的写工具")
     prepared = OPERATION_BROKER.prepare(
         call,
-        OperationContext(write_enabled=True, approval=None),
+        OperationContext(
+            actor_id="catalog-preview",
+            actor_role="admin",
+            run_mode="interactive",
+            environment="unknown",
+            approval=None,
+        ),
     )
     return dict(prepared.approval_view or {})
 

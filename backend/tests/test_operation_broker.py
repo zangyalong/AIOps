@@ -44,6 +44,19 @@ class OperationBrokerTest(unittest.IsolatedAsyncioTestCase):
                             "title": "重启服务",
                         },
                     ),
+                    RegisteredOperation(
+                        spec=OperationSpec(
+                            name="catalog.register",
+                            effect="write",
+                            risk_level="medium",
+                            environment_arg="environment",
+                        ),
+                        executor=execute,
+                        build_approval_view=lambda call: {
+                            "tool_call_id": call.id,
+                            "title": "注册服务",
+                        },
+                    ),
                 ]
             )
         )
@@ -55,7 +68,11 @@ class OperationBrokerTest(unittest.IsolatedAsyncioTestCase):
                 name="service.restart",
                 args={"service": "nginx.service"},
             ),
-            OperationContext(write_enabled=True),
+            OperationContext(
+                actor_id="operator-1",
+                actor_role="operator",
+                run_mode="interactive",
+            ),
         )
 
         self.assertEqual(prepared.decision.result, "approval_required")
@@ -66,11 +83,52 @@ class OperationBrokerTest(unittest.IsolatedAsyncioTestCase):
         call = OperationCall(id="query-1", name="server.query", args={})
         result = await self.broker.execute(
             call,
-            OperationContext(write_enabled=False),
+            OperationContext(
+                actor_id="worker",
+                actor_role="system",
+                run_mode="unattended",
+            ),
         )
 
         self.assertEqual(result, {"ok": True, "name": "server.query"})
         self.assertEqual(self.executed, [call])
+
+    def test_broker_classifies_explicit_environment_before_policy(self) -> None:
+        prepared = self.broker.prepare(
+            OperationCall(
+                id="register-1",
+                name="catalog.register",
+                args={"environment": "staging-cn"},
+            ),
+            OperationContext(
+                actor_id="admin-1",
+                actor_role="admin",
+                run_mode="interactive",
+                auto_approve_non_production_medium=True,
+            ),
+        )
+
+        self.assertEqual(prepared.context.environment, "non_production")
+        self.assertEqual(prepared.decision.result, "allow")
+
+    def test_undeclared_environment_argument_cannot_change_policy_context(self) -> None:
+        prepared = self.broker.prepare(
+            OperationCall(
+                id="restart-1",
+                name="service.restart",
+                args={"service": "nginx.service", "environment": "dev"},
+            ),
+            OperationContext(
+                actor_id="admin-1",
+                actor_role="admin",
+                run_mode="interactive",
+                environment="production",
+                auto_approve_non_production_medium=True,
+            ),
+        )
+
+        self.assertEqual(prepared.context.environment, "production")
+        self.assertEqual(prepared.decision.result, "approval_required")
 
     async def test_execute_rechecks_policy_before_dispatch(self) -> None:
         call = OperationCall(id="restart-1", name="service.restart", args={})
@@ -78,7 +136,11 @@ class OperationBrokerTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(OperationNotAllowed):
             await self.broker.execute(
                 call,
-                OperationContext(write_enabled=True),
+                OperationContext(
+                    actor_id="operator-1",
+                    actor_role="operator",
+                    run_mode="interactive",
+                ),
             )
 
         self.assertEqual(self.executed, [])
@@ -88,7 +150,9 @@ class OperationBrokerTest(unittest.IsolatedAsyncioTestCase):
         result = await self.broker.execute(
             call,
             OperationContext(
-                write_enabled=True,
+                actor_id="operator-1",
+                actor_role="operator",
+                run_mode="interactive",
                 approval=ApprovalDecision(
                     approved=True,
                     second_confirmation=True,

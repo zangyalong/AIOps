@@ -28,10 +28,17 @@ class OperationRecordRead(BaseModel):
     normalized_args: dict
     request_hash: str
     approval_view: dict
+    actor_id: str
+    actor_role: Literal["viewer", "operator", "approver", "admin", "system"]
+    run_mode: Literal["interactive", "unattended"]
+    environment: Literal["production", "non_production", "unknown"]
+    policy_reason: str | None
     status: OperationRecordStatus
     approved: bool | None
     second_confirmation: bool | None
     approval_reason: str | None
+    approver_id: str | None
+    approver_role: str | None
     decision_at: datetime | None
     started_at: datetime | None
     finished_at: datetime | None

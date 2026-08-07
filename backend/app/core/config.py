@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -57,6 +58,13 @@ class Settings(BaseSettings):
 
     # ---- 方向二：后台任务队列（arq + Redis）----
     redis_url: str = "redis://localhost:6379"
+
+    # ---- Operation Broker 策略身份（当前为本地单用户模式）----
+    # 项目尚未接入登录鉴权，因此身份只从服务端配置读取，不能由前端请求自报角色。
+    operation_actor_id: str = "local-user"
+    operation_actor_role: Literal["viewer", "operator", "approver", "admin"] = "admin"
+    # 默认关闭；开启后也只自动放行明确标为非生产环境的 medium 写操作。
+    operation_auto_approve_non_production_medium: bool = False
 
 
 settings = Settings()

@@ -12,6 +12,7 @@ from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.tools.catalog import TOOLS_BY_NAME, WRITE_TOOL_NAMES
+from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models.message import Message
 from app.services import (
@@ -507,6 +508,15 @@ async def prepare_chat_turn(
             "allow_write_tools": True,
             "approval": None,
             "operation_run_id": str(chat_run.id),
+            "operation_context": {
+                "actor_id": settings.operation_actor_id,
+                "actor_role": settings.operation_actor_role,
+                "run_mode": "interactive",
+                "environment": "unknown",
+                "auto_approve_non_production_medium": (
+                    settings.operation_auto_approve_non_production_medium
+                ),
+            },
         },
     )
 
@@ -546,6 +556,8 @@ async def resume_chat_turn(
         "approved": approved,
         "second_confirmation": second_confirmation,
         "reason": reason or "",
+        "approver_id": settings.operation_actor_id,
+        "approver_role": settings.operation_actor_role,
     }
     async for event in _drive_graph(
         graph,

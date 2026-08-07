@@ -256,6 +256,7 @@ class ChatState(TypedDict):
     approval: dict | None
     # 交互式会话绑定持久化 chat_run；无人值守任务为 None，不会产生写操作记录。
     operation_run_id: str | None
+    operation_context: dict
 
 
 class SpecialistState(TypedDict):
@@ -269,6 +270,7 @@ class SpecialistState(TypedDict):
     allow_write_tools: bool
     approval: dict | None
     operation_run_id: str | None
+    operation_context: dict
 
 
 class SupervisorDecision(BaseModel):
@@ -519,6 +521,23 @@ def _tool_message(
     )
 
 
+def _operation_context_from_state(
+    state: SpecialistState,
+    approval: ApprovalDecision | None,
+) -> OperationContext:
+    raw = state.get("operation_context")
+    if raw is None:
+        # 兼容直接调用节点的旧测试/旧 checkpoint；真实入口都会显式传 operation_context。
+        interactive = state.get("allow_write_tools", False)
+        raw = {
+            "actor_id": "legacy-local-user" if interactive else "legacy-worker",
+            "actor_role": "admin" if interactive else "system",
+            "run_mode": "interactive" if interactive else "unattended",
+            "environment": "unknown",
+        }
+    return OperationContext.from_mapping(raw, approval=approval)
+
+
 async def specialist_tools_node(agent_name: AgentName, state: SpecialistState) -> dict:
     """执行当前专家刚提出的工具调用，并回到同一专家继续分析。"""
     t0 = time.monotonic()
@@ -531,11 +550,7 @@ async def specialist_tools_node(agent_name: AgentName, state: SpecialistState) -
     tool_map = {tool.name: tool for tool in assigned_tools}
     operation_broker = build_scoped_operation_broker(assigned_tools)
     approval = ApprovalDecision.from_mapping(state.get("approval"))
-    allow_write = state.get("allow_write_tools", False)
-    operation_context = OperationContext(
-        write_enabled=allow_write,
-        approval=approval,
-    )
+    operation_context = _operation_context_from_state(state, approval)
     results: list[BaseMessage] = []
     raw_run_id = state.get("operation_run_id")
     operation_run_id = uuid.UUID(raw_run_id) if raw_run_id else None
@@ -557,16 +572,17 @@ async def specialist_tools_node(agent_name: AgentName, state: SpecialistState) -
                     operation_context,
                 )
                 if prepared.spec.effect == "write" and operation_run_id is not None:
-                    persisted_approval = approval or ApprovalDecision(
-                        approved=False,
-                        reason=prepared.decision.reason,
-                    )
                     async with AsyncSessionLocal() as db:
+                        await operation_record_service.ensure_pending(
+                            db,
+                            chat_run_id=operation_run_id,
+                            prepared=prepared,
+                        )
                         record = await operation_record_service.authorize_execution(
                             db,
                             chat_run_id=operation_run_id,
                             prepared=prepared,
-                            approval=persisted_approval,
+                            approval=approval,
                         )
                     audit_started = record.status == "executing"
                 if prepared.decision.result != "allow":
@@ -637,7 +653,7 @@ async def approval_node(state: SpecialistState) -> dict:
     """基础设施专家子图中的人工审批门；interrupt 会由父图的 checkpointer 持久化。"""
     last = state["work_messages"][-1]
     assert isinstance(last, AIMessage)
-    context = OperationContext(write_enabled=True, approval=None)
+    context = _operation_context_from_state(state, None)
     pending: list[dict] = []
     raw_run_id = state.get("operation_run_id")
     operation_run_id = uuid.UUID(raw_run_id) if raw_run_id else None
@@ -673,10 +689,7 @@ def route_after_specialist(state: SpecialistState) -> str:
     last = state["work_messages"][-1]
     if not isinstance(last, AIMessage) or not last.tool_calls:
         return END
-    context = OperationContext(
-        write_enabled=state.get("allow_write_tools", False),
-        approval=None,
-    )
+    context = _operation_context_from_state(state, None)
     for tool_call in last.tool_calls:
         if get_operation_spec(tool_call["name"]) is None:
             continue

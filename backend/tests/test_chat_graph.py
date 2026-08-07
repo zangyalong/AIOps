@@ -24,6 +24,23 @@ class _SessionContext:
 
 
 def _initial_state(*, allow_write_tools: bool) -> dict:
+    operation_context = (
+        {
+            "actor_id": "test-admin",
+            "actor_role": "admin",
+            "run_mode": "interactive",
+            "environment": "unknown",
+            "auto_approve_non_production_medium": False,
+        }
+        if allow_write_tools
+        else {
+            "actor_id": "test-worker",
+            "actor_role": "system",
+            "run_mode": "unattended",
+            "environment": "production",
+            "auto_approve_non_production_medium": False,
+        }
+    )
     return {
         "messages": [HumanMessage("检查测试服务器")],
         "work_messages": [],
@@ -33,6 +50,7 @@ def _initial_state(*, allow_write_tools: bool) -> dict:
         "supervisor_rounds": 0,
         "allow_write_tools": allow_write_tools,
         "approval": None,
+        "operation_context": operation_context,
     }
 
 
@@ -417,6 +435,7 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
             _fake_restart_service
         ]
         run_id = uuid.uuid4()
+        ensure_pending = AsyncMock()
         authorize = AsyncMock(return_value=SimpleNamespace(status="executing"))
         finish = AsyncMock()
         state = _initial_state(allow_write_tools=True)
@@ -455,6 +474,11 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(
                 chat_graph.operation_record_service,
+                "ensure_pending",
+                ensure_pending,
+            ),
+            patch.object(
+                chat_graph.operation_record_service,
                 "authorize_execution",
                 authorize,
             ),
@@ -470,6 +494,7 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(_write_calls, [("demo", "nginx")])
+        ensure_pending.assert_awaited_once()
         authorize.assert_awaited_once()
         finish.assert_awaited_once()
         self.assertEqual(result["messages"][0].status, "success")

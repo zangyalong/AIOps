@@ -72,6 +72,13 @@ async def triage_incident(ctx: dict, incident_id: str) -> dict:
                 "allow_write_tools": False,
                 "approval": None,
                 "operation_run_id": None,
+                "operation_context": {
+                    "actor_id": "arq-worker",
+                    "actor_role": "system",
+                    "run_mode": "unattended",
+                    "environment": "production",
+                    "auto_approve_non_production_medium": False,
+                },
             },
             # 同一事件的作业重试也要用新线程；否则 MemorySaver 会把上一次已完成状态叠进来。
             config={

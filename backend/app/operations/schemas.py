@@ -5,13 +5,36 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, Literal
 
 OperationEffect = Literal["read", "write"]
 RiskLevel = Literal["low", "medium", "high", "critical"]
 PolicyResult = Literal["allow", "approval_required", "deny"]
+ActorRole = Literal["viewer", "operator", "approver", "admin", "system"]
+RunMode = Literal["interactive", "unattended"]
+EnvironmentClass = Literal["production", "non_production", "unknown"]
+
+_ACTOR_ROLES = frozenset({"viewer", "operator", "approver", "admin", "system"})
+_RUN_MODES = frozenset({"interactive", "unattended"})
+_PRODUCTION_ENVIRONMENTS = frozenset({"prod", "production"})
+_NON_PRODUCTION_ENVIRONMENTS = frozenset(
+    {"dev", "development", "test", "testing", "qa", "staging", "stage", "nonprod"}
+)
+
+
+def classify_environment(value: object) -> EnvironmentClass:
+    normalized = str(value or "").strip().lower().replace("_", "-")
+    if normalized in _PRODUCTION_ENVIRONMENTS:
+        return "production"
+    prefix = normalized.split("-", 1)[0]
+    if (
+        normalized in _NON_PRODUCTION_ENVIRONMENTS
+        or prefix in _NON_PRODUCTION_ENVIRONMENTS
+    ):
+        return "non_production"
+    return "unknown"
 
 
 def _freeze_json(value: Any) -> Any:
@@ -41,6 +64,7 @@ class OperationSpec:
     name: str
     effect: OperationEffect
     risk_level: RiskLevel
+    environment_arg: str | None = None
 
 
 @dataclass(frozen=True)
@@ -83,14 +107,28 @@ class OperationCall:
         """返回可存入 JSONB、可交给工具校验的独立参数副本。"""
         return _thaw_json(self.args)
 
-    def request_hash(self, spec: OperationSpec) -> str:
-        """对操作名、安全属性和规范化参数计算不可变审批摘要。"""
+    def request_hash(
+        self,
+        spec: OperationSpec,
+        context: OperationContext | None = None,
+    ) -> str:
+        """对操作名、安全属性、参数和可信策略上下文计算不可变审批摘要。"""
         payload = {
             "name": self.name,
             "effect": spec.effect,
             "risk_level": spec.risk_level,
             "args": self.normalized_args(),
         }
+        if context is not None:
+            payload["context"] = {
+                "actor_id": context.actor_id,
+                "actor_role": context.actor_role,
+                "run_mode": context.run_mode,
+                "environment": context.environment,
+                "auto_approve_non_production_medium": (
+                    context.auto_approve_non_production_medium
+                ),
+            }
         encoded = json.dumps(
             payload,
             ensure_ascii=False,
@@ -108,24 +146,79 @@ class ApprovalDecision:
     approved: bool
     second_confirmation: bool = False
     reason: str = ""
+    approver_id: str = "local-user"
+    approver_role: ActorRole = "admin"
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any] | None) -> ApprovalDecision | None:
         if value is None:
             return None
+        raw_role = str(value.get("approver_role") or "admin")
+        approver_role: ActorRole = raw_role if raw_role in _ACTOR_ROLES else "viewer"  # type: ignore[assignment]
         return cls(
             approved=bool(value.get("approved", False)),
             second_confirmation=bool(value.get("second_confirmation", False)),
             reason=str(value.get("reason") or ""),
+            approver_id=str(value.get("approver_id") or "local-user"),
+            approver_role=approver_role,
         )
 
 
 @dataclass(frozen=True)
 class OperationContext:
-    """策略判断所需的最小运行上下文。"""
+    """由可信调用方提供的操作者、环境和运行模式。"""
 
-    write_enabled: bool
+    actor_id: str = "anonymous"
+    actor_role: ActorRole = "viewer"
+    run_mode: RunMode = "unattended"
+    environment: EnvironmentClass = "unknown"
+    auto_approve_non_production_medium: bool = False
     approval: ApprovalDecision | None = None
+
+    @classmethod
+    def from_mapping(
+        cls,
+        value: Mapping[str, Any] | None,
+        *,
+        approval: ApprovalDecision | None = None,
+    ) -> OperationContext:
+        raw = value or {}
+        raw_role = str(raw.get("actor_role") or "viewer")
+        actor_role: ActorRole = raw_role if raw_role in _ACTOR_ROLES else "viewer"  # type: ignore[assignment]
+        raw_mode = str(raw.get("run_mode") or "unattended")
+        run_mode: RunMode = raw_mode if raw_mode in _RUN_MODES else "unattended"  # type: ignore[assignment]
+        raw_environment = str(raw.get("environment") or "unknown")
+        environment: EnvironmentClass = (
+            raw_environment
+            if raw_environment in {"production", "non_production", "unknown"}
+            else classify_environment(raw_environment)
+        )  # type: ignore[assignment]
+        return cls(
+            actor_id=str(raw.get("actor_id") or "anonymous"),
+            actor_role=actor_role,
+            run_mode=run_mode,
+            environment=environment,
+            auto_approve_non_production_medium=bool(
+                raw.get("auto_approve_non_production_medium", False)
+            ),
+            approval=approval,
+        )
+
+    def for_call(
+        self,
+        call: OperationCall,
+        *,
+        environment_arg: str | None,
+    ) -> OperationContext:
+        if environment_arg is None:
+            return self
+        explicit_environment = call.args.get(environment_arg)
+        if explicit_environment is None:
+            return self
+        return replace(
+            self,
+            environment=classify_environment(explicit_environment),
+        )
 
 
 @dataclass(frozen=True)
@@ -142,5 +235,6 @@ class PreparedOperation:
 
     call: OperationCall
     spec: OperationSpec
+    context: OperationContext
     decision: PolicyDecision
     approval_view: Mapping[str, Any] | None = None
