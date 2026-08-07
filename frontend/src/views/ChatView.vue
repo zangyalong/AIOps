@@ -558,16 +558,33 @@ onBeforeUnmount(() => {
     <div class="chat-main">
       <div class="chat-header">
         <div class="header-row">
-          <h1>运维助手</h1>
+          <div>
+            <span class="view-kicker">AI OPERATIONS / COPILOT</span>
+            <h1>运维助手</h1>
+          </div>
+          <span class="agent-state"><i /> Agent 就绪</span>
           <button type="button" class="new-chat" @click="newConversation">新对话</button>
         </div>
       </div>
 
       <div ref="messagesEl" class="messages">
         <div class="messages-content">
-          <p v-if="timeline.length === 0" class="hint">
-            试着问一句"现在有哪些服务器？"
-          </p>
+          <div v-if="timeline.length === 0" class="chat-welcome">
+            <div class="welcome-signal" aria-hidden="true">
+              <span />
+              <svg viewBox="0 0 180 48" fill="none">
+                <path d="M2 26h36l8-17 13 33 12-27 10 11h25l7-10 9 19 8-9h48" />
+              </svg>
+            </div>
+            <span class="welcome-label">安全、可审计的运维入口</span>
+            <h2>今天要检查什么？</h2>
+            <p>描述目标和现象，我会先查询现状；涉及变更的操作会停下来等你确认。</p>
+            <div class="prompt-suggestions" aria-label="示例问题">
+              <button type="button" @click="input = '现在有哪些服务器？'">盘点服务器</button>
+              <button type="button" @click="input = '检查当前有哪些活跃告警'">查看活跃告警</button>
+              <button type="button" @click="input = '帮我分析最近的运维事件'">分析近期事件</button>
+            </div>
+          </div>
           <template v-for="item in timeline" :key="item.key">
             <div v-if="item.kind === 'message'" class="message" :class="item.role">
               <MarkdownContent
@@ -614,7 +631,7 @@ onBeforeUnmount(() => {
         <form class="input-row" @submit.prevent="send">
           <input
             v-model="input"
-            :placeholder="pendingApproval ? '请先处理上面的确认…' : '输入消息…'"
+            :placeholder="pendingApproval ? '请先处理上面的确认…' : '描述目标、服务器或异常现象…'"
             :disabled="sending || !!pendingApproval"
           />
           <button type="submit" :disabled="sending || !!pendingApproval">发送</button>
@@ -1081,5 +1098,238 @@ h1 {
 .input-row button:disabled {
   opacity: 0.6;
   cursor: default;
+}
+
+/* 视觉重塑：把对话区做成运维工作流，而不是通用聊天窗口。 */
+.chat-view,
+.chat-main,
+.messages,
+.input-panel {
+  background: var(--color-surface);
+}
+
+.chat-header {
+  padding: 1.35rem 2rem 0;
+  background: rgba(249, 251, 252, 0.94);
+}
+
+.header-row {
+  max-width: 860px;
+  margin-bottom: 0;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.view-kicker {
+  display: block;
+  margin-bottom: 0.18rem;
+  color: var(--color-accent);
+  font-family: var(--font-data);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+}
+
+.header-row h1 {
+  font-family: var(--font-display);
+  font-size: 1.62rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.agent-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+  color: var(--color-text-muted);
+  font-size: 0.73rem;
+}
+
+.agent-state i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-status-active);
+  box-shadow: 0 0 0 4px rgba(35, 133, 109, 0.1);
+}
+
+.new-chat {
+  margin-left: 1rem;
+  min-height: 38px;
+  border-color: var(--color-border-strong);
+  background: transparent;
+  font-weight: 500;
+}
+
+.messages {
+  padding: 0 2rem;
+  scrollbar-color: #acb8bd transparent;
+}
+
+.messages-content {
+  max-width: 860px;
+  padding-top: 1.15rem;
+  gap: 0.9rem;
+}
+
+.chat-welcome {
+  width: min(100%, 620px);
+  margin: auto;
+  padding: 2.5rem 1rem 4rem;
+  text-align: center;
+}
+
+.welcome-signal {
+  position: relative;
+  width: 84px;
+  height: 84px;
+  margin: 0 auto 1.4rem;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 0 0 8px rgba(22, 137, 154, 0.045);
+}
+
+.welcome-signal::before,
+.welcome-signal::after {
+  content: '';
+  position: absolute;
+  background: var(--color-border);
+}
+
+.welcome-signal::before { width: 112px; height: 1px; }
+.welcome-signal::after { width: 1px; height: 112px; }
+
+.welcome-signal span {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  background: var(--color-accent);
+  box-shadow: 0 0 0 5px rgba(22, 137, 154, 0.14);
+}
+
+.welcome-signal svg {
+  position: absolute;
+  z-index: 1;
+  width: 116px;
+}
+
+.welcome-signal path {
+  stroke: var(--color-accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.welcome-label {
+  color: var(--color-accent);
+  font-family: var(--font-data);
+  font-size: 0.65rem;
+  letter-spacing: 0.1em;
+}
+
+.chat-welcome h2 {
+  margin: 0.45rem 0 0.55rem;
+  font-family: var(--font-display);
+  font-size: clamp(1.9rem, 4vw, 2.45rem);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.chat-welcome p {
+  max-width: 490px;
+  margin: 0 auto;
+  color: var(--color-text-muted);
+  line-height: 1.75;
+}
+
+.prompt-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 1.5rem;
+}
+
+.prompt-suggestions button {
+  min-height: 38px;
+  padding: 0.45rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  color: var(--color-text-muted);
+  background: rgba(255, 255, 255, 0.75);
+  font-size: 0.78rem;
+  transition: color 150ms ease, border-color 150ms ease, transform 150ms ease;
+}
+
+.prompt-suggestions button:hover {
+  color: var(--color-accent);
+  border-color: rgba(22, 137, 154, 0.55);
+  transform: translateY(-1px);
+}
+
+.message.user {
+  padding: 0.65rem 0.9rem;
+  border: 1px solid #c9e2e6;
+  border-radius: 11px 11px 3px 11px;
+  background: #e5f2f4;
+}
+
+.tool-line {
+  padding: 0.38rem 0.6rem;
+  border-left: 2px solid var(--color-accent);
+  color: var(--color-text-muted);
+  background: linear-gradient(90deg, rgba(22, 137, 154, 0.07), transparent 75%);
+  font-family: var(--font-data);
+  font-size: 0.74rem;
+}
+
+.input-panel {
+  padding: 0.75rem 2rem 1.35rem;
+}
+
+.input-row {
+  max-width: 860px;
+  gap: 8px;
+  padding: 6px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 8px 28px rgba(16, 39, 51, 0.08);
+}
+
+.input-row input {
+  min-height: 42px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.input-row button {
+  min-width: 74px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+@media (max-width: 760px) {
+  .chat-header,
+  .messages,
+  .input-panel {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .agent-state {
+    display: none;
+  }
+
+  .chat-welcome {
+    padding-top: 2rem;
+  }
 }
 </style>

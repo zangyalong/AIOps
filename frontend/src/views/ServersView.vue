@@ -293,10 +293,11 @@ const sortedServers = computed(() =>
   <div class="servers-view">
     <header class="view-header">
       <div>
+        <span class="view-kicker">INFRASTRUCTURE / NODES</span>
         <h1>服务器</h1>
         <p class="subtitle">管理被 AIOMS 纳管的服务器，配置 SSH 后可测试连通性</p>
       </div>
-      <button type="button" class="btn-primary" @click="openCreateModal">+ 新增服务器</button>
+      <button type="button" class="btn-primary" @click="openCreateModal">新增服务器</button>
     </header>
 
     <p v-if="loading" class="hint">加载中…</p>
@@ -784,6 +785,135 @@ label {
 
   .modal-actions button {
     width: 100%;
+  }
+}
+
+/* 页面视觉层：信息密度来自对齐与分隔，不依赖堆叠阴影。 */
+.servers-view {
+  max-width: 1180px;
+  padding: 2.25rem clamp(1.25rem, 3vw, 2.75rem) 3rem;
+}
+
+.view-header {
+  align-items: flex-end;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.view-kicker {
+  display: block;
+  margin-bottom: 0.18rem;
+  color: var(--color-accent);
+  font-family: var(--font-data);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+}
+
+h1 {
+  font-family: var(--font-display);
+  font-size: 1.82rem;
+  font-weight: 650;
+  letter-spacing: 0.005em;
+}
+
+.subtitle {
+  margin-top: 0.32rem;
+  font-size: 0.84rem;
+}
+
+.btn-primary {
+  min-height: 40px;
+  padding-inline: 1rem;
+  border: 1px solid var(--color-accent);
+  border-radius: 8px;
+  box-shadow: 0 5px 14px rgba(22, 137, 154, 0.15);
+}
+
+.btn-primary:first-letter {
+  letter-spacing: 0;
+}
+
+.server-grid {
+  grid-template-columns: repeat(auto-fill, minmax(305px, 1fr));
+  gap: 12px;
+}
+
+.server-card {
+  position: relative;
+  padding: 1.2rem 1.25rem 1.1rem;
+  border-color: var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface-strong);
+  box-shadow: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.server-card:hover {
+  border-color: var(--color-border-strong);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-2px);
+}
+
+.card-top h2 {
+  font-family: var(--font-display);
+  font-size: 1.12rem;
+  letter-spacing: 0.015em;
+}
+
+.status-badge {
+  padding: 0.16rem 0.46rem;
+  border: 1px solid color-mix(in srgb, var(--s, var(--color-border-strong)) 25%, transparent);
+  border-radius: 5px;
+  font-family: var(--font-data);
+  font-size: 0.64rem;
+}
+
+.meta {
+  margin-top: 1rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid #e7ecef;
+}
+
+.meta dt {
+  font-size: 0.76rem;
+}
+
+.meta dd {
+  font-family: var(--font-data);
+  font-size: 0.76rem;
+}
+
+.card-actions {
+  padding-top: 0.85rem;
+  border-top: 1px solid #e7ecef;
+}
+
+.btn-ghost {
+  min-height: 36px;
+  border-color: var(--color-border);
+  border-radius: 7px;
+  background: transparent;
+}
+
+.modal-backdrop {
+  background: rgba(8, 28, 38, 0.5);
+  backdrop-filter: blur(4px);
+}
+
+.modal {
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 14px;
+}
+
+@media (max-width: 680px) {
+  .servers-view {
+    padding: 1.4rem 1rem 2rem;
+  }
+
+  .view-header {
+    align-items: flex-start;
   }
 }
 </style>

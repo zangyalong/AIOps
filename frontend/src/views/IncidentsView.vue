@@ -158,6 +158,7 @@ async function resolve(incident: Incident) {
   <div class="incidents-view">
     <header class="view-header">
       <div>
+        <span class="view-kicker">OPERATIONS / INCIDENTS</span>
         <h1>事件中心</h1>
         <p class="subtitle">查看告警归组后的运维事件、AI 诊断结论与处理状态</p>
       </div>
@@ -805,6 +806,124 @@ button:disabled {
 
   .diagnosis-state {
     order: 3;
+  }
+}
+
+.incidents-view {
+  max-width: 1180px;
+  padding: 2.25rem clamp(1.25rem, 3vw, 2.75rem) 3rem;
+}
+
+.view-header {
+  align-items: flex-end;
+  margin-bottom: 0;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.view-kicker {
+  display: block;
+  margin-bottom: 0.18rem;
+  color: var(--color-accent);
+  font-family: var(--font-data);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+}
+
+h1 {
+  font-family: var(--font-display);
+  font-size: 1.82rem;
+  font-weight: 650;
+  letter-spacing: 0.005em;
+}
+
+.subtitle {
+  margin-top: 0.32rem;
+  font-size: 0.84rem;
+}
+
+.btn-refresh,
+.btn-secondary,
+.btn-resolve {
+  min-height: 38px;
+  border-radius: 7px;
+  font-weight: 500;
+}
+
+.filter-bar {
+  gap: 0;
+  margin-bottom: 1.25rem;
+  padding: 0.85rem 0 0.9rem;
+}
+
+.filter-button {
+  min-height: 34px;
+  border-radius: 0;
+  color: var(--color-text-muted);
+  background: transparent;
+}
+
+.filter-button + .filter-button {
+  border-left-color: var(--color-border);
+}
+
+.filter-button.active {
+  border-color: transparent;
+  border-bottom-color: var(--color-accent);
+  color: var(--color-accent);
+  background: transparent;
+  box-shadow: inset 0 -2px var(--color-accent);
+}
+
+.filter-count {
+  font-family: var(--font-data);
+}
+
+.incident-list {
+  gap: 10px;
+}
+
+.incident-card {
+  border-color: var(--color-border);
+  border-radius: 9px;
+  background: var(--color-surface-strong);
+  box-shadow: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.incident-card:hover,
+.incident-card:focus-visible {
+  border-color: var(--color-border-strong);
+  box-shadow: var(--shadow-sm);
+  transform: translateX(2px);
+}
+
+.incident-heading h2 {
+  font-family: var(--font-display);
+  letter-spacing: 0.01em;
+}
+
+.severity-badge,
+.status-badge {
+  border-radius: 5px;
+  font-family: var(--font-data);
+  font-size: 0.62rem;
+}
+
+.incident-meta {
+  font-family: var(--font-data);
+  font-size: 0.68rem;
+}
+
+.drawer-backdrop {
+  background: rgba(8, 28, 38, 0.45);
+  backdrop-filter: blur(3px);
+}
+
+@media (max-width: 780px) {
+  .incidents-view {
+    padding: 1.4rem 1rem 2rem;
   }
 }
 </style>

@@ -1,70 +1,155 @@
 :root {
-  font: 15px/1.6 system-ui, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  /* 锁死浅色：这个项目就是一套手写的浅色设计系统，不写 "light dark"——否则系统开深色模式时
-     浏览器会用深色原生样式画 input/button，跟我们的浅色变量打架（输入框发黑、文字看不见）。 */
+  font: 15px/1.55 'Avenir Next', 'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   color-scheme: light;
 
-  /* 简约配色：一个中性灰阶 + 一个强调色 + 状态色，全站就这一套，别再散着写死颜色 */
-  --color-bg: #f4f5f7;
-  --color-surface: #ffffff;
-  --color-border: #e3e5e9;
-  --color-text: #1c1d22;
-  --color-text-muted: #6b6f76;
-  --color-accent: #4f7dd9;
-  --color-accent-hover: #416fc8;
+  /* AIOMS「日光控制室」：冷静的工作面 + 明确的运行信号。 */
+  --color-bg: #eef2f4;
+  --color-surface: #f9fbfc;
+  --color-surface-strong: #ffffff;
+  --color-surface-inset: #e8eef1;
+  --color-border: #d8e0e4;
+  --color-border-strong: #becbd1;
+  --color-text: #14232c;
+  --color-text-muted: #687780;
+  --color-accent: #16899a;
+  --color-accent-hover: #0f7180;
   --color-accent-contrast: #ffffff;
-  --color-interactive-bg: #e7effe;
+  --color-interactive-bg: #dff0f2;
 
-  --color-status-active: #22c55e;
-  --color-status-unreachable: #ef4444;
-  --color-status-unconfigured: #f59e0b;
-  --color-status-untested: #b0b4bb;
+  --color-status-active: #23856d;
+  --color-status-unreachable: #cf4b48;
+  --color-status-unconfigured: #d9872c;
+  --color-status-untested: #8b989f;
 
-  --radius: 10px;
+  --font-display: 'Avenir Next Condensed', 'Arial Narrow', 'PingFang SC', sans-serif;
+  --font-body: 'Avenir Next', 'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-data: 'SFMono-Regular', 'Cascadia Code', 'Roboto Mono', monospace;
+
+  --radius: 12px;
   --radius-sm: 7px;
-  --shadow-sm: 0 1px 2px rgba(24, 24, 27, 0.04), 0 1px 3px rgba(24, 24, 27, 0.06);
-  --shadow-md: 0 4px 12px rgba(24, 24, 27, 0.08), 0 2px 4px rgba(24, 24, 27, 0.04);
-  --shadow-lg: 0 12px 32px rgba(24, 24, 27, 0.16);
+  --shadow-sm: 0 1px 2px rgba(16, 39, 51, 0.05), 0 6px 18px rgba(16, 39, 51, 0.04);
+  --shadow-md: 0 2px 4px rgba(16, 39, 51, 0.06), 0 14px 34px rgba(16, 39, 51, 0.09);
+  --shadow-lg: 0 24px 70px rgba(11, 31, 41, 0.22);
 }
 
 * {
   box-sizing: border-box;
 }
 
-body {
-  margin: 0;
-  background: var(--color-bg);
-  color: var(--color-text);
+html,
+body,
+#app {
+  width: 100%;
+  min-width: 320px;
+  height: 100%;
 }
 
-/* 全局表单控件样式：所有 input/select/textarea 都是浅色底、统一圆角，
-   从根上避免"某个组件忘了设背景色 → 深色模式下变黑框"的问题重演。 */
+body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-variant-numeric: tabular-nums;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
 input,
 select,
 textarea {
   font: inherit;
+}
+
+input,
+select,
+textarea {
+  min-height: 40px;
   color: var(--color-text);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
+  background: var(--color-surface-strong);
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-sm);
-  padding: 0.55rem 0.7rem;
+  padding: 0.58rem 0.72rem;
   outline: none;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+textarea {
+  line-height: 1.55;
+  resize: vertical;
+}
+
+input:hover,
+select:hover,
+textarea:hover {
+  border-color: #9cabb2;
 }
 
 input:focus,
 select:focus,
 textarea:focus {
   border-color: var(--color-accent);
-  box-shadow: 0 0 0 3px rgba(79, 125, 217, 0.12);
+  box-shadow: 0 0 0 3px rgba(22, 137, 154, 0.14);
+  background: #ffffff;
 }
 
-input::placeholder {
-  color: var(--color-text-muted);
-  opacity: 0.7;
+input::placeholder,
+textarea::placeholder {
+  color: #8c989e;
+  opacity: 1;
 }
 
 button {
-  font: inherit;
   cursor: pointer;
+}
+
+button:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid #3ab0be;
+  outline-offset: 3px;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+code,
+pre,
+kbd,
+samp {
+  font-family: var(--font-data);
+}
+
+::selection {
+  color: #ffffff;
+  background: var(--color-accent);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: #acb8bd;
+  background-clip: padding-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

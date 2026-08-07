@@ -62,18 +62,21 @@ onMounted(refresh)
 
 <style scoped>
 .conversation-list {
-  width: 230px;
+  width: 242px;
   flex-shrink: 0;
   height: 100%;
   border-right: 1px solid var(--color-border);
-  padding: 1.5rem 1rem 1rem 2rem;
+  padding: 1.45rem 0.8rem 1rem 1rem;
   overflow-y: auto;
-  background: #f8f9fa;
+  background: #f1f5f6;
 }
 
 h2 {
-  font-size: 0.85rem;
-  font-weight: 500;
+  padding: 0 0.55rem;
+  font-family: var(--font-data);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
   color: var(--color-text-muted);
   margin: 0 0 0.75rem;
 }
@@ -97,7 +100,9 @@ li {
   align-items: center;
   gap: 0.3rem;
   padding: 0.5rem 0.6rem;
-  border-radius: var(--radius);
+  min-height: 40px;
+  border: 1px solid transparent;
+  border-radius: 8px;
   cursor: pointer;
   font-size: 0.9rem;
 }
@@ -137,6 +142,7 @@ li:hover .del-btn {
 }
 
 li.active {
+  border-color: #c6dfe3;
   background: var(--color-interactive-bg);
   color: var(--color-text);
   font-weight: 500;
@@ -145,5 +151,17 @@ li.active {
 /* 选中项是深色底，删除按钮悬停时给个浅色底而不是黑色 */
 li.active:hover .del-btn:hover {
   background: rgba(255, 255, 255, 0.25);
+}
+
+@media (max-width: 960px) {
+  .conversation-list {
+    width: 190px;
+  }
+}
+
+@media (max-width: 640px) {
+  .conversation-list {
+    display: none;
+  }
 }
 </style>

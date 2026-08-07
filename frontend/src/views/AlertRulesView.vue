@@ -198,6 +198,7 @@ onMounted(loadRules)
   <div class="alert-rules-view">
     <header class="view-header">
       <div>
+        <span class="view-kicker">OBSERVABILITY / ALERT POLICY</span>
         <h1>预警规则</h1>
         <p>手动配置 PromQL 判定条件；Prometheus 负责评估，Alertmanager 负责通知和告警分发。</p>
       </div>
@@ -832,6 +833,139 @@ code {
 
   .wide-field {
     grid-column: auto;
+  }
+}
+
+.alert-rules-view {
+  width: min(1240px, calc(100% - clamp(2rem, 6vw, 5.5rem)));
+  padding: 2.25rem 0 3rem;
+}
+
+.view-header {
+  align-items: flex-end;
+  margin-bottom: 1.25rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.view-kicker {
+  display: block;
+  margin-bottom: 0.18rem;
+  color: var(--color-accent);
+  font-family: var(--font-data);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+}
+
+h1 {
+  font-family: var(--font-display);
+  font-size: 1.82rem;
+  font-weight: 650;
+  letter-spacing: 0.005em;
+}
+
+.view-header p,
+.panel-heading p {
+  color: var(--color-text-muted);
+  font-size: 0.84rem;
+}
+
+.btn-primary,
+.btn-secondary {
+  min-height: 40px;
+  border-radius: 7px;
+}
+
+.btn-primary {
+  box-shadow: 0 5px 14px rgba(22, 137, 154, 0.15);
+}
+
+.summary-grid {
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface-strong);
+}
+
+.summary-grid article {
+  min-height: 104px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.summary-grid article + article {
+  border-left: 1px solid var(--color-border);
+}
+
+.summary-grid article span {
+  color: var(--color-text-muted);
+  font-family: var(--font-data);
+  font-size: 0.65rem;
+  letter-spacing: 0.04em;
+}
+
+.summary-grid article strong {
+  font-family: var(--font-display);
+  font-size: 2rem;
+  font-weight: 550;
+}
+
+.rules-panel {
+  border-color: var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface-strong);
+  box-shadow: none;
+}
+
+.rule-card {
+  border-radius: 8px;
+  background: #fbfcfd;
+}
+
+.rule-card code,
+.rule-meta {
+  font-family: var(--font-data);
+}
+
+.state-badge,
+.severity-badge {
+  border-radius: 5px;
+  font-family: var(--font-data);
+  font-size: 0.62rem;
+}
+
+.modal-backdrop {
+  background: rgba(8, 28, 38, 0.5);
+  backdrop-filter: blur(4px);
+}
+
+.rule-editor {
+  border-radius: 14px;
+}
+
+@media (max-width: 800px) {
+  .alert-rules-view {
+    width: calc(100% - 2rem);
+    padding-top: 1.4rem;
+  }
+
+  .summary-grid article:nth-child(3) {
+    border-left: 0;
+  }
+
+  .summary-grid article:nth-child(n + 3) {
+    border-top: 1px solid var(--color-border);
+  }
+}
+
+@media (max-width: 520px) {
+  .summary-grid article + article {
+    border-left: 0;
+    border-top: 1px solid var(--color-border);
   }
 }
 </style>

@@ -790,10 +790,11 @@ function serverStatusLabel(server: Server): string {
   <div class="services-view">
     <header class="view-header">
       <div>
+        <span class="view-kicker">CATALOG / RUNTIME SERVICES</span>
         <h1>服务目录</h1>
         <p class="subtitle">按服务器查看服务状态、关键指标和近期日志</p>
       </div>
-      <button type="button" class="btn-primary" @click="openCreateService">+ 新增服务</button>
+      <button type="button" class="btn-primary" @click="openCreateService">新增服务</button>
     </header>
 
     <p v-if="error" class="error" role="alert">{{ error }}</p>
@@ -2644,6 +2645,148 @@ button:disabled {
 
   .log-row {
     grid-template-columns: 76px 38px minmax(0, 1fr);
+  }
+}
+
+.services-view {
+  padding: 2.25rem clamp(1.25rem, 3vw, 2.75rem) 2rem;
+}
+
+.view-header {
+  align-items: flex-end;
+  margin-bottom: 1.25rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.view-kicker {
+  display: block;
+  margin-bottom: 0.18rem;
+  color: var(--color-accent);
+  font-family: var(--font-data);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+}
+
+h1 {
+  font-family: var(--font-display);
+  font-size: 1.82rem;
+  font-weight: 650;
+  letter-spacing: 0.005em;
+}
+
+.subtitle {
+  margin-top: 0.32rem;
+  font-size: 0.84rem;
+}
+
+.btn-primary,
+.btn-secondary,
+.btn-ghost {
+  min-height: 38px;
+  border-radius: 7px;
+}
+
+.btn-primary {
+  box-shadow: 0 5px 14px rgba(22, 137, 154, 0.15);
+}
+
+.directory-layout {
+  gap: 12px;
+}
+
+.directory-menu-panel {
+  border-color: var(--color-border);
+  border-radius: 10px;
+  background: #f1f5f6;
+  box-shadow: none;
+}
+
+.directory-menu-panel > .panel-heading h2 {
+  font-family: var(--font-display);
+  letter-spacing: 0.01em;
+}
+
+.directory-search {
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.server-menu-item,
+.service-submenu-item {
+  border-radius: 7px;
+}
+
+.server-menu-item.active,
+.service-submenu-item.active {
+  border-color: #c5dfe3;
+  background: var(--color-interactive-bg);
+}
+
+.service-detail,
+.service-placeholder {
+  border-color: var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface-strong);
+  box-shadow: none;
+}
+
+.detail-header h2,
+.section-heading h3,
+.card-heading h3 {
+  font-family: var(--font-display);
+  letter-spacing: 0.01em;
+}
+
+.server-summary-grid,
+.server-metric-grid,
+.instance-grid {
+  gap: 10px;
+}
+
+.server-summary-card,
+.server-metric-card,
+.instance-card,
+.detail-section {
+  border-color: var(--color-border);
+  border-radius: 9px;
+  box-shadow: none;
+}
+
+.server-summary-card strong,
+.server-metric-card strong,
+.metric-value {
+  font-family: var(--font-display);
+  font-weight: 550;
+}
+
+.runtime-status,
+.server-state,
+.panel-count,
+.server-address-badge {
+  font-family: var(--font-data);
+  font-size: 0.65rem;
+}
+
+.log-row,
+.rule-expression,
+.server-menu-address,
+.server-service-ports {
+  font-family: var(--font-data);
+}
+
+.modal-backdrop {
+  background: rgba(8, 28, 38, 0.5);
+  backdrop-filter: blur(4px);
+}
+
+.modal {
+  border-radius: 14px;
+}
+
+@media (max-width: 700px) {
+  .services-view {
+    padding: 1.4rem 1rem 1.2rem;
   }
 }
 </style>
