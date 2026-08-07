@@ -65,10 +65,10 @@ async def service_control_allowlist_for_server(
     return ",".join(
         sorted(
             {
-                instance.runtime_name
+                f"{instance.runtime_type}:{instance.runtime_name}"
                 for instance in instances
                 if instance.control_enabled
-                and instance.runtime_type == "systemd"
+                and instance.runtime_type in {"systemd", "docker"}
                 and instance.runtime_name
             }
         )

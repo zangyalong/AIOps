@@ -112,7 +112,7 @@ uv run python scripts/migrate_chat_runs.py
 | `GRAFANA_BASE_URL`              | `http://localhost:3000`    | 生成 Explore 链接                                     |
 | `REDIS_URL`                     | `redis://localhost:6379`   | arq broker                                            |
 | `OBS_HTTP_TIMEOUT`              | `10`                       | 可观测性 HTTP 请求超时秒数                            |
-| `SSH_SERVICE_CONTROL_ALLOWLIST` | 空                           | 生成目标部署包时写入的初始 root 控制白名单；完整 `.service` 单元用逗号分隔 |
+| `SSH_SERVICE_CONTROL_ALLOWLIST` | 空                           | 生成目标部署包时写入的初始 root 控制白名单；使用 `systemd:unit.service` / `docker:container`，逗号分隔 |
 | `SSH_KEY_DIR`                   | 仓库根目录`ssh/`           | 生成和读取目标服务器 SSH 私钥                         |
 | `TARGET_SERVER_SCRIPTS_DIR`     | `scripts/target-server/`   | 生成目标服务器一键安装包的固定脚本目录                |
 
@@ -135,8 +135,9 @@ psql -d aioms -v ON_ERROR_STOP=1 \
   -f scripts/database/20260806_remove_server_deploy_ssh_identity.sql
 ```
 
-`POST /servers/{server_id}/deployment-bundle` 会在后端临时目录生成不含私钥的安装包并直接下载，
-响应完成后清理临时配置和数据库凭据。后端运行机器需要有 Bash、`ssh-keygen`、`tar` 和
+`POST /servers/{server_id}/deployment-bundle` 会先删除当前服务器固定命名的旧公私钥并重新生成密钥对，
+再在后端临时目录生成不含私钥的安装包并直接下载；若打包失败会恢复原密钥对。响应完成后清理
+临时配置和数据库凭据。后端运行机器需要有 Bash、`ssh-keygen`、`tar` 和
 `sha256sum`（macOS 可使用 `shasum`），并且 `SSH_KEY_DIR` 对后端进程可写。
 
 首次安装包会把 root 所有的固定部署程序安装到 `/opt/aioms-target-server`。此后页面按钮或高风险
@@ -268,7 +269,7 @@ tests/             # 不依赖外部服务的自动化测试
 - Docker、监听 socket 和按 PID 只读查询在 SSH 端会改写为 `sudo -n -- /usr/local/sbin/aioms-*-read ...`；目标服务器的 root 所有包装脚本会再次校验子命令、容器名和 PID，sudoers 只授权这两个网关，不开放任意 `sudo docker/ss/ps`。
 - `register_server_services` 是服务目录写工具：审批卡片列出准备登记的服务器、环境和运行时映射；批准后会重新扫描核对对象仍然存在，再幂等写入逻辑服务与部署实例。
 - `preview_server_log_config` 是只读 Tool，只从服务目录生成 systemd/Docker 日志映射、摘要和警告，不连接目标服务器；`apply_server_log_config` 是高风险写 Tool，两步确认后重新计算并核对摘要，使用同一非 root AIOMS 身份上传到固定暂存路径，再调用固定 `apply-alloy` 网关校验、安装并重载 Alloy。
-- `start_service` 是中风险写工具，审批卡片确认一次；`stop_service`、`restart_service` 是高风险写工具，审批卡片后还必须在详情弹窗二次确认，后端也会校验二次确认标记。三者都要求服务目录对应 systemd 实例已开启“控制授权”，并通过同一非 root AIOMS 身份调用固定 `aioms-service-control` 网关。
+- `start_service` 是中风险写工具，审批卡片确认一次；`stop_service`、`restart_service` 是高风险写工具，审批卡片后还必须在详情弹窗二次确认，后端也会校验二次确认标记。三者根据服务目录中的运行时身份统一控制 systemd 服务或 Docker 容器，要求对应实例已开启“控制授权”，并通过同一非 root AIOMS 身份调用固定 `aioms-service-control` 网关。
 - 服务目录开关通过固定 `aioms-service-policy add/remove` 网关同步目标服务器 root 白名单；远端成功后才保存数据库状态，数据库保存失败时会尽力回滚远端。策略网关不执行启停、不接受文件路径或 Shell，服务发现和目录注册也不会自动调用它。
 - 已授权实例不能直接修改服务器/运行时身份或删除，逻辑服务也不能级联删除仍授权的实例；必须先关闭授权，让目标服务器移除白名单后再修改目录。
 
@@ -281,6 +282,10 @@ psql -d aioms -v ON_ERROR_STOP=1 \
 # 新策略同步网关上线时，关闭无法证明已同步的旧授权；安装网关后由用户重新开启。
 psql -d aioms -v ON_ERROR_STOP=1 \
   -f scripts/database/20260807_reset_legacy_service_control_authorizations.sql
+
+# 将控制授权约束从仅 systemd 扩展为 systemd 与 Docker。
+psql -d aioms -v ON_ERROR_STOP=1 \
+  -f scripts/database/20260807_add_docker_service_control_authorization.sql
 ```
 - `create_alert_rule` 是中风险写工具：人工审批后复用预警规则页面相同的字段校验、PromQL 校验、数据库写入和 Prometheus 热重载流程。
 - 工具执行节点会再次校验审批决议和高风险二次确认，不能只靠模型是否正确路由；后台 worker 设置 `allow_write_tools=False`，从模型绑定和执行节点两层禁止写工具。

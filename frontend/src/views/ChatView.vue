@@ -108,7 +108,7 @@ const HIGH_RISK_TOOLS = new Set([
 function historyApprovalCommand(name: string, args: Record<string, unknown>): string {
   if (name === 'start_service' || name === 'stop_service' || name === 'restart_service') {
     const action = { start_service: '启动', stop_service: '停止', restart_service: '重启' }[name]
-    return `${action}服务 ${String(args.service_name ?? '?')}`
+    return `${action} ${String(args.runtime_type ?? 'systemd')} 服务 ${String(args.service_name ?? '?')}`
   }
   if (name === 'create_alert_rule') {
     return `创建预警规则 ${String(args.name ?? '?')}：${String(args.expression ?? '?')}`

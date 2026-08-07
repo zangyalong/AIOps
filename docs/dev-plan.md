@@ -67,12 +67,12 @@
 - [ ] **Agent 全程使用简体中文**
   - Supervisor、四个专家和最终综合节点共享强制简体中文约束；命令、代码、PromQL、服务名和产品专有名词保留原文
   - 代码与自动化检查完成后保持未勾选，等用户在真实多轮对话中确认不再出现英文过渡语
-- [ ] **systemd 服务启动、停止和重启受控写工具**
-  - `start_service` / `stop_service` / `restart_service` 共用一个非 root AIOMS SSH 身份、固定写网关和 AIOMS 端白名单
-  - 服务目录的 systemd 部署实例增加“控制授权”开关，默认关闭；只有实例已授权时 Agent 才能发起启停，修改运行时身份或删除目录项前必须先关闭授权
+- [ ] **systemd / Docker 服务启动、停止和重启受控写工具**
+  - `start_service` / `stop_service` / `restart_service` 根据服务目录运行时身份统一控制 systemd 或 Docker，共用一个非 root AIOMS SSH 身份、固定写网关和 AIOMS 端白名单
+  - 服务目录的 systemd / Docker 部署实例增加“控制授权”开关，默认关闭；只有实例已授权时 Agent 才能发起启停，修改运行时身份或删除目录项前必须先关闭授权
   - 用户确认开关后通过固定策略网关同步目标服务器 root 白名单，远端成功后才保存数据库状态；服务发现或目录注册不会自动扩大授权
   - 启动为中风险，只需审批卡片一次确认；停止、重启为高风险，先点审批卡片，再在展示目标与动作的弹窗中二次确认，后端拒绝缺少二次确认标记的高风险恢复请求
-  - 目标服务器新增 root 持有的 `aioms-service-control` 固定网关和第二层白名单；sudoers 不开放任意 `systemctl` 或 Shell
+  - 目标服务器新增 root 持有的 `aioms-service-control` 固定网关和第二层白名单，条目使用 `systemd:unit.service` 或 `docker:container` 明确区分运行时；sudoers 不开放任意 `systemctl`、Docker CLI 或 Shell
   - 代码与自动化检查完成后保持未勾选，等用户在真实 web-01 上分别验证拒绝、批准和状态复核
 - [ ] **通过 AI 对话创建预警规则**
   - `create_alert_rule` 登记为中风险写工具，审批后复用页面相同的 Pydantic 字段校验、PromQL 校验、数据库写入和 Prometheus 热重载

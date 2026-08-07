@@ -115,7 +115,7 @@ class ServiceInstanceResolutionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resolved.service, service)
         self.assertEqual(resolved.instance, instance)
 
-    async def test_control_authorization_only_accepts_systemd_instance(self) -> None:
+    async def test_control_authorization_can_be_enabled_for_docker(self) -> None:
         instance = SimpleNamespace(
             server_id=uuid.uuid4(),
             runtime_type="docker",
@@ -123,7 +123,26 @@ class ServiceInstanceResolutionTest(unittest.IsolatedAsyncioTestCase):
             control_enabled=False,
         )
 
-        with self.assertRaisesRegex(ValueError, "只有 systemd"):
+        with patch.object(
+            service_catalog_service.service_catalog_repository,
+            "save_instance",
+            AsyncMock(return_value=instance),
+        ):
+            saved = await service_catalog_service.set_control_authorization(
+                object(), instance, enabled=True
+            )
+
+        self.assertTrue(saved.control_enabled)
+
+    async def test_control_authorization_rejects_process_instance(self) -> None:
+        instance = SimpleNamespace(
+            server_id=uuid.uuid4(),
+            runtime_type="process",
+            runtime_name="web:tcp-8000",
+            control_enabled=False,
+        )
+
+        with self.assertRaisesRegex(ValueError, "systemd 服务和 Docker 容器"):
             await service_catalog_service.set_control_authorization(
                 object(), instance, enabled=True
             )

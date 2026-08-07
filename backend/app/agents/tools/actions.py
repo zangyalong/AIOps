@@ -23,16 +23,23 @@ from app.services.ssh_service import (
 
 SERVICE_CONTROL_GATEWAY = "/usr/local/sbin/aioms-service-control"
 SERVICE_UNIT_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@:-]*\.service$")
+DOCKER_CONTAINER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 ServiceAction = Literal["start", "stop", "restart"]
+RuntimeType = Literal["systemd", "docker"]
 
 
 async def _control_service(
-    action: ServiceAction, server_name: str, service_name: str
+    action: ServiceAction,
+    server_name: str,
+    service_name: str,
+    runtime_type: RuntimeType,
 ) -> str:
     service = service_name.strip()
     action_label = {"start": "启动", "stop": "停止", "restart": "重启"}[action]
-    if not SERVICE_UNIT_PATTERN.fullmatch(service):
-        return "服务名必须是明确的 systemd .service 单元，已拒绝执行。"
+    if runtime_type == "systemd" and not SERVICE_UNIT_PATTERN.fullmatch(service):
+        return "systemd 服务名必须是明确的 .service 单元，已拒绝执行。"
+    if runtime_type == "docker" and not DOCKER_CONTAINER_PATTERN.fullmatch(service):
+        return "Docker 运行对象必须是明确的容器名，已拒绝执行。"
 
     async with AsyncSessionLocal() as db:
         server = await server_service.get_server_by_name_or_ip(db, server_name)
@@ -41,16 +48,18 @@ async def _control_service(
         instance = await service_catalog_service.get_instance_by_runtime_identity(
             db,
             server_id=server.id,
-            runtime_type="systemd",
+            runtime_type=runtime_type,
             runtime_name=service,
         )
         if instance is None:
             return (
-                f'{server.name} 上的服务 "{service}" 尚未登记到服务目录，已拒绝执行。'
+                f'{server.name} 上的 {runtime_type} 服务 "{service}" '
+                "尚未登记到服务目录，已拒绝执行。"
             )
         if not instance.control_enabled:
             return (
-                f'{server.name} 上的服务 "{service}" 未开启控制授权，已拒绝执行。'
+                f'{server.name} 上的 {runtime_type} 服务 "{service}" '
+                "未开启控制授权，已拒绝执行。"
                 "请先在服务目录对应实例中开启控制授权。"
             )
 
@@ -65,7 +74,10 @@ async def _control_service(
         return f"{exc}，请确认已经放到 {exc.key_path.parent} 目录下。"
 
     safe_service = shlex.quote(service)
-    command = f"sudo -n -- {SERVICE_CONTROL_GATEWAY} {action} {safe_service}"
+    command = (
+        f"sudo -n -- {SERVICE_CONTROL_GATEWAY} {action} "
+        f"{runtime_type} {safe_service}"
+    )
     try:
         async with asyncssh.connect(
             params.host,
@@ -90,27 +102,39 @@ async def _control_service(
 
 
 @tool
-async def start_service(server_name: str, service_name: str) -> str:
-    """启动指定服务器上明确加入白名单的 systemd 服务。
+async def start_service(
+    server_name: str,
+    service_name: str,
+    runtime_type: RuntimeType = "systemd",
+) -> str:
+    """启动指定服务器上明确加入白名单的 systemd 服务或 Docker 容器。
 
     这是中风险写操作：必须先由用户在审批卡片中确认，并通过目标服务器固定写网关执行。
     """
-    return await _control_service("start", server_name, service_name)
+    return await _control_service("start", server_name, service_name, runtime_type)
 
 
 @tool
-async def stop_service(server_name: str, service_name: str) -> str:
-    """停止指定服务器上明确加入白名单的 systemd 服务。
+async def stop_service(
+    server_name: str,
+    service_name: str,
+    runtime_type: RuntimeType = "systemd",
+) -> str:
+    """停止指定服务器上明确加入白名单的 systemd 服务或 Docker 容器。
 
     这是高风险写操作：必须经过审批卡片和详情弹窗两步确认，再通过固定写网关执行。
     """
-    return await _control_service("stop", server_name, service_name)
+    return await _control_service("stop", server_name, service_name, runtime_type)
 
 
 @tool
-async def restart_service(server_name: str, service_name: str) -> str:
-    """重启指定服务器上明确加入白名单的 systemd 服务。
+async def restart_service(
+    server_name: str,
+    service_name: str,
+    runtime_type: RuntimeType = "systemd",
+) -> str:
+    """重启指定服务器上明确加入白名单的 systemd 服务或 Docker 容器。
 
     这是高风险写操作：必须经过审批卡片和详情弹窗两步确认，再通过固定写网关执行。
     """
-    return await _control_service("restart", server_name, service_name)
+    return await _control_service("restart", server_name, service_name, runtime_type)

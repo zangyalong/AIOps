@@ -67,15 +67,17 @@ def _service_control_action(
 ) -> dict[str, Any]:
     server = str(args.get("server_name") or "?")
     service = str(args.get("service_name") or "?")
+    runtime_type = str(args.get("runtime_type") or "systemd")
     label = {"start": "启动", "stop": "停止", "restart": "重启"}[action]
     return {
         "kind": f"service_{action}",
-        "title": f"{label} {server} 上的服务 {service}",
+        "title": f"{label} {server} 上的 {runtime_type} 服务 {service}",
         "server_name": server,
         "service_name": service,
+        "runtime_type": runtime_type,
         "command": (
             "sudo -n -- /usr/local/sbin/aioms-service-control "
-            f"{action} {shlex.quote(service)}"
+            f"{action} {shlex.quote(runtime_type)} {shlex.quote(service)}"
         ),
     }
 

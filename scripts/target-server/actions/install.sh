@@ -8,7 +8,7 @@ fail() {
 }
 
 usage() {
-    echo "用法：sudo ./actions/install.sh --ssh-user USER --allowlist a.service,b.service"
+    echo "用法：sudo ./actions/install.sh --ssh-user USER --allowlist systemd:a.service,docker:container"
 }
 
 SSH_USER=""
@@ -54,14 +54,24 @@ cleanup() {
 }
 trap cleanup EXIT
 
-IFS=',' read -r -a services <<<"$ALLOWLIST"
-for raw in "${services[@]}"; do
-    service="${raw#"${raw%%[![:space:]]*}"}"
-    service="${service%"${service##*[![:space:]]}"}"
-    [[ -z "$service" ]] && continue
-    [[ "$service" =~ ^[A-Za-z0-9][A-Za-z0-9_.@:-]*\.service$ ]] ||
-        fail "白名单服务格式不合法：$service"
-    printf '%s\n' "$service" >>"$allowlist_tmp"
+IFS=',' read -r -a targets <<<"$ALLOWLIST"
+for raw in "${targets[@]}"; do
+    target="${raw#"${raw%%[![:space:]]*}"}"
+    target="${target%"${target##*[![:space:]]}"}"
+    [[ -z "$target" ]] && continue
+    if [[ "$target" =~ ^[A-Za-z0-9][A-Za-z0-9_.@:-]*\.service$ ]]; then
+        target="systemd:$target"
+    fi
+    if [[ "$target" =~ ^systemd:(.+)$ ]]; then
+        [[ "${BASH_REMATCH[1]}" =~ ^[A-Za-z0-9][A-Za-z0-9_.@:-]*\.service$ ]] ||
+            fail "systemd 白名单格式不合法：$target"
+    elif [[ "$target" =~ ^docker:(.+)$ ]]; then
+        [[ "${BASH_REMATCH[1]}" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] ||
+            fail "Docker 白名单格式不合法：$target"
+    else
+        fail "白名单运行时身份格式不合法：$target"
+    fi
+    printf '%s\n' "$target" >>"$allowlist_tmp"
 done
 sort -u -o "$allowlist_tmp" "$allowlist_tmp"
 
@@ -74,4 +84,4 @@ sed "s/__AIOMS_SSH_USER__/$SSH_USER/g" "$SUDOERS_TEMPLATE" >"$sudoers_tmp"
 visudo -cf "$sudoers_tmp" >/dev/null
 install -o root -g root -m 0440 "$sudoers_tmp" /etc/sudoers.d/aioms-service-control
 
-echo "服务控制网关已安装；允许服务数：$(wc -l < /etc/aioms/service-control.allowlist)"
+echo "统一服务控制网关已安装；允许运行对象数：$(wc -l < /etc/aioms/service-control.allowlist)"

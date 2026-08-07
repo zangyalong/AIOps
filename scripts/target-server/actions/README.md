@@ -1,32 +1,41 @@
-# systemd 服务控制写网关
+# systemd / Docker 统一服务控制写网关
 
-本目录为非 root `aioms` 用户安装一个固定的 root 包装器，只接受：
-
-```text
-start SERVICE.service
-stop SERVICE.service
-restart SERVICE.service
-```
-
-另一个固定策略包装器只接受用户在服务目录明确授权后的白名单同步：
+本目录为非 root `aioms` 用户安装一套固定的 root 包装器。AIOMS 的三个服务控制 Tool 保持
+`start_service`、`stop_service`、`restart_service`，根据服务目录中的运行时身份调用：
 
 ```text
-add SERVICE.service
-remove SERVICE.service
+start systemd nginx.service
+stop docker orders-api
+restart systemd mysqld.service
 ```
 
-包装器会同时检查动作、systemd 单元格式、root 持有且不可写的
-`/etc/aioms/service-control.allowlist`，并在操作前后核对服务状态。sudoers 只授权这个包装器，
-不会授权任意 `systemctl` 或 Shell。
+策略包装器只接受用户在服务目录明确开启或关闭控制授权后的白名单同步：
 
-`aioms-service-policy` 加入服务前会核对单元已经由 systemd 加载，并以文件锁和同目录临时
-文件原子更新 root 持有的白名单；删除操作可重复执行。它不执行服务启停，实际控制仍必须经过
-`aioms-service-control` 和独立的操作审批。
+```text
+add systemd nginx.service
+remove docker orders-api
+```
 
-白名单由目标服务器 `deploy.conf` 的 `SERVICE_CONTROL_ALLOWLIST` 配置，例如：
+白名单 `/etc/aioms/service-control.allowlist` 每行保存一个带类型的固定身份：
+
+```text
+systemd:nginx.service
+docker:orders-api
+```
+
+包装器会校验动作、运行类型、systemd 单元或 Docker 容器名、root 文件所有权和白名单；执行前
+还会核对 unit 已加载或容器名称完全一致，执行后核对实际状态。systemd 停止只有
+`inactive` 算成功，`failed` 会明确报错；Docker 停止只有 `exited` 算成功。
+
+sudoers 只授权两个 root 所有的固定包装器，不开放任意 `systemctl`、Docker CLI 或 Shell。
+`aioms-service-policy` 使用文件锁和同目录临时文件原子更新白名单，不执行任何启停操作；实际
+控制仍必须经过独立的 Tool 人工审批。
+
+初始白名单由目标服务器 `deploy.conf` 配置：
 
 ```ini
-SERVICE_CONTROL_ALLOWLIST=bt.service,nginx.service
+SERVICE_CONTROL_ALLOWLIST=systemd:bt.service,systemd:nginx.service,docker:orders-api
 ```
 
-留空表示拒绝全部服务控制。修改白名单后需要由服务器管理员重新运行 `deploy.sh`。
+兼容旧的裸 `.service` 配置并自动规范为 `systemd:` 条目。留空表示拒绝全部服务控制。服务目录
+页面开启授权时会通过策略网关增量同步；自动部署环境配置时也会从数据库授权状态重建完整白名单。

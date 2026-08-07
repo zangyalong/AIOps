@@ -47,8 +47,8 @@ class ServiceInstance(Base, UUIDMixin, TimestampMixin):
             name="ck_service_instances_runtime_type",
         ),
         CheckConstraint(
-            "control_enabled = false OR runtime_type = 'systemd'",
-            name="ck_service_instances_control_systemd",
+            "control_enabled = false OR runtime_type IN ('systemd', 'docker')",
+            name="ck_service_instances_control_runtime",
         ),
     )
 

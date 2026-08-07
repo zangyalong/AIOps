@@ -57,6 +57,8 @@ class ServiceRegistrationResult:
 
 
 SERVICE_UNIT_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@:-]*\.service$")
+DOCKER_CONTAINER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+CONTROLLABLE_RUNTIME_TYPES = frozenset({"systemd", "docker"})
 
 
 async def list_services(
@@ -342,13 +344,22 @@ async def set_control_authorization(
 def validate_control_target(instance: ServiceInstance) -> None:
     if instance.server_id is None:
         raise ControlAuthorizationUnavailable("控制授权要求实例绑定服务器")
-    if instance.runtime_type != "systemd":
-        raise ControlAuthorizationUnavailable("只有 systemd 服务支持启动和停止授权")
-    if not instance.runtime_name or not SERVICE_UNIT_PATTERN.fullmatch(
-        instance.runtime_name
+    if instance.runtime_type not in CONTROLLABLE_RUNTIME_TYPES:
+        raise ControlAuthorizationUnavailable(
+            "只有 systemd 服务和 Docker 容器支持启动、停止和重启授权"
+        )
+    runtime_name = instance.runtime_name or ""
+    if instance.runtime_type == "systemd" and not SERVICE_UNIT_PATTERN.fullmatch(
+        runtime_name
     ):
         raise ControlAuthorizationUnavailable(
             "控制授权要求填写完整、合法的 systemd .service 单元名"
+        )
+    if instance.runtime_type == "docker" and not DOCKER_CONTAINER_PATTERN.fullmatch(
+        runtime_name
+    ):
+        raise ControlAuthorizationUnavailable(
+            "控制授权要求填写完整、合法的 Docker 容器名"
         )
 
 

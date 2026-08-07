@@ -98,7 +98,7 @@ class ServiceControlPolicyTests(unittest.IsolatedAsyncioTestCase):
             connection.commands,
             [
                 "sudo -n -- /usr/local/sbin/aioms-service-policy "
-                "add mysqld.service"
+                "add systemd mysqld.service"
             ],
         )
         save_authorization.assert_awaited_once_with(db, instance, enabled=True)
@@ -187,9 +187,55 @@ class ServiceControlPolicyTests(unittest.IsolatedAsyncioTestCase):
             connection.commands,
             [
                 "sudo -n -- /usr/local/sbin/aioms-service-policy "
-                "add mysqld.service",
+                "add systemd mysqld.service",
                 "sudo -n -- /usr/local/sbin/aioms-service-policy "
-                "remove mysqld.service",
+                "remove systemd mysqld.service",
             ],
         )
         self.assertFalse(instance.control_enabled)
+
+    async def test_docker_authorization_uses_same_policy_gateway(self) -> None:
+        server = _server()
+        instance = _instance(server.id)
+        instance.runtime_type = "docker"
+        instance.runtime_name = "orders-api"
+        connection = _FakeConnection()
+
+        with (
+            patch.object(
+                service_control_policy_service.server_service,
+                "get_server",
+                AsyncMock(return_value=server),
+            ),
+            patch.object(
+                service_control_policy_service,
+                "build_connect_params",
+                return_value=SimpleNamespace(
+                    host=server.ip_address,
+                    port=22,
+                    username="aioms",
+                    client_keys=["test-key"],
+                ),
+            ),
+            patch.object(
+                service_control_policy_service.asyncssh,
+                "connect",
+                return_value=_ConnectionContext(connection),
+            ),
+            patch.object(
+                service_control_policy_service.service_catalog_service,
+                "set_control_authorization",
+                AsyncMock(return_value=instance),
+            ),
+        ):
+            await service_control_policy_service.update_control_authorization(
+                object(), instance, enabled=True
+            )
+
+        self.assertEqual(
+            connection.commands,
+            [
+                "sudo -n -- /usr/local/sbin/aioms-service-policy "
+                "add docker orders-api"
+            ],
+        )

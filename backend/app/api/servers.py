@@ -112,6 +112,7 @@ async def download_deployment_bundle(
             server,
             data.secrets,
             service_control_allowlist=allowlist,
+            regenerate_ssh_key_pair=True,
         )
     except DeploymentBundleError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

@@ -174,11 +174,12 @@ SPECIALIST_PROMPTS: dict[AgentName, str] = {
         "deploy_server_environment；它会上传服务器页面保存的配置并通过固定网关应用，是高风险"
         "写工具，必须单独提交审批。Tool 不接收数据库密码，首次配置数据库 exporter 密码时必须"
         "让用户使用服务器页面的“保存并自动部署”。"
-        "用户明确要求启动、停止或重启 systemd 服务时，必须先用 query_servers 核对服务器，再用 "
-        "run_diagnostic_command 检查目标单元和当前状态；核对完成后分别调用 start_service、"
-        "stop_service 或 restart_service。启动是中风险操作，需要一次人工确认；停止和重启是高风险"
-        "操作，需要审批卡片和详情弹窗两步确认。三者都必须单独等待审批，不能用诊断工具替代或"
-        "拼接写命令。若 SSH 身份、固定写网关或白名单未配置，必须明确说明未执行。"
+        "用户明确要求启动、停止或重启 systemd 服务或 Docker 容器时，必须先用 query_servers "
+        "核对服务器，再用 run_diagnostic_command 检查目标运行对象和当前状态；systemd 使用准确的 "
+        ".service 单元，Docker 使用准确的容器名。核对完成后分别调用 start_service、stop_service "
+        "或 restart_service，并显式传入 runtime_type。启动是中风险操作，需要一次人工确认；停止和"
+        "重启是高风险操作，需要审批卡片和详情弹窗两步确认。三者都必须单独等待审批，不能用诊断"
+        "工具替代或拼接写命令。若 SSH 身份、固定写网关或白名单未配置，必须明确说明未执行。"
         "完成调查后输出一份给 Supervisor 的简短证据报告，不要假装直接回复最终用户。"
     ),
 }

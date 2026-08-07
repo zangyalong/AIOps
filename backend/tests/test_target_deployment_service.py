@@ -11,7 +11,10 @@ from app.models.server import Server
 from app.schemas.server import DeploymentBundleSecrets, TargetDeploymentConfig
 from app.services.target_deployment_service import (
     DeploymentBundleError,
+    _normalize_service_control_allowlist,
+    remove_deployment_ssh_key_pair,
     render_deploy_config,
+    restore_deployment_ssh_key_pair,
     write_database_credentials,
 )
 
@@ -26,6 +29,64 @@ def make_server() -> Server:
 
 
 class TargetDeploymentServiceTests(unittest.TestCase):
+    def test_regenerating_key_pair_only_removes_current_server_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            key_dir = Path(temporary_dir)
+            private_key = key_dir / "web01-aioms"
+            public_key = key_dir / "web01-aioms.pub"
+            unrelated_key = key_dir / "db01-aioms"
+            private_key.write_text("old-private", encoding="utf-8")
+            public_key.write_text("old-public", encoding="utf-8")
+            unrelated_key.write_text("keep-me", encoding="utf-8")
+
+            with patch(
+                "app.services.target_deployment_service.settings.ssh_key_dir",
+                key_dir,
+            ):
+                backup = remove_deployment_ssh_key_pair(make_server())
+
+            self.assertFalse(private_key.exists())
+            self.assertFalse(public_key.exists())
+            self.assertEqual(unrelated_key.read_text(encoding="utf-8"), "keep-me")
+            self.assertEqual(backup.private_key.content, b"old-private")
+            self.assertEqual(backup.public_key.content, b"old-public")
+
+    def test_failed_bundle_can_restore_original_key_pair(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            key_dir = Path(temporary_dir)
+            private_key = key_dir / "web01-aioms"
+            public_key = key_dir / "web01-aioms.pub"
+            private_key.write_text("old-private", encoding="utf-8")
+            public_key.write_text("old-public", encoding="utf-8")
+            private_key.chmod(0o600)
+            public_key.chmod(0o644)
+
+            with patch(
+                "app.services.target_deployment_service.settings.ssh_key_dir",
+                key_dir,
+            ):
+                backup = remove_deployment_ssh_key_pair(make_server())
+                private_key.write_text("new-private", encoding="utf-8")
+                public_key.write_text("new-public", encoding="utf-8")
+                restore_deployment_ssh_key_pair(make_server(), backup)
+
+            self.assertEqual(private_key.read_text(encoding="utf-8"), "old-private")
+            self.assertEqual(public_key.read_text(encoding="utf-8"), "old-public")
+            self.assertEqual(private_key.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(public_key.stat().st_mode & 0o777, 0o644)
+
+    def test_control_allowlist_normalizes_systemd_and_docker_targets(self) -> None:
+        self.assertEqual(
+            _normalize_service_control_allowlist(
+                "nginx.service,docker:orders-api,systemd:mysqld.service"
+            ),
+            "docker:orders-api,systemd:mysqld.service,systemd:nginx.service",
+        )
+
+    def test_control_allowlist_rejects_unsafe_docker_name(self) -> None:
+        with self.assertRaisesRegex(DeploymentBundleError, "运行时身份不合法"):
+            _normalize_service_control_allowlist("docker:orders api")
+
     def test_render_deploy_config_keeps_initial_alloy_map_empty(self) -> None:
         config = TargetDeploymentConfig(
             environment="prod",
@@ -48,7 +109,10 @@ class TargetDeploymentServiceTests(unittest.TestCase):
         self.assertIn("ALLOY_SERVICE_MAP=\n", rendered)
         self.assertIn("START_ALLOY=false\n", rendered)
         self.assertIn("EXPORTER_IMAGE_MIRROR_PREFIX=m.daocloud.io\n", rendered)
-        self.assertIn("SERVICE_CONTROL_ALLOWLIST=bt.service,nginx.service\n", rendered)
+        self.assertIn(
+            "SERVICE_CONTROL_ALLOWLIST=systemd:bt.service,systemd:nginx.service\n",
+            rendered,
+        )
         self.assertNotIn("database-secret-value", rendered)
 
     def test_enabled_database_exporter_requires_one_time_password(self) -> None:

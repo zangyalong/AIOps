@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -euo pipefail
-PATH=/usr/sbin:/usr/bin:/sbin:/bin
+PATH=/usr/sbin:/usr/bin:/usr/local/bin:/sbin:/bin
 
 fail() {
     echo "aioms-service-control: $*" >&2
@@ -9,21 +9,35 @@ fail() {
 }
 
 [[ $EUID -eq 0 ]] || fail "必须由 root 通过 sudoers 调用"
-[[ $# -eq 2 ]] || fail "用法：aioms-service-control start|stop|restart SERVICE.service"
+[[ $# -eq 3 ]] ||
+    fail "用法：aioms-service-control start|stop|restart systemd|docker RUNTIME_NAME"
 
 readonly ACTION="$1"
-readonly SERVICE="$2"
+readonly RUNTIME_TYPE="$2"
+readonly RUNTIME_NAME="$3"
 readonly ALLOWLIST="/etc/aioms/service-control.allowlist"
+readonly SERVICE_PATTERN='^[A-Za-z0-9][A-Za-z0-9_.@:-]*\.service$'
+readonly CONTAINER_PATTERN='^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$'
+readonly TARGET="$RUNTIME_TYPE:$RUNTIME_NAME"
 
 case "$ACTION" in
     start|stop|restart) ;;
     *) fail "不支持的动作：$ACTION" ;;
 esac
+case "$RUNTIME_TYPE" in
+    systemd)
+        [[ "$RUNTIME_NAME" =~ $SERVICE_PATTERN ]] ||
+            fail "systemd 运行对象必须是明确的 .service 单元"
+        ;;
+    docker)
+        [[ "$RUNTIME_NAME" =~ $CONTAINER_PATTERN ]] ||
+            fail "Docker 运行对象必须是明确的容器名"
+        ;;
+    *) fail "运行类型只允许 systemd 或 docker" ;;
+esac
 
-[[ "$SERVICE" =~ ^[A-Za-z0-9][A-Za-z0-9_.@:-]*\.service$ ]] ||
-    fail "服务名必须是明确的 systemd .service 单元"
-[[ -f "$ALLOWLIST" ]] || fail "服务控制白名单不存在：$ALLOWLIST"
-
+[[ -f "$ALLOWLIST" && ! -L "$ALLOWLIST" ]] ||
+    fail "服务控制白名单不存在或不安全：$ALLOWLIST"
 read -r owner mode < <(stat -c '%u %a' "$ALLOWLIST")
 [[ "$owner" == "0" ]] || fail "白名单必须由 root 持有"
 (( (8#$mode & 8#022) == 0 )) || fail "白名单不能由组或其他用户写入"
@@ -34,41 +48,109 @@ while IFS= read -r raw || [[ -n "$raw" ]]; do
     line="${line#"${line%%[![:space:]]*}"}"
     line="${line%"${line##*[![:space:]]}"}"
     [[ -z "$line" ]] && continue
-    if [[ "$line" == "$SERVICE" ]]; then
+    if [[ "$line" =~ $SERVICE_PATTERN ]]; then
+        line="systemd:$line"
+    fi
+    if [[ "$line" == "$TARGET" ]]; then
         allowed=true
         break
     fi
 done <"$ALLOWLIST"
-[[ "$allowed" == "true" ]] || fail "服务 $SERVICE 不在目标服务器白名单中"
+[[ "$allowed" == "true" ]] || fail "运行对象 $TARGET 不在目标服务器白名单中"
 
-load_state="$(systemctl show --property=LoadState --value -- "$SERVICE" 2>&1)" ||
-    fail "无法核对服务 $SERVICE：$load_state"
-[[ "$load_state" == "loaded" ]] || fail "服务 $SERVICE 未加载（LoadState=$load_state）"
+find_docker() {
+    local candidate
+    for candidate in /usr/bin/docker /usr/local/bin/docker; do
+        if [[ -x "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return
+        fi
+    done
+    fail "没有找到 Docker CLI"
+}
 
-before="$(systemctl is-active -- "$SERVICE" 2>&1 || true)"
-if [[ "$ACTION" == "start" && "$before" == "active" ]]; then
-    echo "服务 $SERVICE 已经处于 active，无需重复启动。"
-    exit 0
-fi
-if [[ "$ACTION" == "stop" && "$before" != "active" ]]; then
-    echo "服务 $SERVICE 当前状态为 $before，无需重复停止。"
-    exit 0
-fi
+control_systemd() {
+    local load_state before after
+    load_state="$(systemctl show --property=LoadState --value -- "$RUNTIME_NAME" 2>&1)" ||
+        fail "无法核对服务 $RUNTIME_NAME：$load_state"
+    [[ "$load_state" == "loaded" ]] ||
+        fail "服务 $RUNTIME_NAME 未加载（LoadState=$load_state）"
 
-systemctl "$ACTION" -- "$SERVICE"
-after="$(systemctl is-active -- "$SERVICE" 2>&1 || true)"
+    before="$(systemctl is-active -- "$RUNTIME_NAME" 2>&1 || true)"
+    if [[ "$ACTION" == "start" && "$before" == "active" ]]; then
+        echo "systemd 服务 $RUNTIME_NAME 已经处于 active，无需重复启动。"
+        return
+    fi
+    if [[ "$ACTION" == "stop" && "$before" == "inactive" ]]; then
+        echo "systemd 服务 $RUNTIME_NAME 已经处于 inactive，无需重复停止。"
+        return
+    fi
+    if [[ "$ACTION" == "stop" && "$before" == "failed" ]]; then
+        fail "systemd 服务 $RUNTIME_NAME 已处于 failed，不能把异常状态当作正常停止"
+    fi
 
-case "$ACTION" in
-    start)
-        [[ "$after" == "active" ]] || fail "启动后状态异常：$after"
-        echo "已启动服务 $SERVICE；当前状态：$after。"
-        ;;
-    stop)
-        [[ "$after" != "active" ]] || fail "停止后服务仍为 active"
-        echo "已停止服务 $SERVICE；当前状态：$after。"
-        ;;
-    restart)
-        [[ "$after" == "active" ]] || fail "重启后状态异常：$after"
-        echo "已重启服务 $SERVICE；当前状态：$after。"
-        ;;
+    systemctl "$ACTION" -- "$RUNTIME_NAME"
+    after="$(systemctl is-active -- "$RUNTIME_NAME" 2>&1 || true)"
+    case "$ACTION" in
+        start)
+            [[ "$after" == "active" ]] || fail "启动后状态异常：$after"
+            echo "已启动 systemd 服务 $RUNTIME_NAME；当前状态：$after。"
+            ;;
+        stop)
+            [[ "$after" == "inactive" ]] || fail "停止后状态异常：$after"
+            echo "已停止 systemd 服务 $RUNTIME_NAME；当前状态：$after。"
+            ;;
+        restart)
+            [[ "$after" == "active" ]] || fail "重启后状态异常：$after"
+            echo "已重启 systemd 服务 $RUNTIME_NAME；当前状态：$after。"
+            ;;
+    esac
+}
+
+control_docker() {
+    local docker_bin actual_name before after
+    docker_bin="$(find_docker)"
+    actual_name="$($docker_bin inspect --format '{{.Name}}' "$RUNTIME_NAME" 2>&1)" ||
+        fail "无法核对 Docker 容器 $RUNTIME_NAME：$actual_name"
+    [[ "$actual_name" == "/$RUNTIME_NAME" ]] ||
+        fail "Docker 容器名称核对不一致：$actual_name"
+    before="$($docker_bin inspect --format '{{.State.Status}}' "$RUNTIME_NAME")"
+
+    if [[ "$ACTION" == "start" && "$before" == "running" ]]; then
+        echo "Docker 容器 $RUNTIME_NAME 已经处于 running，无需重复启动。"
+        return
+    fi
+    if [[ "$ACTION" == "start" && "$before" == "paused" ]]; then
+        fail "Docker 容器 $RUNTIME_NAME 处于 paused，请先人工核对后再处理"
+    fi
+    if [[ "$ACTION" == "stop" && "$before" =~ ^(created|exited)$ ]]; then
+        echo "Docker 容器 $RUNTIME_NAME 已经处于 $before，无需重复停止。"
+        return
+    fi
+
+    case "$ACTION" in
+        start) "$docker_bin" start "$RUNTIME_NAME" >/dev/null ;;
+        stop) "$docker_bin" stop --time 10 "$RUNTIME_NAME" >/dev/null ;;
+        restart) "$docker_bin" restart --time 10 "$RUNTIME_NAME" >/dev/null ;;
+    esac
+    after="$($docker_bin inspect --format '{{.State.Status}}' "$RUNTIME_NAME")"
+    case "$ACTION" in
+        start)
+            [[ "$after" == "running" ]] || fail "启动后状态异常：$after"
+            echo "已启动 Docker 容器 $RUNTIME_NAME；当前状态：$after。"
+            ;;
+        stop)
+            [[ "$after" == "exited" ]] || fail "停止后状态异常：$after"
+            echo "已停止 Docker 容器 $RUNTIME_NAME；当前状态：$after。"
+            ;;
+        restart)
+            [[ "$after" == "running" ]] || fail "重启后状态异常：$after"
+            echo "已重启 Docker 容器 $RUNTIME_NAME；当前状态：$after。"
+            ;;
+    esac
+}
+
+case "$RUNTIME_TYPE" in
+    systemd) control_systemd ;;
+    docker) control_docker ;;
 esac

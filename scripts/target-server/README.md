@@ -6,7 +6,7 @@
 首次安装可以完成：
 
 1. 安装 AIOMS 服务发现所需的只读命令网关和精确 sudoers 权限。
-2. 为同一个非 root `aioms` 用户安装白名单 systemd 服务控制写网关；白名单留空时拒绝全部。
+2. 为同一个非 root `aioms` 用户安装统一的 systemd / Docker 白名单服务控制写网关；白名单留空时拒绝全部。
 3. 按需安装 Grafana Alloy 基础组件；服务发现并注册后由 AI 生成日志配置并审批启用。
 4. 按独立开关部署 node_exporter、cAdvisor、MySQL、PostgreSQL 和 Redis exporter。
 
@@ -103,8 +103,8 @@ target-server/
 │   ├── aioms-readonly.sudoers   # 最小 sudo 权限模板
 │   └── README.md                # 发现命令与权限边界
 ├── actions/
-│   ├── install.sh               # systemd 服务控制写网关安装器
-│   ├── aioms-service-control    # 只接受 start/stop/restart + 白名单 .service
+│   ├── install.sh               # systemd / Docker 统一服务控制写网关安装器
+│   ├── aioms-service-control    # 只接受 start/stop/restart + 白名单运行时身份
 │   ├── aioms-service-policy     # 只接受页面授权触发的白名单 add/remove
 │   ├── aioms-service-control.sudoers
 │   └── README.md                # 双端白名单和权限边界
@@ -192,7 +192,7 @@ cp metrics/redis-exporter.password.example metrics/redis-exporter.password
 
 ```ini
 AIOMS_SSH_USER=aioms
-SERVICE_CONTROL_ALLOWLIST=bt.service,nginx.service
+SERVICE_CONTROL_ALLOWLIST=systemd:bt.service,systemd:nginx.service,docker:orders-api
 ENABLE_ALLOY=true
 SERVER_NAME=web01
 LOKI_PUSH_URL=http://监控服务器:3100/loki/api/v1/push
@@ -217,7 +217,7 @@ START_EXPORTERS=true
 | 配置项                             | 何时需要                | 说明                                                             |
 | ---------------------------------- | ----------------------- | ---------------------------------------------------------------- |
 | `AIOMS_SSH_USER`                 | 始终必填                | 非 root AIOMS SSH 用户，应与 `servers.ssh_user` 一致；读写能力都只能经过固定网关 |
-| `SERVICE_CONTROL_ALLOWLIST`      | 使用服务控制 Tool       | 允许启停/重启的完整 `.service` 单元；留空拒绝全部            |
+| `SERVICE_CONTROL_ALLOWLIST`      | 使用服务控制 Tool       | 允许启停/重启的 `systemd:unit.service` 或 `docker:container`；留空拒绝全部 |
 | `ENABLE_ALLOY`                   | 始终必填                | `true` 安装 Alloy 基础组件，`false` 只安装发现和指标组件     |
 | `SERVER_NAME`                    | 启用 Alloy              | 稳定服务器标签，如`web01`                                      |
 | `LOKI_PUSH_URL`                  | 启用 Alloy              | 从目标服务器可访问的中央 Loki 地址                               |

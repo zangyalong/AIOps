@@ -378,17 +378,15 @@ function runtimeActionAvailable(instance: ServiceInstance): boolean {
   return Boolean(
     instance.server_id &&
       instance.runtime_name &&
-      instance.runtime_type === 'systemd' &&
+      (instance.runtime_type === 'systemd' || instance.runtime_type === 'docker') &&
       instance.control_enabled,
   )
 }
 
 function controlAuthorizationAvailable(instance: ServiceInstance): boolean {
-  return Boolean(
-    instance.server_id &&
-      instance.runtime_type === 'systemd' &&
-      instance.runtime_name?.endsWith('.service'),
-  )
+  if (!instance.server_id || !instance.runtime_name) return false
+  if (instance.runtime_type === 'systemd') return instance.runtime_name.endsWith('.service')
+  return instance.runtime_type === 'docker'
 }
 
 async function toggleControlAuthorization(instance: ServiceInstance) {
@@ -974,7 +972,10 @@ function serverStatusLabel(server: Server): string {
                 <div><dt>Loki</dt><dd>{{ instance.log_service || '未配置' }}</dd></div>
               </dl>
               <p v-if="instance.description" class="instance-description">{{ instance.description }}</p>
-              <div v-if="instance.runtime_type === 'systemd'" class="control-authorization">
+              <div
+                v-if="instance.runtime_type === 'systemd' || instance.runtime_type === 'docker'"
+                class="control-authorization"
+              >
                 <div>
                   <strong>服务控制授权</strong>
                   <span>
@@ -1012,7 +1013,7 @@ function serverStatusLabel(server: Server): string {
                   :title="
                     runtimeActionAvailable(instance)
                       ? '进入运维对话，发送后仍需人工审批'
-                      : '请先为该 systemd 实例开启服务控制授权'
+                      : `请先为该 ${instance.runtime_type || '运行时'} 实例开启服务控制授权`
                   "
                   @click="requestRuntimeAction(instance, 'start')"
                 >启动服务</button>
@@ -1023,7 +1024,7 @@ function serverStatusLabel(server: Server): string {
                   :title="
                     runtimeActionAvailable(instance)
                       ? '进入运维对话，发送后仍需人工审批'
-                      : '请先为该 systemd 实例开启服务控制授权'
+                      : `请先为该 ${instance.runtime_type || '运行时'} 实例开启服务控制授权`
                   "
                   @click="requestRuntimeAction(instance, 'stop')"
                 >停止服务</button>

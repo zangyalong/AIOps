@@ -24,7 +24,9 @@ def make_server() -> Server:
 
 
 class EnvironmentDeploymentServiceTests(unittest.IsolatedAsyncioTestCase):
-    async def test_allowlist_only_contains_authorized_systemd_instances(self) -> None:
+    async def test_allowlist_only_contains_authorized_controllable_instances(
+        self,
+    ) -> None:
         server = make_server()
         db = object()
         instances = [
@@ -59,7 +61,10 @@ class EnvironmentDeploymentServiceTests(unittest.IsolatedAsyncioTestCase):
                 db, server  # type: ignore[arg-type]
             )
 
-        self.assertEqual(result, "bt.service,nginx.service")
+        self.assertEqual(
+            result,
+            "docker:orders-api,systemd:bt.service,systemd:nginx.service",
+        )
         list_instances.assert_awaited_once_with(db, server_id=server.id)
 
     def test_payload_replaces_new_secret_and_preserves_existing_secret(self) -> None:
@@ -77,14 +82,17 @@ class EnvironmentDeploymentServiceTests(unittest.IsolatedAsyncioTestCase):
             server,
             config,
             secrets,
-            service_control_allowlist="bt.service,mysqld.service",
+            service_control_allowlist=(
+                "systemd:bt.service,systemd:mysqld.service"
+            ),
         )
 
         self.assertIn("MYSQL_SECRET=replace\n", payload.manifest)
         self.assertIn("POSTGRES_SECRET=delete\n", payload.manifest)
         self.assertIn("REDIS_SECRET=preserve\n", payload.manifest)
         self.assertIn(
-            "SERVICE_CONTROL_ALLOWLIST=bt.service,mysqld.service\n", payload.config
+            "SERVICE_CONTROL_ALLOWLIST=systemd:bt.service,systemd:mysqld.service\n",
+            payload.config,
         )
         self.assertIn(
             'password="my\\"sql\\\\secret"',

@@ -27,7 +27,8 @@ async def _apply_remote_policy(
     server: Server,
     *,
     action: PolicyAction,
-    service_name: str,
+    runtime_type: str,
+    runtime_name: str,
 ) -> str:
     try:
         params = build_connect_params(server)
@@ -39,7 +40,8 @@ async def _apply_remote_policy(
         raise ServiceControlPolicySyncError(str(exc)) from exc
 
     command = (
-        f"sudo -n -- {POLICY_GATEWAY} {action} {shlex.quote(service_name)}"
+        f"sudo -n -- {POLICY_GATEWAY} {action} "
+        f"{shlex.quote(runtime_type)} {shlex.quote(runtime_name)}"
     )
     try:
         async with asyncssh.connect(
@@ -74,6 +76,7 @@ async def update_control_authorization(
     """先同步目标机 root 白名单，再提交实例授权；数据库失败时尽力回滚远端。"""
     service_catalog_service.validate_control_target(instance)
     assert instance.server_id is not None
+    assert instance.runtime_type is not None
     assert instance.runtime_name is not None
 
     server = await server_service.get_server(db, instance.server_id)
@@ -84,7 +87,8 @@ async def update_control_authorization(
     await _apply_remote_policy(
         server,
         action=action,
-        service_name=instance.runtime_name,
+        runtime_type=instance.runtime_type,
+        runtime_name=instance.runtime_name,
     )
 
     previous = instance.control_enabled
@@ -100,7 +104,8 @@ async def update_control_authorization(
                 await _apply_remote_policy(
                     server,
                     action=rollback_action,
-                    service_name=instance.runtime_name,
+                    runtime_type=instance.runtime_type,
+                    runtime_name=instance.runtime_name,
                 )
             except ServiceControlPolicySyncError as rollback_exc:
                 raise ServiceControlPolicySyncError(

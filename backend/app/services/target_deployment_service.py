@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import re
 import shutil
+import stat
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,7 @@ from app.schemas.server import DeploymentBundleSecrets, TargetDeploymentConfig
 SERVER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")
 SSH_USER_PATTERN = re.compile(r"^[a-z_][a-z0-9_-]*[$]?$")
 SERVICE_UNIT_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@:-]*\.service$")
+DOCKER_CONTAINER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 DATABASE_SECRET_MAX_LENGTH = 4096
 BUNDLE_TIMEOUT_SECONDS = 60
 
@@ -31,6 +33,18 @@ class DeploymentBundleArtifact:
     temporary_root: Path
     sha256: str
     key_filename: str
+
+
+@dataclass(frozen=True)
+class _SSHKeyFileBackup:
+    content: bytes
+    mode: int
+
+
+@dataclass(frozen=True)
+class _SSHKeyPairBackup:
+    private_key: _SSHKeyFileBackup | None
+    public_key: _SSHKeyFileBackup | None
 
 
 def _bool(value: bool) -> str:
@@ -53,17 +67,29 @@ def _secret_value(secret: SecretStr | None, label: str) -> str | None:
 
 
 def _normalize_service_control_allowlist(raw_allowlist: str) -> str:
-    services: list[str] = []
+    targets: list[str] = []
     for raw in raw_allowlist.split(","):
-        service = raw.strip()
-        if not service:
+        entry = raw.strip()
+        if not entry:
             continue
-        if not SERVICE_UNIT_PATTERN.fullmatch(service):
+        if entry.startswith(("systemd:", "docker:")):
+            runtime_type, runtime_name = entry.split(":", 1)
+        else:
+            runtime_type, runtime_name = "systemd", entry
+        valid = (
+            runtime_type == "systemd"
+            and SERVICE_UNIT_PATTERN.fullmatch(runtime_name)
+        ) or (
+            runtime_type == "docker"
+            and DOCKER_CONTAINER_PATTERN.fullmatch(runtime_name)
+        )
+        if not valid:
             raise DeploymentBundleError(
-                f"SSH_SERVICE_CONTROL_ALLOWLIST 中的服务名不合法：{service}"
+                "SSH_SERVICE_CONTROL_ALLOWLIST 中的运行时身份不合法："
+                f"{entry}"
             )
-        services.append(service)
-    return ",".join(sorted(set(services)))
+        targets.append(f"{runtime_type}:{runtime_name}")
+    return ",".join(sorted(set(targets)))
 
 
 def _service_control_allowlist() -> str:
@@ -202,6 +228,59 @@ def _validate_server_identity(server: Server) -> None:
         raise DeploymentBundleError("AIOMS SSH 用户格式不合法且不能使用 root")
 
 
+def _deployment_ssh_key_paths(server: Server) -> tuple[Path, Path]:
+    _validate_server_identity(server)
+    private_key_path = settings.ssh_key_dir / f"{server.name}-{server.ssh_user}"
+    return private_key_path, Path(f"{private_key_path}.pub")
+
+
+def _backup_ssh_key_file(path: Path) -> _SSHKeyFileBackup | None:
+    if not path.exists() and not path.is_symlink():
+        return None
+    if path.is_symlink() or not path.is_file():
+        raise DeploymentBundleError(f"SSH 密钥路径必须是普通文件：{path}")
+    return _SSHKeyFileBackup(
+        content=path.read_bytes(),
+        mode=stat.S_IMODE(path.stat().st_mode),
+    )
+
+
+def remove_deployment_ssh_key_pair(server: Server) -> _SSHKeyPairBackup:
+    """只删除当前服务器固定命名的密钥对，并保留失败回滚所需内容。"""
+    private_key_path, public_key_path = _deployment_ssh_key_paths(server)
+    backup = _SSHKeyPairBackup(
+        private_key=_backup_ssh_key_file(private_key_path),
+        public_key=_backup_ssh_key_file(public_key_path),
+    )
+    try:
+        private_key_path.unlink(missing_ok=True)
+        public_key_path.unlink(missing_ok=True)
+    except Exception:
+        restore_deployment_ssh_key_pair(server, backup)
+        raise
+    return backup
+
+
+def restore_deployment_ssh_key_pair(
+    server: Server, backup: _SSHKeyPairBackup
+) -> None:
+    """删除本次可能生成的新密钥，并恢复打包前的原密钥对。"""
+    private_key_path, public_key_path = _deployment_ssh_key_paths(server)
+    for path, saved in (
+        (private_key_path, backup.private_key),
+        (public_key_path, backup.public_key),
+    ):
+        if path.exists() or path.is_symlink():
+            if path.is_symlink() or path.is_file():
+                path.unlink()
+            else:
+                raise DeploymentBundleError(f"无法安全恢复 SSH 密钥，路径不是文件：{path}")
+        if saved is not None:
+            path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            path.write_bytes(saved.content)
+            path.chmod(saved.mode)
+
+
 def cleanup_bundle(temporary_root: Path) -> None:
     shutil.rmtree(temporary_root, ignore_errors=True)
 
@@ -211,6 +290,7 @@ async def build_deployment_bundle(
     secrets: DeploymentBundleSecrets,
     *,
     service_control_allowlist: str | None = None,
+    regenerate_ssh_key_pair: bool = False,
 ) -> DeploymentBundleArtifact:
     _validate_server_identity(server)
     try:
@@ -222,6 +302,7 @@ async def build_deployment_bundle(
     assets_dir = temporary_root / "assets"
     output_dir = temporary_root / "output"
     config_path = temporary_root / "deploy.conf"
+    key_pair_backup: _SSHKeyPairBackup | None = None
 
     try:
         assets_dir.mkdir(mode=0o700)
@@ -239,6 +320,9 @@ async def build_deployment_bundle(
         script_path = settings.target_server_scripts_dir / "make-bundle.sh"
         if not script_path.is_file():
             raise DeploymentBundleError(f"目标服务器打包脚本不存在：{script_path}")
+
+        if regenerate_ssh_key_pair:
+            key_pair_backup = remove_deployment_ssh_key_pair(server)
 
         process = await asyncio.create_subprocess_exec(
             str(script_path),
@@ -286,5 +370,7 @@ async def build_deployment_bundle(
             key_filename=f"{server.name}-{server.ssh_user}",
         )
     except Exception:
+        if key_pair_backup is not None:
+            restore_deployment_ssh_key_pair(server, key_pair_backup)
         cleanup_bundle(temporary_root)
         raise

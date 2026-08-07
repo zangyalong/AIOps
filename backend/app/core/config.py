@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     prometheus_rules_path: Path = (
         REPO_ROOT / "docker" / "prometheus-rules" / "managed_alert_rules.yml"
     )
-    # 有副作用的 systemd 启停/重启工具共用独立白名单；默认空字符串=禁止全部服务控制。
+    # 有副作用的 systemd / Docker 启停重启工具共用独立白名单；空字符串=禁止全部控制。
     ssh_service_control_allowlist: str = ""
     # 兼容旧环境变量；新配置优先使用 SSH_SERVICE_CONTROL_ALLOWLIST。
     ssh_restart_service_allowlist: str = ""

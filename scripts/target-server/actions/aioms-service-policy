@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -euo pipefail
-PATH=/usr/sbin:/usr/bin:/sbin:/bin
+PATH=/usr/sbin:/usr/bin:/usr/local/bin:/sbin:/bin
 
 fail() {
     echo "aioms-service-policy: $*" >&2
@@ -9,30 +9,42 @@ fail() {
 }
 
 [[ $EUID -eq 0 ]] || fail "必须由 root 通过 sudoers 调用"
-[[ $# -eq 2 ]] || fail "用法：aioms-service-policy add|remove SERVICE.service"
+[[ $# -eq 3 ]] ||
+    fail "用法：aioms-service-policy add|remove systemd|docker RUNTIME_NAME"
 
 readonly ACTION="$1"
-readonly SERVICE="$2"
+readonly RUNTIME_TYPE="$2"
+readonly RUNTIME_NAME="$3"
 readonly POLICY_DIR="/etc/aioms"
 readonly ALLOWLIST="$POLICY_DIR/service-control.allowlist"
 readonly LOCK_FILE="/run/lock/aioms-service-policy.lock"
+readonly SERVICE_PATTERN='^[A-Za-z0-9][A-Za-z0-9_.@:-]*\.service$'
+readonly CONTAINER_PATTERN='^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$'
+readonly TARGET="$RUNTIME_TYPE:$RUNTIME_NAME"
 
 case "$ACTION" in
     add|remove) ;;
     *) fail "不支持的动作：$ACTION" ;;
 esac
+case "$RUNTIME_TYPE" in
+    systemd)
+        [[ "$RUNTIME_NAME" =~ $SERVICE_PATTERN ]] ||
+            fail "systemd 运行对象必须是明确的 .service 单元"
+        ;;
+    docker)
+        [[ "$RUNTIME_NAME" =~ $CONTAINER_PATTERN ]] ||
+            fail "Docker 运行对象必须是明确的容器名"
+        ;;
+    *) fail "运行类型只允许 systemd 或 docker" ;;
+esac
 
-[[ "$SERVICE" =~ ^[A-Za-z0-9][A-Za-z0-9_.@:-]*\.service$ ]] ||
-    fail "服务名必须是明确的 systemd .service 单元"
 [[ -d "$POLICY_DIR" && ! -L "$POLICY_DIR" ]] ||
     fail "策略目录不存在或不安全：$POLICY_DIR"
 [[ -f "$ALLOWLIST" && ! -L "$ALLOWLIST" ]] ||
     fail "服务控制白名单不存在或不安全：$ALLOWLIST"
-
 read -r dir_owner dir_mode < <(stat -c '%u %a' "$POLICY_DIR")
 [[ "$dir_owner" == "0" ]] || fail "策略目录必须由 root 持有"
 (( (8#$dir_mode & 8#022) == 0 )) || fail "策略目录不能由组或其他用户写入"
-
 read -r owner mode < <(stat -c '%u %a' "$ALLOWLIST")
 [[ "$owner" == "0" ]] || fail "白名单必须由 root 持有"
 (( (8#$mode & 8#022) == 0 )) || fail "白名单不能由组或其他用户写入"
@@ -46,17 +58,39 @@ while IFS= read -r raw || [[ -n "$raw" ]]; do
     line="${line#"${line%%[![:space:]]*}"}"
     line="${line%"${line##*[![:space:]]}"}"
     [[ -z "$line" ]] && continue
-    [[ "$line" =~ ^[A-Za-z0-9][A-Za-z0-9_.@:-]*\.service$ ]] ||
+    if [[ "$line" =~ $SERVICE_PATTERN ]]; then
+        line="systemd:$line"
+    fi
+    if [[ "$line" =~ ^systemd:(.+)$ ]]; then
+        [[ "${BASH_REMATCH[1]}" =~ $SERVICE_PATTERN ]] ||
+            fail "现有白名单包含不合法条目：$line"
+    elif [[ "$line" =~ ^docker:(.+)$ ]]; then
+        [[ "${BASH_REMATCH[1]}" =~ $CONTAINER_PATTERN ]] ||
+            fail "现有白名单包含不合法条目：$line"
+    else
         fail "现有白名单包含不合法条目：$line"
+    fi
     entries+=("$line")
 done <"$ALLOWLIST"
 
 if [[ "$ACTION" == "add" ]]; then
-    load_state="$(systemctl show --property=LoadState --value -- "$SERVICE" 2>&1)" ||
-        fail "无法核对服务 $SERVICE：$load_state"
-    [[ "$load_state" == "loaded" ]] ||
-        fail "服务 $SERVICE 未加载（LoadState=$load_state）"
-    entries+=("$SERVICE")
+    if [[ "$RUNTIME_TYPE" == "systemd" ]]; then
+        load_state="$(systemctl show --property=LoadState --value -- "$RUNTIME_NAME" 2>&1)" ||
+            fail "无法核对服务 $RUNTIME_NAME：$load_state"
+        [[ "$load_state" == "loaded" ]] ||
+            fail "服务 $RUNTIME_NAME 未加载（LoadState=$load_state）"
+    else
+        docker_bin=""
+        for candidate in /usr/bin/docker /usr/local/bin/docker; do
+            [[ -x "$candidate" ]] && docker_bin="$candidate" && break
+        done
+        [[ -n "$docker_bin" ]] || fail "没有找到 Docker CLI"
+        actual_name="$($docker_bin inspect --format '{{.Name}}' "$RUNTIME_NAME" 2>&1)" ||
+            fail "无法核对 Docker 容器 $RUNTIME_NAME：$actual_name"
+        [[ "$actual_name" == "/$RUNTIME_NAME" ]] ||
+            fail "Docker 容器名称核对不一致：$actual_name"
+    fi
+    entries+=("$TARGET")
 fi
 
 tmp="$(mktemp "$POLICY_DIR/.service-control.allowlist.XXXXXX")"
@@ -69,7 +103,7 @@ if [[ "$ACTION" == "add" ]]; then
     printf '%s\n' "${entries[@]}" | sort -u >"$tmp"
 else
     for entry in "${entries[@]}"; do
-        [[ "$entry" == "$SERVICE" ]] || printf '%s\n' "$entry"
+        [[ "$entry" == "$TARGET" ]] || printf '%s\n' "$entry"
     done | sort -u >"$tmp"
 fi
 
@@ -79,11 +113,11 @@ mv -f -- "$tmp" "$ALLOWLIST"
 trap - EXIT
 
 if [[ "$ACTION" == "add" ]]; then
-    grep -Fxq -- "$SERVICE" "$ALLOWLIST" || fail "加入白名单后复核失败"
-    echo "已将 $SERVICE 加入目标服务器服务控制白名单。"
+    grep -Fxq -- "$TARGET" "$ALLOWLIST" || fail "加入白名单后复核失败"
+    echo "已将 $TARGET 加入目标服务器服务控制白名单。"
 else
-    if grep -Fxq -- "$SERVICE" "$ALLOWLIST"; then
+    if grep -Fxq -- "$TARGET" "$ALLOWLIST"; then
         fail "移出白名单后复核失败"
     fi
-    echo "已将 $SERVICE 移出目标服务器服务控制白名单。"
+    echo "已将 $TARGET 移出目标服务器服务控制白名单。"
 fi

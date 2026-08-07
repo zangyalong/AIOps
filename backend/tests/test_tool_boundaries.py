@@ -23,9 +23,18 @@ class _FakeConnection:
     async def run(self, command: str, **kwargs: object) -> SimpleNamespace:
         del kwargs
         self.commands.append(command)
-        action = command.split()[-2]
+        action = command.split()[-3]
+        runtime_type = command.split()[-2]
         service = command.split()[-1]
-        state = "inactive" if action == "stop" else "active"
+        state = (
+            "inactive"
+            if action == "stop" and runtime_type == "systemd"
+            else "exited"
+            if action == "stop"
+            else "active"
+            if runtime_type == "systemd"
+            else "running"
+        )
         return SimpleNamespace(
             exit_status=0,
             stdout=f"已{action}服务 {service}；当前状态：{state}。\n",
@@ -115,7 +124,10 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(action["risk_level"], "high")
         self.assertEqual(action["kind"], "service_restart")
         self.assertEqual(action["server_name"], "demo")
-        self.assertIn("aioms-service-control restart nginx.service", action["command"])
+        self.assertIn(
+            "aioms-service-control restart systemd nginx.service",
+            action["command"],
+        )
 
         start_action = catalog.describe_write_action(
             {
@@ -135,7 +147,27 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(stop_action["risk_level"], "high")
         self.assertEqual(stop_action["kind"], "service_stop")
-        self.assertIn("aioms-service-control stop bt.service", stop_action["command"])
+        self.assertIn(
+            "aioms-service-control stop systemd bt.service", stop_action["command"]
+        )
+
+        docker_stop_action = catalog.describe_write_action(
+            {
+                "id": "docker-stop-1",
+                "name": "stop_service",
+                "args": {
+                    "server_name": "demo",
+                    "service_name": "orders-api",
+                    "runtime_type": "docker",
+                },
+            }
+        )
+        self.assertEqual(docker_stop_action["risk_level"], "high")
+        self.assertEqual(docker_stop_action["runtime_type"], "docker")
+        self.assertIn(
+            "aioms-service-control stop docker orders-api",
+            docker_stop_action["command"],
+        )
 
         rule_action = catalog.describe_write_action(
             {
@@ -313,11 +345,65 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             connection.commands,
             [
-                "sudo -n -- /usr/local/sbin/aioms-service-control restart nginx.service",
-                "sudo -n -- /usr/local/sbin/aioms-service-control start bt.service",
-                "sudo -n -- /usr/local/sbin/aioms-service-control stop bt.service",
+                "sudo -n -- /usr/local/sbin/aioms-service-control restart systemd nginx.service",
+                "sudo -n -- /usr/local/sbin/aioms-service-control start systemd bt.service",
+                "sudo -n -- /usr/local/sbin/aioms-service-control stop systemd bt.service",
             ],
         )
         self.assertIn("当前状态：active", restart_result)
         self.assertIn("当前状态：active", start_result)
         self.assertIn("当前状态：inactive", stop_result)
+
+    async def test_docker_control_reuses_service_tools_and_gateway(self) -> None:
+        server = SimpleNamespace(
+            id="server-id", name="demo", ip_address="127.0.0.1"
+        )
+        instance = SimpleNamespace(control_enabled=True)
+        connection = _FakeConnection()
+
+        with (
+            patch.object(actions, "AsyncSessionLocal", return_value=_SessionContext()),
+            patch.object(
+                actions.server_service,
+                "get_server_by_name_or_ip",
+                AsyncMock(return_value=server),
+            ),
+            patch.object(
+                actions.service_catalog_service,
+                "get_instance_by_runtime_identity",
+                AsyncMock(return_value=instance),
+            ) as get_instance,
+            patch.object(
+                actions,
+                "build_connect_params",
+                return_value=SimpleNamespace(
+                    host="127.0.0.1",
+                    port=22,
+                    username="ops",
+                    client_keys=["test-key"],
+                ),
+            ),
+            patch.object(
+                actions.asyncssh,
+                "connect",
+                return_value=_ConnectionContext(connection),
+            ),
+        ):
+            result = await actions.stop_service.ainvoke(
+                {
+                    "server_name": "demo",
+                    "service_name": "orders-api",
+                    "runtime_type": "docker",
+                }
+            )
+
+        self.assertEqual(get_instance.await_args.kwargs["runtime_type"], "docker")
+        self.assertEqual(get_instance.await_args.kwargs["runtime_name"], "orders-api")
+        self.assertEqual(
+            connection.commands,
+            [
+                "sudo -n -- /usr/local/sbin/aioms-service-control "
+                "stop docker orders-api"
+            ],
+        )
+        self.assertIn("当前状态：exited", result)
