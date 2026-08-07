@@ -26,7 +26,8 @@ from app.agents.tools.actions import restart_service, start_service, stop_servic
 from app.agents.tools.alert_rules import create_alert_rule
 from app.agents.tools.alerts import query_alerts
 from app.agents.tools.catalog import (
-    describe_write_action,
+    OPERATION_BROKER,
+    build_scoped_operation_broker,
     ensure_read_tools,
     ensure_write_tools,
     get_operation_spec,
@@ -59,8 +60,7 @@ from app.agents.tools.service_discovery import (
 )
 from app.agents.tools.service_topology import query_server_services
 from app.core.config import settings
-from app.operations.policy import evaluate_operation
-from app.operations.schemas import ApprovalDecision, OperationContext
+from app.operations.schemas import ApprovalDecision, OperationCall, OperationContext
 
 AgentName = Literal[
     "metrics_agent",
@@ -524,6 +524,7 @@ async def specialist_tools_node(agent_name: AgentName, state: SpecialistState) -
         *SPECIALIST_WRITE_TOOLS[agent_name],
     ]
     tool_map = {tool.name: tool for tool in assigned_tools}
+    operation_broker = build_scoped_operation_broker(assigned_tools)
     approval = ApprovalDecision.from_mapping(state.get("approval"))
     allow_write = state.get("allow_write_tools", False)
     operation_context = OperationContext(
@@ -540,23 +541,25 @@ async def specialist_tools_node(agent_name: AgentName, state: SpecialistState) -
                 content=f"{agent_name} 无权调用工具 {name}，已拒绝执行。",
                 status="error",
             )
-        elif (operation_spec := get_operation_spec(name)) is None:
-            result = _tool_message(
-                tool_call=tool_call,
-                content=f"工具 {name} 未在统一操作目录登记，已拒绝执行。",
-                status="error",
-            )
-        elif (
-            policy_decision := evaluate_operation(operation_spec, operation_context)
-        ).result != "allow":
-            result = _tool_message(
-                tool_call=tool_call,
-                content=policy_decision.reason,
-                status="error",
-            )
         else:
             try:
-                raw_result = await tool_map[name].ainvoke(tool_call)
+                operation_call = OperationCall.from_tool_call(tool_call)
+                prepared = operation_broker.prepare(
+                    operation_call,
+                    operation_context,
+                )
+                if prepared.decision.result != "allow":
+                    result = _tool_message(
+                        tool_call=tool_call,
+                        content=prepared.decision.reason,
+                        status="error",
+                    )
+                    results.append(result)
+                    continue
+                raw_result = await operation_broker.execute(
+                    operation_call,
+                    operation_context,
+                )
                 content = (
                     raw_result.content
                     if isinstance(raw_result, ToolMessage)
@@ -593,11 +596,17 @@ async def approval_node(state: SpecialistState) -> dict:
     """基础设施专家子图中的人工审批门；interrupt 会由父图的 checkpointer 持久化。"""
     last = state["work_messages"][-1]
     assert isinstance(last, AIMessage)
-    pending = [
-        describe_write_action(tool_call)
-        for tool_call in last.tool_calls
-        if is_write_tool(tool_call["name"])
-    ]
+    context = OperationContext(write_enabled=True, approval=None)
+    pending: list[dict] = []
+    for tool_call in last.tool_calls:
+        if not is_write_tool(tool_call["name"]):
+            continue
+        prepared = OPERATION_BROKER.prepare(
+            OperationCall.from_tool_call(tool_call),
+            context,
+        )
+        if prepared.approval_view is not None:
+            pending.append(dict(prepared.approval_view))
     decision = interrupt({"actions": pending})
     return {"approval": decision}
 
@@ -611,10 +620,13 @@ def route_after_specialist(state: SpecialistState) -> str:
         approval=None,
     )
     for tool_call in last.tool_calls:
-        spec = get_operation_spec(tool_call["name"])
-        if spec is not None and evaluate_operation(spec, context).result == (
-            "approval_required"
-        ):
+        if get_operation_spec(tool_call["name"]) is None:
+            continue
+        prepared = OPERATION_BROKER.prepare(
+            OperationCall.from_tool_call(tool_call),
+            context,
+        )
+        if prepared.decision.result == "approval_required":
             return "approval"
     return "tools"
 

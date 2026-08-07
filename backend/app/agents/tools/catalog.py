@@ -43,7 +43,14 @@ from app.agents.tools.service_discovery import (
     register_server_services,
 )
 from app.agents.tools.service_topology import query_server_services
-from app.operations.schemas import OperationSpec, RiskLevel
+from app.operations.broker import OperationBroker
+from app.operations.registry import OperationRegistry, RegisteredOperation
+from app.operations.schemas import (
+    OperationCall,
+    OperationContext,
+    OperationSpec,
+    RiskLevel,
+)
 
 ActionDetailsBuilder = Callable[[dict[str, Any]], dict[str, Any]]
 
@@ -274,22 +281,66 @@ TOOLS_BY_NAME: Mapping[str, BaseTool] = MappingProxyType(
     {**_read_by_name, **dict(WRITE_TOOLS_BY_NAME)}
 )
 WRITE_TOOL_NAMES = frozenset(WRITE_TOOLS_BY_NAME)
-OPERATION_SPECS: Mapping[str, OperationSpec] = MappingProxyType(
-    {
-        **{
-            name: OperationSpec(name=name, effect="read", risk_level="low")
-            for name in READ_TOOLS_BY_NAME
-        },
-        **{
-            name: OperationSpec(
-                name=name,
-                effect="write",
-                risk_level=write_spec.risk_level,
-            )
-            for name, write_spec in WRITE_TOOL_SPECS.items()
-        },
-    }
+
+
+def _registered_read_operation(tool: BaseTool) -> RegisteredOperation:
+    async def execute(call: OperationCall) -> Any:
+        return await tool.ainvoke(call.as_tool_call())
+
+    return RegisteredOperation(
+        spec=OperationSpec(name=tool.name, effect="read", risk_level="low"),
+        executor=execute,
+    )
+
+
+def _registered_write_operation(write_spec: WriteToolSpec) -> RegisteredOperation:
+    async def execute(call: OperationCall) -> Any:
+        return await write_spec.tool.ainvoke(call.as_tool_call())
+
+    def build_approval_view(call: OperationCall) -> Mapping[str, Any]:
+        return write_spec.pending_action(call.as_tool_call())
+
+    return RegisteredOperation(
+        spec=OperationSpec(
+            name=write_spec.tool.name,
+            effect="write",
+            risk_level=write_spec.risk_level,
+        ),
+        executor=execute,
+        build_approval_view=build_approval_view,
+    )
+
+
+OPERATION_REGISTRY = OperationRegistry(
+    [
+        *(_registered_read_operation(tool) for tool in READ_TOOLS_BY_NAME.values()),
+        *(
+            _registered_write_operation(write_spec)
+            for write_spec in WRITE_TOOL_SPECS.values()
+        ),
+    ]
 )
+OPERATION_BROKER = OperationBroker(OPERATION_REGISTRY)
+OPERATION_SPECS: Mapping[str, OperationSpec] = OPERATION_REGISTRY.specs
+
+
+def build_scoped_operation_broker(tools: Iterable[BaseTool]) -> OperationBroker:
+    """为专家已获配的工具构造 Broker，安全元数据仍只取自中央注册表。"""
+    scoped: list[RegisteredOperation] = []
+    for tool in tools:
+        registered = OPERATION_REGISTRY.require(tool.name)
+
+        async def execute(call: OperationCall, current_tool: BaseTool = tool) -> Any:
+            return await current_tool.ainvoke(call.as_tool_call())
+
+        scoped.append(
+            RegisteredOperation(
+                spec=registered.spec,
+                executor=execute,
+                build_approval_view=registered.build_approval_view,
+            )
+        )
+    return OperationBroker(OperationRegistry(scoped))
 
 
 def get_operation_spec(tool_name: str) -> OperationSpec | None:
@@ -302,11 +353,15 @@ def is_write_tool(tool_name: str) -> bool:
 
 
 def describe_write_action(tool_call: dict[str, Any]) -> dict[str, Any]:
-    name = str(tool_call.get("name") or "")
-    spec = WRITE_TOOL_SPECS.get(name)
-    if spec is None:
-        raise ValueError(f"{name or '未知工具'} 不是已注册的写工具")
-    return spec.pending_action(tool_call)
+    call = OperationCall.from_tool_call(tool_call)
+    spec = get_operation_spec(call.name)
+    if spec is None or spec.effect != "write":
+        raise ValueError(f"{call.name or '未知工具'} 不是已注册的写工具")
+    prepared = OPERATION_BROKER.prepare(
+        call,
+        OperationContext(write_enabled=True, approval=None),
+    )
+    return dict(prepared.approval_view or {})
 
 
 def ensure_read_tools(tools: Iterable[BaseTool]) -> None:
