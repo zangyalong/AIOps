@@ -69,6 +69,10 @@ const TOOL_LABELS: Record<string, string> = {
   discover_server_services: '发现服务器运行服务',
   register_server_services: '注册服务目录',
   run_diagnostic_command: '执行只读诊断',
+  find_server_files: '查找服务器文件',
+  read_server_file: '读取服务器文件',
+  preview_server_file_update: '预览服务器文件变更',
+  update_server_file: '更新服务器文件',
   start_service: '启动服务',
   stop_service: '停止服务',
   restart_service: '重启服务',
@@ -90,6 +94,7 @@ const WRITE_TOOLS = new Set([
   'restart_service',
   'apply_server_log_config',
   'deploy_server_environment',
+  'update_server_file',
   'run_whitelisted_command',
 ])
 
@@ -103,6 +108,7 @@ const HIGH_RISK_TOOLS = new Set([
   'restart_service',
   'apply_server_log_config',
   'deploy_server_environment',
+  'update_server_file',
 ])
 
 function historyApprovalCommand(name: string, args: Record<string, unknown>): string {
@@ -126,6 +132,9 @@ function historyApprovalCommand(name: string, args: Record<string, unknown>): st
   }
   if (name === 'deploy_server_environment') {
     return `自动部署 ${String(args.server_name ?? '?')} 的环境配置`
+  }
+  if (name === 'update_server_file') {
+    return String(args.preview_diff ?? `更新 ${String(args.path ?? '?')}`)
   }
   return String(args.command ?? name)
 }
@@ -641,7 +650,7 @@ onBeforeUnmount(() => {
             <dd><code>{{ confirmationApproval.command }}</code></dd>
           </div>
         </dl>
-        <p class="confirm-tip">请核对服务器、服务名称和动作。确认后操作可能造成服务中断。</p>
+        <p class="confirm-tip">请核对目标、具体变更和影响。确认后操作可能造成服务中断或配置变化。</p>
         <p v-if="error" class="confirm-error">{{ error }}</p>
         <div class="confirm-actions">
           <button type="button" class="confirm-cancel" :disabled="sending" @click="closeConfirmation">取消</button>
@@ -863,6 +872,7 @@ h1 {
   background: var(--color-surface);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.82rem;
+  white-space: pre-wrap;
   word-break: break-all;
 }
 

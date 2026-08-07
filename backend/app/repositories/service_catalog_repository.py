@@ -5,7 +5,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.service_catalog import Service, ServiceInstance
+from app.models.service_catalog import Service, ServiceFileAccess, ServiceInstance
 
 
 async def list_services(
@@ -130,4 +130,57 @@ async def save_instance(db: AsyncSession, instance: ServiceInstance) -> ServiceI
 
 async def delete_instance(db: AsyncSession, instance: ServiceInstance) -> None:
     await db.delete(instance)
+    await db.commit()
+
+
+async def list_file_accesses(
+    db: AsyncSession,
+    *,
+    service_instance_id: uuid.UUID | None = None,
+) -> list[ServiceFileAccess]:
+    stmt = select(ServiceFileAccess).order_by(
+        ServiceFileAccess.service_instance_id,
+        ServiceFileAccess.access_level,
+        ServiceFileAccess.path,
+    )
+    if service_instance_id is not None:
+        stmt = stmt.where(
+            ServiceFileAccess.service_instance_id == service_instance_id
+        )
+    return list(await db.scalars(stmt))
+
+
+async def get_file_access(
+    db: AsyncSession, access_id: uuid.UUID
+) -> ServiceFileAccess | None:
+    return await db.get(ServiceFileAccess, access_id)
+
+
+async def get_file_access_by_identity(
+    db: AsyncSession,
+    *,
+    service_instance_id: uuid.UUID,
+    access_level: str,
+    path: str,
+) -> ServiceFileAccess | None:
+    return await db.scalar(
+        select(ServiceFileAccess).where(
+            ServiceFileAccess.service_instance_id == service_instance_id,
+            ServiceFileAccess.access_level == access_level,
+            ServiceFileAccess.path == path,
+        )
+    )
+
+
+async def create_file_access(
+    db: AsyncSession, access: ServiceFileAccess
+) -> ServiceFileAccess:
+    db.add(access)
+    await db.commit()
+    await db.refresh(access)
+    return access
+
+
+async def delete_file_access(db: AsyncSession, access: ServiceFileAccess) -> None:
+    await db.delete(access)
     await db.commit()

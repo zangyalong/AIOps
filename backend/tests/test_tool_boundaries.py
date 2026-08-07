@@ -59,6 +59,9 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("run_diagnostic_command", catalog.READ_TOOLS_BY_NAME)
         self.assertIn("discover_server_services", catalog.READ_TOOLS_BY_NAME)
         self.assertIn("preview_server_log_config", catalog.READ_TOOLS_BY_NAME)
+        self.assertIn("find_server_files", catalog.READ_TOOLS_BY_NAME)
+        self.assertIn("read_server_file", catalog.READ_TOOLS_BY_NAME)
+        self.assertIn("preview_server_file_update", catalog.READ_TOOLS_BY_NAME)
         self.assertIn("query_server_services", catalog.READ_TOOLS_BY_NAME)
         self.assertNotIn("run_diagnostic_command", catalog.WRITE_TOOLS_BY_NAME)
         self.assertIn("restart_service", catalog.WRITE_TOOLS_BY_NAME)
@@ -68,6 +71,7 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("register_server_services", catalog.WRITE_TOOLS_BY_NAME)
         self.assertIn("apply_server_log_config", catalog.WRITE_TOOLS_BY_NAME)
         self.assertIn("deploy_server_environment", catalog.WRITE_TOOLS_BY_NAME)
+        self.assertIn("update_server_file", catalog.WRITE_TOOLS_BY_NAME)
         self.assertFalse(
             set(catalog.READ_TOOLS_BY_NAME) & set(catalog.WRITE_TOOLS_BY_NAME)
         )
@@ -111,6 +115,15 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn(
             "create_alert_rule",
             {tool.name for tool in chat_graph.SPECIALIST_WRITE_TOOLS["incident_agent"]},
+        )
+        self.assertIn(
+            "update_server_file",
+            {
+                tool.name
+                for tool in chat_graph.SPECIALIST_WRITE_TOOLS[
+                    "infrastructure_agent"
+                ]
+            },
         )
         self.assertIn("必须使用简体中文", chat_graph.SIMPLIFIED_CHINESE_REQUIREMENT)
 

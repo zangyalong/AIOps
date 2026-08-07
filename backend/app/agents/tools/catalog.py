@@ -31,6 +31,12 @@ from app.agents.tools.server_log_config import (
     apply_server_log_config,
     preview_server_log_config,
 )
+from app.agents.tools.server_files import (
+    find_server_files,
+    preview_server_file_update,
+    read_server_file,
+    update_server_file,
+)
 from app.agents.tools.servers import query_servers
 from app.agents.tools.service_discovery import (
     discover_server_services,
@@ -165,6 +171,20 @@ def _deploy_server_environment_action(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _update_server_file_action(args: dict[str, Any]) -> dict[str, Any]:
+    server = str(args.get("server_name") or "?")
+    path = str(args.get("path") or "?")
+    preview_diff = str(args.get("preview_diff") or "（缺少差异预览）")
+    return {
+        "kind": "server_file_update",
+        "title": f"更新 {server} 上的文件 {path}",
+        "server_name": server,
+        "path": path,
+        "command": preview_diff,
+        "preview_hash": str(args.get("preview_hash") or ""),
+    }
+
+
 READ_TOOLS: tuple[BaseTool, ...] = (
     query_servers,
     run_diagnostic_command,
@@ -179,6 +199,9 @@ READ_TOOLS: tuple[BaseTool, ...] = (
     query_server_services,
     discover_server_services,
     preview_server_log_config,
+    find_server_files,
+    read_server_file,
+    preview_server_file_update,
 )
 
 _WRITE_SPECS = (
@@ -216,6 +239,11 @@ _WRITE_SPECS = (
         tool=deploy_server_environment,
         risk_level="high",
         build_action_details=_deploy_server_environment_action,
+    ),
+    WriteToolSpec(
+        tool=update_server_file,
+        risk_level="high",
+        build_action_details=_update_server_file_action,
     ),
 )
 

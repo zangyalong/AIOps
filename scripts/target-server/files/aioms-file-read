@@ -1,0 +1,75 @@
+#!/bin/bash
+
+set -euo pipefail
+PATH=/usr/sbin:/usr/bin:/usr/local/bin:/sbin:/bin
+AIOMS_FILE_GATEWAY="aioms-file-read"
+readonly COMMON="/usr/local/libexec/aioms/file-common"
+[[ -f "$COMMON" && ! -L "$COMMON" ]] || {
+    echo "aioms-file-read: 缺少 root 所有的公共校验器" >&2
+    exit 1
+}
+# shellcheck source=aioms-file-common
+source "$COMMON"
+
+require_root_gateway
+validate_policy_file
+[[ $# -ge 2 ]] || file_fail "用法：aioms-file-read find ROOT NAME_PATTERN | read FILE"
+
+case "$1" in
+    find)
+        [[ $# -eq 3 ]] || file_fail "find 需要授权根路径和文件名模式"
+        root="$(canonical_existing_path "$2")"
+        pattern="$3"
+        reject_sensitive_path "$root"
+        [[ -d "$root" ]] || file_fail "find 的授权根路径必须是目录"
+        policy_allows_read "$root" || file_fail "目录未获得读取授权：$root"
+        [[ "$pattern" =~ ^[A-Za-z0-9_.@*?-]{1,100}$ ]] ||
+            file_fail "文件名模式只允许字母、数字、._@*?-"
+
+        count=0
+        while IFS= read -r candidate; do
+            canonical="$(realpath -e -- "$candidate" 2>/dev/null || true)"
+            [[ -n "$canonical" && -f "$canonical" && ! -L "$candidate" ]] || continue
+            case "$canonical" in
+                /proc|/proc/*|/sys|/sys/*|/dev|/dev/*|/etc/shadow|/etc/shadow-*|/etc/gshadow|/etc/gshadow-*|/etc/sudoers|/etc/sudoers.d/*|/etc/ssl/private/*|/root/.ssh/*|*/.ssh/id_*|*/.ssh/authorized_keys|*/.aws/credentials|*/.docker/config.json|*/.kube/config|/run/secrets/*|/run/credentials/*|/var/run/secrets/*|/var/lib/docker/*|/var/lib/kubelet/*|*/kubernetes.io/serviceaccount/*|*/kubernetes.io~secret/*|*.key|*.pem|*.p12|*.pfx) continue ;;
+            esac
+            printf '%s\n' "$canonical"
+            ((count += 1))
+            ((count < 100)) || break
+        done < <(find -P "$root" -xdev -maxdepth 5 -type f -name "$pattern" -size -"${MAX_FILE_BYTES}"c 2>/dev/null | LC_ALL=C sort)
+        ;;
+    read)
+        [[ $# -eq 2 ]] || file_fail "read 只接受一个绝对文件路径"
+        file="$(canonical_existing_path "$2")"
+        reject_sensitive_path "$file"
+        policy_allows_read "$file" || file_fail "文件不在已授权读取范围：$file"
+        validate_text_file "$file"
+        if LC_ALL=C grep -q -- '-----BEGIN .*PRIVATE KEY-----' "$file"; then
+            file_fail "文件包含私钥，禁止交给 Agent"
+        fi
+
+        sha="$(sha256sum "$file" | awk '{print $1}')"
+        redacted=false
+        if LC_ALL=C grep -Eiq '(password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|credential|authorization)"?[[:space:]]*[:=]|://[^[:space:]/:@]+:[^[:space:]@]+@' "$file"; then
+            redacted=true
+        fi
+        printf 'PATH=%s\nSHA256=%s\nREDACTED=%s\n---\n' "$file" "$sha" "$redacted"
+        awk '
+            {
+                line=$0
+                lower=tolower(line)
+                if (lower ~ /(password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|credential|authorization)"?[[:space:]]*[:=]/ ||
+                    line ~ /:\/\/[^[:space:]\/:@]+:[^[:space:]@]+@/) {
+                    match(line, /^[[:space:]]*/)
+                    prefix=substr(line, 1, RLENGTH)
+                    key=line
+                    sub(/[=:].*$/, "", key)
+                    print prefix key "=[已脱敏]"
+                } else {
+                    print line
+                }
+            }
+        ' "$file"
+        ;;
+    *) file_fail "只允许 find 或 read" ;;
+esac

@@ -1,0 +1,64 @@
+#!/bin/bash
+
+set -euo pipefail
+PATH=/usr/sbin:/usr/bin:/usr/local/bin:/sbin:/bin
+AIOMS_FILE_GATEWAY="aioms-file-policy"
+readonly COMMON="/usr/local/libexec/aioms/file-common"
+[[ -f "$COMMON" && ! -L "$COMMON" ]] || {
+    echo "aioms-file-policy: 缺少 root 所有的公共校验器" >&2
+    exit 1
+}
+# shellcheck source=aioms-file-common
+source "$COMMON"
+
+require_root_gateway
+validate_policy_file
+[[ $# -eq 3 ]] || file_fail "用法：aioms-file-policy add|remove read|write ABSOLUTE_PATH"
+action="$1"
+access="$2"
+requested="$3"
+[[ "$action" == "add" || "$action" == "remove" ]] || file_fail "动作只允许 add 或 remove"
+[[ "$access" == "read" || "$access" == "write" ]] || file_fail "权限只允许 read 或 write"
+
+if [[ "$action" == "add" ]]; then
+    canonical="$(canonical_existing_path "$requested")"
+else
+    [[ "$requested" == /* && "$requested" != *$'\n'* && "$requested" != *$'\r'* ]] ||
+        file_fail "必须提供不含换行的绝对路径"
+    canonical="$(realpath -m -- "$requested")"
+fi
+reject_sensitive_path "$canonical"
+if [[ "$action" == "add" && "$access" == "write" ]]; then
+    validate_text_file "$canonical"
+fi
+
+readonly POLICY_DIR="/etc/aioms"
+readonly LOCK_FILE="/run/lock/aioms-file-policy.lock"
+exec 9>"$LOCK_FILE"
+flock -x 9
+tmp="$(mktemp "$POLICY_DIR/.file-access.allowlist.XXXXXX")"
+cleanup() { rm -f -- "$tmp"; }
+trap cleanup EXIT
+
+awk -F '\t' -v action="$action" -v access="$access" -v path="$canonical" '
+    NF == 0 { next }
+    NF != 2 || ($1 != "read" && $1 != "write") { exit 42 }
+    action == "remove" && $1 == access && $2 == path { next }
+    { print $1 "\t" $2 }
+    END { if (action == "add") print access "\t" path }
+' "$POLICY_FILE" | LC_ALL=C sort -u >"$tmp" || file_fail "现有文件访问白名单格式不合法"
+chown root:root "$tmp"
+chmod 0644 "$tmp"
+mv -f -- "$tmp" "$POLICY_FILE"
+trap - EXIT
+
+if [[ "$action" == "add" ]]; then
+    grep -Fqx -- "$access"$'\t'"$canonical" "$POLICY_FILE" || file_fail "授权后复核失败"
+    echo "已授权 $access：$canonical"
+else
+    if grep -Fqx -- "$access"$'\t'"$canonical" "$POLICY_FILE"; then
+        file_fail "移除授权后复核失败"
+    fi
+    echo "已移除 $access 授权：$canonical"
+fi
+echo "POLICY_PATH=$canonical"

@@ -7,9 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import DBSession
 from app.models.server import Server
-from app.models.service_catalog import Service, ServiceInstance
+from app.models.service_catalog import Service, ServiceFileAccess, ServiceInstance
 from app.schemas.service_catalog import (
     ServiceControlAuthorizationUpdate,
+    ServiceFileAccessCreate,
+    ServiceFileAccessRead,
     ServiceCreate,
     ServiceInstanceCreate,
     ServiceInstanceRead,
@@ -27,6 +29,7 @@ from app.services import (
     service_control_policy_service,
     service_observability_service,
     service_runtime_service,
+    server_file_policy_service,
 )
 
 router = APIRouter(tags=["service-catalog"])
@@ -52,6 +55,15 @@ async def _instance_or_404(db: AsyncSession, instance_id: uuid.UUID) -> ServiceI
     if instance is None:
         raise HTTPException(status_code=404, detail="service instance not found")
     return instance
+
+
+async def _file_access_or_404(
+    db: AsyncSession, access_id: uuid.UUID
+) -> ServiceFileAccess:
+    access = await service_catalog_service.get_file_access(db, access_id)
+    if access is None:
+        raise HTTPException(status_code=404, detail="service file access not found")
+    return access
 
 
 @router.get("/services", response_model=list[ServiceRead])
@@ -184,6 +196,55 @@ async def update_service_control_authorization(
             db, instance, enabled=data.enabled
         )
     except service_control_policy_service.ServiceControlPolicySyncError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except ValueError as exc:
+        _raise_service_error(exc)
+
+
+@router.get("/service-file-accesses", response_model=list[ServiceFileAccessRead])
+async def list_service_file_accesses(
+    db: DBSession,
+    service_instance_id: uuid.UUID | None = None,
+) -> list[ServiceFileAccess]:
+    return await service_catalog_service.list_file_accesses(
+        db, service_instance_id=service_instance_id
+    )
+
+
+@router.post(
+    "/service-instances/{instance_id}/file-accesses",
+    response_model=ServiceFileAccessRead,
+    status_code=201,
+)
+async def create_service_file_access(
+    instance_id: uuid.UUID,
+    data: ServiceFileAccessCreate,
+    db: DBSession,
+) -> ServiceFileAccess:
+    instance = await _instance_or_404(db, instance_id)
+    try:
+        return await server_file_policy_service.create_file_access(
+            db,
+            instance,
+            access_level=data.access_level,
+            path=data.path,
+        )
+    except server_file_policy_service.ServerFilePolicySyncError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except ValueError as exc:
+        _raise_service_error(exc)
+
+
+@router.delete("/service-file-accesses/{access_id}", status_code=204)
+async def delete_service_file_access(
+    access_id: uuid.UUID,
+    db: DBSession,
+) -> None:
+    try:
+        await server_file_policy_service.delete_file_access(
+            db, await _file_access_or_404(db, access_id)
+        )
+    except server_file_policy_service.ServerFilePolicySyncError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except ValueError as exc:
         _raise_service_error(exc)

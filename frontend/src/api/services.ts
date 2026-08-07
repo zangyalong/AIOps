@@ -3,6 +3,7 @@ import type {
   ServiceInstance,
   ServiceInstanceInput,
   ServiceInstanceStatus,
+  ServiceFileAccess,
   ServiceObservability,
   ServiceRecord,
 } from '../types/service'
@@ -117,6 +118,32 @@ export async function updateServiceControlAuthorization(
     }),
     '更新服务控制授权失败',
   )
+}
+
+export async function fetchServiceFileAccesses(): Promise<ServiceFileAccess[]> {
+  return parseJson(await fetch('/api/service-file-accesses'), '获取文件授权失败')
+}
+
+export async function createServiceFileAccess(
+  instanceId: string,
+  data: { access_level: 'read' | 'write'; path: string },
+): Promise<ServiceFileAccess> {
+  return parseJson(
+    await fetch(`/api/service-instances/${instanceId}/file-accesses`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }),
+    '新增文件授权失败',
+  )
+}
+
+export async function deleteServiceFileAccess(id: string): Promise<void> {
+  const res = await fetch(`/api/service-file-accesses/${id}`, { method: 'DELETE' })
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    throw new Error(body?.detail || `删除文件授权失败：${res.status}`)
+  }
 }
 
 export async function deleteServiceInstance(id: string): Promise<void> {

@@ -121,3 +121,28 @@ class ServiceInstanceRead(ServiceInstanceBase):
 
 class ServiceControlAuthorizationUpdate(BaseModel):
     enabled: bool
+
+
+class ServiceFileAccessCreate(BaseModel):
+    access_level: Literal["read", "write"]
+    path: str = Field(min_length=1, max_length=4096)
+
+    _clean_path = field_validator("path")(_required_text)
+
+    @field_validator("path")
+    @classmethod
+    def validate_absolute_path(cls, value: str) -> str:
+        if not value.startswith("/"):
+            raise ValueError("必须填写绝对路径")
+        if "\n" in value or "\r" in value or "\x00" in value:
+            raise ValueError("路径不能包含换行或空字符")
+        return value
+
+
+class ServiceFileAccessRead(ServiceFileAccessCreate):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    service_instance_id: uuid.UUID
+    created_at: datetime
+    updated_at: datetime

@@ -1,0 +1,73 @@
+#!/bin/bash
+
+# 由三个文件网关 source；只能安装到 root 持有且不可由 AIOMS SSH 用户修改的位置。
+
+POLICY_FILE="/etc/aioms/file-access.allowlist"
+MAX_FILE_BYTES=65536
+
+file_fail() {
+    echo "${AIOMS_FILE_GATEWAY:-aioms-file}: $*" >&2
+    exit 1
+}
+
+require_root_gateway() {
+    [[ $EUID -eq 0 ]] || file_fail "必须由 root 通过 sudoers 调用"
+}
+
+validate_policy_file() {
+    [[ -f "$POLICY_FILE" && ! -L "$POLICY_FILE" ]] ||
+        file_fail "文件访问白名单不存在或不安全：$POLICY_FILE"
+    local owner mode
+    read -r owner mode < <(stat -c '%u %a' "$POLICY_FILE")
+    [[ "$owner" == "0" ]] || file_fail "文件访问白名单必须由 root 持有"
+    (( (8#$mode & 8#022) == 0 )) ||
+        file_fail "文件访问白名单不能由组或其他用户写入"
+}
+
+reject_sensitive_path() {
+    local path="$1"
+    case "$path" in
+        /proc|/proc/*|/sys|/sys/*|/dev|/dev/*|/etc/shadow|/etc/shadow-*|/etc/gshadow|/etc/gshadow-*|/etc/sudoers|/etc/sudoers.d/*|/etc/ssl/private/*|/root/.ssh/*|*/.ssh/id_*|*/.ssh/authorized_keys|*/.aws/credentials|*/.docker/config.json|*/.kube/config|/run/secrets/*|/run/credentials/*|/var/run/secrets/*|/var/lib/docker/*|/var/lib/kubelet/*|*/kubernetes.io/serviceaccount/*|*/kubernetes.io~secret/*|*.key|*.pem|*.p12|*.pfx)
+            file_fail "该路径属于始终禁止交给 Agent 的敏感文件：$path"
+            ;;
+    esac
+}
+
+canonical_existing_path() {
+    local path="$1"
+    [[ "$path" == /* && "$path" != *$'\n'* && "$path" != *$'\r'* ]] ||
+        file_fail "必须提供不含换行的绝对路径"
+    realpath -e -- "$path" 2>/dev/null || file_fail "路径不存在：$path"
+}
+
+policy_allows_read() {
+    local candidate="$1" mode root
+    while IFS=$'\t' read -r mode root || [[ -n "$mode$root" ]]; do
+        [[ "$mode" == "read" || "$mode" == "write" ]] || continue
+        if [[ -d "$root" ]]; then
+            [[ "$candidate" == "$root" || "$candidate" == "$root/"* ]] && return 0
+        elif [[ "$candidate" == "$root" ]]; then
+            return 0
+        fi
+    done <"$POLICY_FILE"
+    return 1
+}
+
+policy_allows_write() {
+    local candidate="$1" mode path
+    while IFS=$'\t' read -r mode path || [[ -n "$mode$path" ]]; do
+        [[ "$mode" == "write" && "$candidate" == "$path" ]] && return 0
+    done <"$POLICY_FILE"
+    return 1
+}
+
+validate_text_file() {
+    local path="$1" size
+    [[ -f "$path" && ! -L "$path" ]] || file_fail "只允许普通文件，且不允许符号链接：$path"
+    size="$(stat -c '%s' "$path")"
+    (( size <= MAX_FILE_BYTES )) ||
+        file_fail "文件超过 ${MAX_FILE_BYTES} 字节限制：$path"
+    if (( size > 0 )) && ! LC_ALL=C grep -Iq . "$path"; then
+        file_fail "只允许读取或写入 UTF-8/文本配置文件：$path"
+    fi
+}

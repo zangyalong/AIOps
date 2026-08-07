@@ -73,3 +73,29 @@ class ServiceInstance(Base, UUIDMixin, TimestampMixin):
     )
     log_service: Mapped[str | None] = mapped_column(String(255), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ServiceFileAccess(Base, UUIDMixin, TimestampMixin):
+    """服务实例关联的纳管服务器文件授权；目标机仍保留独立 root 白名单。"""
+
+    __tablename__ = "service_file_accesses"
+    __table_args__ = (
+        UniqueConstraint(
+            "service_instance_id",
+            "access_level",
+            "path",
+            name="uq_service_file_access_identity",
+        ),
+        CheckConstraint(
+            "access_level IN ('read', 'write')",
+            name="ck_service_file_access_level",
+        ),
+    )
+
+    service_instance_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("service_instances.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    access_level: Mapped[str] = mapped_column(String(10), nullable=False, index=True)
+    path: Mapped[str] = mapped_column(Text, nullable=False)

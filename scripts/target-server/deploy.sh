@@ -191,6 +191,8 @@ validate_boolean "START_EXPORTERS" "$START_EXPORTERS"
     fail "缺少可执行的只读网关安装器：$SCRIPT_DIR/discovery/install.sh"
 [[ -x "$SCRIPT_DIR/actions/install.sh" ]] ||
     fail "缺少可执行的服务控制写网关安装器：$SCRIPT_DIR/actions/install.sh"
+[[ -x "$SCRIPT_DIR/files/install.sh" ]] ||
+    fail "缺少可执行的文件访问网关安装器：$SCRIPT_DIR/files/install.sh"
 
 alloy_args=()
 if [[ "$ENABLE_ALLOY" == "true" ]]; then
@@ -344,30 +346,33 @@ if [[ "$metrics_enabled" == "true" ]]; then
     fi
 fi
 
-echo "[1/4] 安装 AIOMS 只读服务发现网关"
+echo "[1/5] 安装 AIOMS 只读服务发现网关"
 "$SCRIPT_DIR/discovery/install.sh" "$AIOMS_SSH_USER"
 
-echo "[2/4] 安装 AIOMS 服务控制写网关"
+echo "[2/5] 安装 AIOMS 服务控制写网关"
 "$SCRIPT_DIR/actions/install.sh" \
     --ssh-user "$AIOMS_SSH_USER" \
     --allowlist "$SERVICE_CONTROL_ALLOWLIST"
 
+echo "[3/5] 安装 AIOMS 受控文件访问网关"
+"$SCRIPT_DIR/files/install.sh" "$AIOMS_SSH_USER"
+
 if [[ "$ENABLE_ALLOY" == "true" ]]; then
     if [[ -n "$ALLOY_SERVICE_MAP" ]]; then
-        echo "[3/4] 安装并配置 Alloy 日志采集"
+        echo "[4/5] 安装并配置 Alloy 日志采集"
     else
-        echo "[3/4] 安装 Alloy 基础组件，等待服务发现后生成配置"
+        echo "[4/5] 安装 Alloy 基础组件，等待服务发现后生成配置"
     fi
     "$SCRIPT_DIR/alloy/install.sh" "${alloy_args[@]}"
 else
-    echo "[3/4] 已按配置跳过 Alloy"
+    echo "[4/5] 已按配置跳过 Alloy"
 fi
 
 if [[ "$metrics_enabled" == "true" ]]; then
-    echo "[4/4] 安装并配置 Prometheus 指标 exporter"
+    echo "[5/5] 安装并配置 Prometheus 指标 exporter"
     "$SCRIPT_DIR/metrics/install.sh" "${metrics_args[@]}"
 else
-    echo "[4/4] 全部指标 exporter 已关闭，清理本配置包曾部署的指标容器"
+    echo "[5/5] 全部指标 exporter 已关闭，清理本配置包曾部署的指标容器"
     "$SCRIPT_DIR/metrics/install.sh" --disable-all
 fi
 

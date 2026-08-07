@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.server import Server
-from app.models.service_catalog import Service, ServiceInstance
+from app.models.service_catalog import Service, ServiceFileAccess, ServiceInstance
 from app.repositories import service_catalog_repository
 from app.schemas.service_catalog import (
     ServiceCreate,
@@ -31,6 +31,10 @@ class AmbiguousService(ValueError):
 
 
 class ControlAuthorizationUnavailable(ValueError):
+    pass
+
+
+class FileAccessAuthorizationUnavailable(ValueError):
     pass
 
 
@@ -120,7 +124,28 @@ async def delete_service(db: AsyncSession, service: Service) -> None:
         raise ControlAuthorizationUnavailable(
             "该服务仍有已开启控制授权的实例，请先逐一关闭授权再删除服务"
         )
+    for instance in instances:
+        if await list_file_accesses(db, service_instance_id=instance.id):
+            raise FileAccessAuthorizationUnavailable(
+                "该服务仍有服务器文件授权，请先逐一移除授权再删除服务"
+            )
     await service_catalog_repository.delete_service(db, service)
+
+
+async def list_file_accesses(
+    db: AsyncSession,
+    *,
+    service_instance_id: uuid.UUID | None = None,
+) -> list[ServiceFileAccess]:
+    return await service_catalog_repository.list_file_accesses(
+        db, service_instance_id=service_instance_id
+    )
+
+
+async def get_file_access(
+    db: AsyncSession, access_id: uuid.UUID
+) -> ServiceFileAccess | None:
+    return await service_catalog_repository.get_file_access(db, access_id)
 
 
 async def list_instances(
@@ -323,6 +348,12 @@ async def update_instance(
         raise ControlAuthorizationUnavailable(
             "该实例已开启控制授权，请先关闭授权再修改服务器或运行时身份"
         )
+    if runtime_identity_changed and await list_file_accesses(
+        db, service_instance_id=instance.id
+    ):
+        raise FileAccessAuthorizationUnavailable(
+            "该实例仍有服务器文件授权，请先移除授权再修改服务器或运行时身份"
+        )
     for field, value in values.items():
         setattr(instance, field, value)
     return await service_catalog_repository.save_instance(db, instance)
@@ -367,6 +398,10 @@ async def delete_instance(db: AsyncSession, instance: ServiceInstance) -> None:
     if instance.control_enabled:
         raise ControlAuthorizationUnavailable(
             "该实例已开启控制授权，请先关闭授权再删除实例"
+        )
+    if await list_file_accesses(db, service_instance_id=instance.id):
+        raise FileAccessAuthorizationUnavailable(
+            "该实例仍有服务器文件授权，请先移除授权再删除实例"
         )
     await service_catalog_repository.delete_instance(db, instance)
 

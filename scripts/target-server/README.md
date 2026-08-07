@@ -108,6 +108,12 @@ target-server/
 │   ├── aioms-service-policy     # 只接受页面授权触发的白名单 add/remove
 │   ├── aioms-service-control.sudoers
 │   └── README.md                # 双端白名单和权限边界
+├── files/
+│   ├── install.sh               # 文件查找、读取、授权和写入网关安装器
+│   ├── aioms-file-read          # 授权范围内查找并脱敏读取文本
+│   ├── aioms-file-policy        # 页面触发的 read/write 白名单同步
+│   ├── aioms-file-write         # 哈希复核、备份和原子替换
+│   └── README.md                # 敏感路径、大小和审批边界
 ├── alloy/
 │   ├── install.sh               # Alloy 基础组件/管理员配置安装器
 │   ├── aioms-alloy-apply        # root 所有的固定 AI 配置应用器
@@ -123,6 +129,10 @@ target-server/
     ├── prometheus-scrape.example.yml
     └── README.md                # 数据库账号、权限、端口和中央抓取说明
 ```
+
+运行包还会安装 `files/` 下的受控文件网关。文件白名单默认为空，需要在 AIOMS 服务目录的实例详情中登记“可读目录或文件”或“精确可写文件”；页面会通过同一个非 root SSH 身份把授权同步到目标机 root 持有的 `/etc/aioms/file-access.allowlist`。
+
+通用文件读取仅支持不超过 64 KiB 的文本文件并自动脱敏。通用写入不会接收密码、Token、私钥或脱敏占位符，执行前必须展示完整 diff 并通过高风险二次确认；目标机备份位于 `/var/lib/aioms/file-backups/`。
 
 长期生效的文件会安装到 `/usr/local/sbin/`、`/etc/sudoers.d/`、`/etc/alloy/` 和
 `/etc/aioms-exporters/`。上传到临时目录的配置包在验证完成后可以删除。

@@ -39,6 +39,15 @@ export interface ServiceInstanceInput {
   description?: string | null
 }
 
+export interface ServiceFileAccess {
+  id: string
+  service_instance_id: string
+  access_level: 'read' | 'write'
+  path: string
+  created_at: string
+  updated_at: string
+}
+
 export type RuntimeType = 'systemd' | 'docker' | 'process'
 
 export type RuntimeStatus = 'running' | 'stopped' | 'error' | 'unknown'

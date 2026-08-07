@@ -3,10 +3,13 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   createService,
+  createServiceFileAccess,
   createServiceInstance,
   deleteService,
+  deleteServiceFileAccess,
   deleteServiceInstance,
   fetchServiceInstanceStatuses,
+  fetchServiceFileAccesses,
   fetchServiceInstances,
   fetchServiceObservability,
   fetchServices,
@@ -27,6 +30,7 @@ import type {
   ServiceInstanceStatus,
   ServiceMetric,
   ServiceObservability,
+  ServiceFileAccess,
 } from '../types/service'
 
 const route = useRoute()
@@ -48,6 +52,9 @@ const observabilityLoadingIds = ref<Set<string>>(new Set())
 const observabilityErrors = ref<Record<string, string>>({})
 const observabilityMinutes = ref(1440)
 const controlAuthorizationSavingIds = ref<Set<string>>(new Set())
+const fileAccesses = ref<ServiceFileAccess[]>([])
+const fileAccessSavingIds = ref<Set<string>>(new Set())
+const fileAccessDrafts = reactive<Record<string, { path: string; access_level: 'read' | 'write' }>>({})
 const serverObservabilityById = ref<Record<string, ServerObservability>>({})
 const serverObservabilityLoadingIds = ref<Set<string>>(new Set())
 const serverObservabilityErrors = ref<Record<string, string>>({})
@@ -389,6 +396,56 @@ function controlAuthorizationAvailable(instance: ServiceInstance): boolean {
   return instance.runtime_type === 'docker'
 }
 
+function fileAccessesForInstance(instanceId: string): ServiceFileAccess[] {
+  return fileAccesses.value.filter((item) => item.service_instance_id === instanceId)
+}
+
+function fileAccessDraft(instanceId: string) {
+  if (!fileAccessDrafts[instanceId]) {
+    fileAccessDrafts[instanceId] = { path: '', access_level: 'read' }
+  }
+  return fileAccessDrafts[instanceId]
+}
+
+async function addFileAccess(instance: ServiceInstance) {
+  if (!instance.server_id || fileAccessSavingIds.value.has(instance.id)) return
+  const draft = fileAccessDraft(instance.id)
+  const path = draft.path.trim()
+  if (!path.startsWith('/')) {
+    error.value = '文件授权必须填写目标服务器上的绝对路径'
+    return
+  }
+  const label = draft.access_level === 'read' ? '可读目录或文件' : '精确可写文件'
+  if (!confirm(`确定为 ${instance.name} 授权${label}？\n\n${path}\n\n写入仍需在对话中预览差异并进行高风险二次确认。`)) return
+  fileAccessSavingIds.value = new Set([...fileAccessSavingIds.value, instance.id])
+  error.value = null
+  try {
+    const saved = await createServiceFileAccess(instance.id, {
+      access_level: draft.access_level,
+      path,
+    })
+    if (!fileAccesses.value.some((item) => item.id === saved.id)) fileAccesses.value.push(saved)
+    draft.path = ''
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    const next = new Set(fileAccessSavingIds.value)
+    next.delete(instance.id)
+    fileAccessSavingIds.value = next
+  }
+}
+
+async function removeFileAccess(access: ServiceFileAccess) {
+  if (!confirm(`确定移除文件授权？\n\n${access.path}`)) return
+  error.value = null
+  try {
+    await deleteServiceFileAccess(access.id)
+    fileAccesses.value = fileAccesses.value.filter((item) => item.id !== access.id)
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
 async function toggleControlAuthorization(instance: ServiceInstance) {
   if (!controlAuthorizationAvailable(instance)) return
   const enabled = !instance.control_enabled
@@ -433,14 +490,16 @@ async function loadAll() {
   loading.value = true
   error.value = null
   try {
-    const [serviceRows, instanceRows, serverRows] = await Promise.all([
+    const [serviceRows, instanceRows, serverRows, fileAccessRows] = await Promise.all([
       fetchServices(),
       fetchServiceInstances(),
       fetchServers(),
+      fetchServiceFileAccesses(),
     ])
     services.value = serviceRows
     instances.value = instanceRows
     servers.value = serverRows
+    fileAccesses.value = fileAccessRows
     if (selectedId.value && !serviceRows.some((service) => service.id === selectedId.value)) {
       await router.replace('/services')
     } else if (selectedId.value) {
@@ -1001,6 +1060,41 @@ function serverStatusLabel(server: Server): string {
                 >
                   <span aria-hidden="true" />
                 </button>
+              </div>
+              <div v-if="instance.server_id" class="file-access-panel">
+                <div class="file-access-heading">
+                  <div>
+                    <strong>服务器文件授权</strong>
+                    <span>读取可授权目录；写入必须精确到文件</span>
+                  </div>
+                </div>
+                <ul v-if="fileAccessesForInstance(instance.id).length" class="file-access-list">
+                  <li v-for="access in fileAccessesForInstance(instance.id)" :key="access.id">
+                    <span class="file-access-level" :class="access.access_level">
+                      {{ access.access_level === 'read' ? '只读' : '可写' }}
+                    </span>
+                    <code :title="access.path">{{ access.path }}</code>
+                    <button type="button" @click="removeFileAccess(access)">移除</button>
+                  </li>
+                </ul>
+                <div class="file-access-form">
+                  <select v-model="fileAccessDraft(instance.id).access_level" aria-label="文件访问权限">
+                    <option value="read">可读目录或文件</option>
+                    <option value="write">精确可写文件</option>
+                  </select>
+                  <input
+                    v-model="fileAccessDraft(instance.id).path"
+                    :placeholder="fileAccessDraft(instance.id).access_level === 'read' ? '/opt/my-app/config' : '/etc/my-app/app.conf'"
+                    aria-label="目标服务器绝对路径"
+                    @keyup.enter="addFileAccess(instance)"
+                  />
+                  <button
+                    type="button"
+                    class="btn-secondary"
+                    :disabled="fileAccessSavingIds.has(instance.id)"
+                    @click="addFileAccess(instance)"
+                  >授权</button>
+                </div>
               </div>
               <div class="runtime-actions">
                 <button type="button" class="btn-secondary" @click="refreshSelectedStatuses">
@@ -1805,6 +1899,94 @@ button:disabled {
 
 .control-authorization span {
   color: var(--color-text-muted);
+  font-size: 0.68rem;
+}
+
+.file-access-panel {
+  margin-top: 0.7rem;
+  border-radius: var(--radius-sm);
+  padding: 0.7rem 0.8rem;
+  background: #f8f9fa;
+}
+
+.file-access-heading > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+}
+
+.file-access-heading strong {
+  font-size: 0.76rem;
+}
+
+.file-access-heading span {
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+}
+
+.file-access-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0.65rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.file-access-list li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.file-access-list code {
+  overflow: hidden;
+  font-size: 0.68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-access-list button {
+  border: 0;
+  padding: 0;
+  color: #b42318;
+  background: transparent;
+  font-size: 0.68rem;
+}
+
+.file-access-level {
+  border-radius: 4px;
+  padding: 0.12rem 0.35rem;
+  color: #175cd3;
+  background: #e7effe;
+  font-size: 0.62rem;
+}
+
+.file-access-level.write {
+  color: #b54708;
+  background: #fffaeb;
+}
+
+.file-access-form {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr) auto;
+  gap: 0.4rem;
+  margin-top: 0.65rem;
+}
+
+.file-access-form select,
+.file-access-form input {
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0.38rem 0.45rem;
+  background: #fff;
+  font-size: 0.68rem;
+}
+
+.file-access-form .btn-secondary {
+  padding: 0.38rem 0.6rem;
   font-size: 0.68rem;
 }
 
