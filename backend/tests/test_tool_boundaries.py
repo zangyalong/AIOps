@@ -75,6 +75,14 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(
             set(catalog.READ_TOOLS_BY_NAME) & set(catalog.WRITE_TOOLS_BY_NAME)
         )
+        read_spec = catalog.get_operation_spec("run_diagnostic_command")
+        self.assertIsNotNone(read_spec)
+        self.assertEqual(read_spec.effect, "read")
+        self.assertEqual(read_spec.risk_level, "low")
+        restart_spec = catalog.get_operation_spec("restart_service")
+        self.assertIsNotNone(restart_spec)
+        self.assertEqual(restart_spec.effect, "write")
+        self.assertEqual(restart_spec.risk_level, "high")
         self.assertIn(
             "query_server_services",
             {
@@ -414,9 +422,6 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(get_instance.await_args.kwargs["runtime_name"], "orders-api")
         self.assertEqual(
             connection.commands,
-            [
-                "sudo -n -- /usr/local/sbin/aioms-service-control "
-                "stop docker orders-api"
-            ],
+            ["sudo -n -- /usr/local/sbin/aioms-service-control stop docker orders-api"],
         )
         self.assertIn("当前状态：exited", result)

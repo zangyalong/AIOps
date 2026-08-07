@@ -27,15 +27,15 @@ from app.agents.tools.metrics import (
     query_metrics,
     query_server_metrics,
 )
-from app.agents.tools.server_log_config import (
-    apply_server_log_config,
-    preview_server_log_config,
-)
 from app.agents.tools.server_files import (
     find_server_files,
     preview_server_file_update,
     read_server_file,
     update_server_file,
+)
+from app.agents.tools.server_log_config import (
+    apply_server_log_config,
+    preview_server_log_config,
 )
 from app.agents.tools.servers import query_servers
 from app.agents.tools.service_discovery import (
@@ -43,8 +43,8 @@ from app.agents.tools.service_discovery import (
     register_server_services,
 )
 from app.agents.tools.service_topology import query_server_services
+from app.operations.schemas import OperationSpec, RiskLevel
 
-RiskLevel = Literal["medium", "high", "critical"]
 ActionDetailsBuilder = Callable[[dict[str, Any]], dict[str, Any]]
 
 
@@ -274,10 +274,31 @@ TOOLS_BY_NAME: Mapping[str, BaseTool] = MappingProxyType(
     {**_read_by_name, **dict(WRITE_TOOLS_BY_NAME)}
 )
 WRITE_TOOL_NAMES = frozenset(WRITE_TOOLS_BY_NAME)
+OPERATION_SPECS: Mapping[str, OperationSpec] = MappingProxyType(
+    {
+        **{
+            name: OperationSpec(name=name, effect="read", risk_level="low")
+            for name in READ_TOOLS_BY_NAME
+        },
+        **{
+            name: OperationSpec(
+                name=name,
+                effect="write",
+                risk_level=write_spec.risk_level,
+            )
+            for name, write_spec in WRITE_TOOL_SPECS.items()
+        },
+    }
+)
+
+
+def get_operation_spec(tool_name: str) -> OperationSpec | None:
+    return OPERATION_SPECS.get(tool_name)
 
 
 def is_write_tool(tool_name: str) -> bool:
-    return tool_name in WRITE_TOOL_SPECS
+    spec = get_operation_spec(tool_name)
+    return spec is not None and spec.effect == "write"
 
 
 def describe_write_action(tool_call: dict[str, Any]) -> dict[str, Any]:

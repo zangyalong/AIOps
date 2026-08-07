@@ -29,6 +29,7 @@ from app.agents.tools.catalog import (
     describe_write_action,
     ensure_read_tools,
     ensure_write_tools,
+    get_operation_spec,
     is_write_tool,
 )
 from app.agents.tools.commands import run_diagnostic_command
@@ -41,15 +42,15 @@ from app.agents.tools.metrics import (
     query_metrics,
     query_server_metrics,
 )
-from app.agents.tools.server_log_config import (
-    apply_server_log_config,
-    preview_server_log_config,
-)
 from app.agents.tools.server_files import (
     find_server_files,
     preview_server_file_update,
     read_server_file,
     update_server_file,
+)
+from app.agents.tools.server_log_config import (
+    apply_server_log_config,
+    preview_server_log_config,
 )
 from app.agents.tools.servers import query_servers
 from app.agents.tools.service_discovery import (
@@ -58,6 +59,8 @@ from app.agents.tools.service_discovery import (
 )
 from app.agents.tools.service_topology import query_server_services
 from app.core.config import settings
+from app.operations.policy import evaluate_operation
+from app.operations.schemas import ApprovalDecision, OperationContext
 
 AgentName = Literal[
     "metrics_agent",
@@ -521,8 +524,12 @@ async def specialist_tools_node(agent_name: AgentName, state: SpecialistState) -
         *SPECIALIST_WRITE_TOOLS[agent_name],
     ]
     tool_map = {tool.name: tool for tool in assigned_tools}
-    decision = state.get("approval")
+    approval = ApprovalDecision.from_mapping(state.get("approval"))
     allow_write = state.get("allow_write_tools", False)
+    operation_context = OperationContext(
+        write_enabled=allow_write,
+        approval=approval,
+    )
     results: list[BaseMessage] = []
 
     for tool_call in last.tool_calls:
@@ -533,33 +540,18 @@ async def specialist_tools_node(agent_name: AgentName, state: SpecialistState) -
                 content=f"{agent_name} 无权调用工具 {name}，已拒绝执行。",
                 status="error",
             )
-        elif is_write_tool(name) and not allow_write:
+        elif (operation_spec := get_operation_spec(name)) is None:
             result = _tool_message(
                 tool_call=tool_call,
-                content="无人值守任务禁止调用写工具，已拒绝执行。",
-                status="error",
-            )
-        elif is_write_tool(name) and decision is None:
-            result = _tool_message(
-                tool_call=tool_call,
-                content="写工具缺少人工审批决议，已拒绝执行。",
-                status="error",
-            )
-        elif is_write_tool(name) and not decision.get("approved", False):
-            reason = (decision.get("reason") or "").strip() or "用户拒绝了本次操作"
-            result = _tool_message(
-                tool_call=tool_call,
-                content=f"用户拒绝执行该操作（{reason}）。请不要重试。",
+                content=f"工具 {name} 未在统一操作目录登记，已拒绝执行。",
                 status="error",
             )
         elif (
-            is_write_tool(name)
-            and describe_write_action(tool_call)["risk_level"] in {"high", "critical"}
-            and not decision.get("second_confirmation", False)
-        ):
+            policy_decision := evaluate_operation(operation_spec, operation_context)
+        ).result != "allow":
             result = _tool_message(
                 tool_call=tool_call,
-                content="高风险写操作缺少详情弹窗二次确认，已拒绝执行。",
+                content=policy_decision.reason,
                 status="error",
             )
         else:
@@ -614,9 +606,16 @@ def route_after_specialist(state: SpecialistState) -> str:
     last = state["work_messages"][-1]
     if not isinstance(last, AIMessage) or not last.tool_calls:
         return END
-    has_write = any(is_write_tool(call["name"]) for call in last.tool_calls)
-    if has_write and state.get("allow_write_tools", False):
-        return "approval"
+    context = OperationContext(
+        write_enabled=state.get("allow_write_tools", False),
+        approval=None,
+    )
+    for tool_call in last.tool_calls:
+        spec = get_operation_spec(tool_call["name"])
+        if spec is not None and evaluate_operation(spec, context).result == (
+            "approval_required"
+        ):
+            return "approval"
     return "tools"
 
 
