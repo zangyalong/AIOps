@@ -9,6 +9,7 @@ from app.dependencies import DBSession
 from app.models.server import Server
 from app.models.service_catalog import Service, ServiceInstance
 from app.schemas.service_catalog import (
+    ServiceControlAuthorizationUpdate,
     ServiceCreate,
     ServiceInstanceCreate,
     ServiceInstanceRead,
@@ -23,6 +24,7 @@ from app.schemas.service_observability import (
 from app.services import (
     server_service,
     service_catalog_service,
+    service_control_policy_service,
     service_observability_service,
     service_runtime_service,
 )
@@ -83,9 +85,12 @@ async def update_service(
 
 @router.delete("/services/{service_id}", status_code=204)
 async def delete_service(service_id: uuid.UUID, db: DBSession) -> None:
-    await service_catalog_service.delete_service(
-        db, await _service_or_404(db, service_id)
-    )
+    try:
+        await service_catalog_service.delete_service(
+            db, await _service_or_404(db, service_id)
+        )
+    except ValueError as exc:
+        _raise_service_error(exc)
 
 
 @router.get("/service-instances", response_model=list[ServiceInstanceRead])
@@ -164,8 +169,31 @@ async def update_service_instance(
         _raise_service_error(exc)
 
 
+@router.patch(
+    "/service-instances/{instance_id}/control-authorization",
+    response_model=ServiceInstanceRead,
+)
+async def update_service_control_authorization(
+    instance_id: uuid.UUID,
+    data: ServiceControlAuthorizationUpdate,
+    db: DBSession,
+) -> ServiceInstance:
+    instance = await _instance_or_404(db, instance_id)
+    try:
+        return await service_control_policy_service.update_control_authorization(
+            db, instance, enabled=data.enabled
+        )
+    except service_control_policy_service.ServiceControlPolicySyncError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except ValueError as exc:
+        _raise_service_error(exc)
+
+
 @router.delete("/service-instances/{instance_id}", status_code=204)
 async def delete_service_instance(instance_id: uuid.UUID, db: DBSession) -> None:
-    await service_catalog_service.delete_instance(
-        db, await _instance_or_404(db, instance_id)
-    )
+    try:
+        await service_catalog_service.delete_instance(
+            db, await _instance_or_404(db, instance_id)
+        )
+    except ValueError as exc:
+        _raise_service_error(exc)

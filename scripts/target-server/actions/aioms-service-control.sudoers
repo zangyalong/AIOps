@@ -1,1 +1,1 @@
-__AIOMS_SSH_USER__ ALL=(root) NOPASSWD: /usr/local/sbin/aioms-service-control *
+__AIOMS_SSH_USER__ ALL=(root) NOPASSWD: /usr/local/sbin/aioms-service-control *, /usr/local/sbin/aioms-service-policy *

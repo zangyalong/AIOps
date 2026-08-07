@@ -100,6 +100,7 @@ target-server/
 ├── actions/
 │   ├── install.sh               # systemd 服务控制写网关安装器
 │   ├── aioms-service-control    # 只接受 start/stop/restart + 白名单 .service
+│   ├── aioms-service-policy     # 只接受页面授权触发的白名单 add/remove
 │   ├── aioms-service-control.sudoers
 │   └── README.md                # 双端白名单和权限边界
 ├── alloy/

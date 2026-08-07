@@ -188,25 +188,70 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(log_action["kind"], "server_log_config_apply")
         self.assertIn("orders-api ← docker/orders-api", log_action["command"])
 
-    async def test_restart_service_rejects_empty_allowlist_before_ssh(self) -> None:
-        """默认空白名单时，即使审批层误放行，工具自身也不能连接 SSH。"""
+    async def test_restart_service_rejects_unregistered_instance_before_ssh(
+        self,
+    ) -> None:
+        """服务未登记时，即使审批层误放行，工具自身也不能连接 SSH。"""
+        server = SimpleNamespace(
+            id="server-id", name="demo", ip_address="127.0.0.1"
+        )
         with (
-            patch.object(actions.settings, "ssh_service_control_allowlist", ""),
-            patch.object(actions.settings, "ssh_restart_service_allowlist", ""),
+            patch.object(actions, "AsyncSessionLocal", return_value=_SessionContext()),
+            patch.object(
+                actions.server_service,
+                "get_server_by_name_or_ip",
+                AsyncMock(return_value=server),
+            ),
+            patch.object(
+                actions.service_catalog_service,
+                "get_instance_by_runtime_identity",
+                AsyncMock(return_value=None),
+            ),
             patch.object(actions.asyncssh, "connect") as connect,
         ):
             result = await actions.restart_service.ainvoke(
                 {"server_name": "demo", "service_name": "nginx.service"}
             )
 
-        self.assertIn("白名单为空", result)
+        self.assertIn("尚未登记到服务目录", result)
+        connect.assert_not_called()
+
+    async def test_restart_service_rejects_disabled_control_authorization(
+        self,
+    ) -> None:
+        server = SimpleNamespace(
+            id="server-id", name="demo", ip_address="127.0.0.1"
+        )
+        instance = SimpleNamespace(control_enabled=False)
+        with (
+            patch.object(actions, "AsyncSessionLocal", return_value=_SessionContext()),
+            patch.object(
+                actions.server_service,
+                "get_server_by_name_or_ip",
+                AsyncMock(return_value=server),
+            ),
+            patch.object(
+                actions.service_catalog_service,
+                "get_instance_by_runtime_identity",
+                AsyncMock(return_value=instance),
+            ),
+            patch.object(actions.asyncssh, "connect") as connect,
+        ):
+            result = await actions.restart_service.ainvoke(
+                {"server_name": "demo", "service_name": "nginx.service"}
+            )
+
+        self.assertIn("未开启控制授权", result)
         connect.assert_not_called()
 
     async def test_service_control_executes_fixed_gateway_with_shared_aioms_identity(
         self,
     ) -> None:
         """三种动作都通过同一个非 root AIOMS 身份调用固定网关。"""
-        server = SimpleNamespace(name="demo", ip_address="127.0.0.1")
+        server = SimpleNamespace(
+            id="server-id", name="demo", ip_address="127.0.0.1"
+        )
+        instance = SimpleNamespace(control_enabled=True)
         params = SimpleNamespace(
             host="127.0.0.1",
             port=22,
@@ -216,16 +261,16 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         connection = _FakeConnection()
 
         with (
-            patch.object(
-                actions.settings,
-                "ssh_service_control_allowlist",
-                "nginx.service,bt.service",
-            ),
             patch.object(actions, "AsyncSessionLocal", return_value=_SessionContext()),
             patch.object(
                 actions.server_service,
                 "get_server_by_name_or_ip",
                 AsyncMock(return_value=server),
+            ),
+            patch.object(
+                actions.service_catalog_service,
+                "get_instance_by_runtime_identity",
+                AsyncMock(return_value=instance),
             ),
             patch.object(actions, "build_connect_params", return_value=params),
             patch.object(

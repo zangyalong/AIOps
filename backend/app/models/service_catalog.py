@@ -2,7 +2,14 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import CheckConstraint, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    ForeignKey,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDMixin
@@ -39,6 +46,10 @@ class ServiceInstance(Base, UUIDMixin, TimestampMixin):
             "runtime_type IS NULL OR runtime_type IN ('systemd', 'docker', 'process')",
             name="ck_service_instances_runtime_type",
         ),
+        CheckConstraint(
+            "control_enabled = false OR runtime_type = 'systemd'",
+            name="ck_service_instances_control_systemd",
+        ),
     )
 
     service_id: Mapped[uuid.UUID] = mapped_column(
@@ -53,6 +64,9 @@ class ServiceInstance(Base, UUIDMixin, TimestampMixin):
     )
     runtime_name: Mapped[str | None] = mapped_column(
         String(200), nullable=True, index=True
+    )
+    control_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
     )
     metric_instance: Mapped[str | None] = mapped_column(
         String(255), nullable=True, index=True

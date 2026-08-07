@@ -20,6 +20,7 @@ export interface ServiceInstance {
   name: string
   runtime_type: RuntimeType | null
   runtime_name: string | null
+  control_enabled: boolean
   metric_instance: string | null
   log_service: string | null
   description: string | null

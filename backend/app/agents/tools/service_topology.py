@@ -36,6 +36,7 @@ async def query_server_services(server: str) -> str:
             f"- {_label(service)}：实例={instance.name}，"
             f"runtime={instance.runtime_type or '未配置'}/"
             f"{instance.runtime_name or '未配置'}，"
+            f"控制授权={'已开启' if instance.control_enabled else '未开启'}，"
             f"metric_instance={instance.metric_instance or '未配置'}，"
             f"log_service={instance.log_service or '未配置'}"
         )

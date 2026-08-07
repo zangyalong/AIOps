@@ -35,6 +35,7 @@ class ServiceCatalogToolsTest(unittest.IsolatedAsyncioTestCase):
             name="web-01-main",
             runtime_type="systemd",
             runtime_name="web.service",
+            control_enabled=True,
             metric_instance="10.0.0.11:9100",
             log_service="web",
         )
@@ -68,6 +69,7 @@ class ServiceCatalogToolsTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("web/prod", result)
         self.assertIn("实例=web-01-main", result)
         self.assertIn("runtime=systemd/web.service", result)
+        self.assertIn("控制授权=已开启", result)
         self.assertIn("不代表实时进程或容器运行状态", result)
 
 
@@ -112,3 +114,48 @@ class ServiceInstanceResolutionTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(resolved)
         self.assertEqual(resolved.service, service)
         self.assertEqual(resolved.instance, instance)
+
+    async def test_control_authorization_only_accepts_systemd_instance(self) -> None:
+        instance = SimpleNamespace(
+            server_id=uuid.uuid4(),
+            runtime_type="docker",
+            runtime_name="orders-api",
+            control_enabled=False,
+        )
+
+        with self.assertRaisesRegex(ValueError, "只有 systemd"):
+            await service_catalog_service.set_control_authorization(
+                object(), instance, enabled=True
+            )
+
+    async def test_control_authorization_can_be_enabled_for_systemd(self) -> None:
+        instance = SimpleNamespace(
+            server_id=uuid.uuid4(),
+            runtime_type="systemd",
+            runtime_name="orders-api.service",
+            control_enabled=False,
+        )
+        with patch.object(
+            service_catalog_service.service_catalog_repository,
+            "save_instance",
+            AsyncMock(return_value=instance),
+        ):
+            saved = await service_catalog_service.set_control_authorization(
+                object(), instance, enabled=True
+            )
+
+        self.assertTrue(saved.control_enabled)
+
+    async def test_authorized_instance_must_be_disabled_before_delete(self) -> None:
+        instance = SimpleNamespace(control_enabled=True)
+        with (
+            self.assertRaisesRegex(ValueError, "先关闭授权"),
+            patch.object(
+                service_catalog_service.service_catalog_repository,
+                "delete_instance",
+                AsyncMock(),
+            ) as delete_instance,
+        ):
+            await service_catalog_service.delete_instance(object(), instance)
+
+        delete_instance.assert_not_awaited()

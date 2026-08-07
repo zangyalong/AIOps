@@ -13,9 +13,8 @@ from typing import Literal
 import asyncssh
 from langchain_core.tools import tool
 
-from app.core.config import settings
 from app.db.session import AsyncSessionLocal
-from app.services import server_service
+from app.services import server_service, service_catalog_service
 from app.services.ssh_service import (
     SSHKeyMissing,
     SSHNotConfigured,
@@ -27,41 +26,33 @@ SERVICE_UNIT_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@:-]*\.service$")
 ServiceAction = Literal["start", "stop", "restart"]
 
 
-def service_control_allowlist() -> frozenset[str]:
-    """读取逗号分隔的服务控制白名单；默认空集合表示拒绝全部启停和重启。"""
-    return frozenset(
-        item.strip()
-        for item in settings.service_control_allowlist.split(",")
-        if item.strip()
-    )
-
-
-def restart_service_allowlist() -> frozenset[str]:
-    """兼容旧调用名称；三种服务控制动作现在共用同一白名单。"""
-    return service_control_allowlist()
-
-
 async def _control_service(
     action: ServiceAction, server_name: str, service_name: str
 ) -> str:
     service = service_name.strip()
-    allowed = service_control_allowlist()
     action_label = {"start": "启动", "stop": "停止", "restart": "重启"}[action]
     if not SERVICE_UNIT_PATTERN.fullmatch(service):
         return "服务名必须是明确的 systemd .service 单元，已拒绝执行。"
-    if not allowed:
-        return (
-            "服务控制白名单为空，已拒绝执行。请先配置 "
-            "SSH_SERVICE_CONTROL_ALLOWLIST，再重新发起请求。"
-        )
-    if service not in allowed:
-        names = "、".join(sorted(allowed))
-        return f'服务 "{service}" 不在控制白名单内，已拒绝执行。当前允许：{names}。'
 
     async with AsyncSessionLocal() as db:
         server = await server_service.get_server_by_name_or_ip(db, server_name)
-    if server is None:
-        return f"没有找到名称或 IP 为 {server_name} 的服务器，请先确认服务器。"
+        if server is None:
+            return f"没有找到名称或 IP 为 {server_name} 的服务器，请先确认服务器。"
+        instance = await service_catalog_service.get_instance_by_runtime_identity(
+            db,
+            server_id=server.id,
+            runtime_type="systemd",
+            runtime_name=service,
+        )
+        if instance is None:
+            return (
+                f'{server.name} 上的服务 "{service}" 尚未登记到服务目录，已拒绝执行。'
+            )
+        if not instance.control_enabled:
+            return (
+                f'{server.name} 上的服务 "{service}" 未开启控制授权，已拒绝执行。'
+                "请先在服务目录对应实例中开启控制授权。"
+            )
 
     try:
         params = build_connect_params(server)

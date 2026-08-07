@@ -105,6 +105,20 @@ export async function updateServiceInstance(
   )
 }
 
+export async function updateServiceControlAuthorization(
+  id: string,
+  enabled: boolean,
+): Promise<ServiceInstance> {
+  return parseJson(
+    await fetch(`/api/service-instances/${id}/control-authorization`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    }),
+    '更新服务控制授权失败',
+  )
+}
+
 export async function deleteServiceInstance(id: string): Promise<void> {
   const res = await fetch(`/api/service-instances/${id}`, { method: 'DELETE' })
   if (!res.ok) throw new Error(`删除服务实例失败：${res.status}`)

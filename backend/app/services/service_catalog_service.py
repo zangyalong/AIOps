@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass
 
@@ -29,6 +30,10 @@ class AmbiguousService(ValueError):
     pass
 
 
+class ControlAuthorizationUnavailable(ValueError):
+    pass
+
+
 @dataclass(frozen=True)
 class ResolvedServiceInstance:
     service: Service
@@ -49,6 +54,9 @@ class ServiceRegistrationResult:
     created_services: int
     created_instances: int
     skipped_instances: int
+
+
+SERVICE_UNIT_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@:-]*\.service$")
 
 
 async def list_services(
@@ -105,6 +113,11 @@ async def update_service(
 
 
 async def delete_service(db: AsyncSession, service: Service) -> None:
+    instances = await list_instances(db, service_id=service.id)
+    if any(instance.control_enabled for instance in instances):
+        raise ControlAuthorizationUnavailable(
+            "该服务仍有已开启控制授权的实例，请先逐一关闭授权再删除服务"
+        )
     await service_catalog_repository.delete_service(db, service)
 
 
@@ -123,6 +136,21 @@ async def get_instance(
     db: AsyncSession, instance_id: uuid.UUID
 ) -> ServiceInstance | None:
     return await service_catalog_repository.get_instance(db, instance_id)
+
+
+async def get_instance_by_runtime_identity(
+    db: AsyncSession,
+    *,
+    server_id: uuid.UUID,
+    runtime_type: str,
+    runtime_name: str,
+) -> ServiceInstance | None:
+    return await service_catalog_repository.get_instance_by_runtime_identity(
+        db,
+        server_id=server_id,
+        runtime_type=runtime_type,
+        runtime_name=runtime_name,
+    )
 
 
 async def _validate_instance_references(
@@ -284,12 +312,51 @@ async def update_instance(
     )
     if existing is not None and existing.id != instance.id:
         raise DirectoryConflict("该服务下已存在同名实例")
+    runtime_identity_changed = (
+        server_id != instance.server_id
+        or runtime_type != instance.runtime_type
+        or runtime_name != instance.runtime_name
+    )
+    if instance.control_enabled and runtime_identity_changed:
+        raise ControlAuthorizationUnavailable(
+            "该实例已开启控制授权，请先关闭授权再修改服务器或运行时身份"
+        )
     for field, value in values.items():
         setattr(instance, field, value)
     return await service_catalog_repository.save_instance(db, instance)
 
 
+async def set_control_authorization(
+    db: AsyncSession,
+    instance: ServiceInstance,
+    *,
+    enabled: bool,
+) -> ServiceInstance:
+    """修改实例级服务控制授权；目标机 root 白名单仍是独立权限上限。"""
+    if enabled:
+        validate_control_target(instance)
+    instance.control_enabled = enabled
+    return await service_catalog_repository.save_instance(db, instance)
+
+
+def validate_control_target(instance: ServiceInstance) -> None:
+    if instance.server_id is None:
+        raise ControlAuthorizationUnavailable("控制授权要求实例绑定服务器")
+    if instance.runtime_type != "systemd":
+        raise ControlAuthorizationUnavailable("只有 systemd 服务支持启动和停止授权")
+    if not instance.runtime_name or not SERVICE_UNIT_PATTERN.fullmatch(
+        instance.runtime_name
+    ):
+        raise ControlAuthorizationUnavailable(
+            "控制授权要求填写完整、合法的 systemd .service 单元名"
+        )
+
+
 async def delete_instance(db: AsyncSession, instance: ServiceInstance) -> None:
+    if instance.control_enabled:
+        raise ControlAuthorizationUnavailable(
+            "该实例已开启控制授权，请先关闭授权再删除实例"
+        )
     await service_catalog_repository.delete_instance(db, instance)
 
 

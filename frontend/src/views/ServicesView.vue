@@ -11,6 +11,7 @@ import {
   fetchServiceObservability,
   fetchServices,
   updateService,
+  updateServiceControlAuthorization,
   updateServiceInstance,
 } from '../api/services'
 import { fetchServerObservability, fetchServers } from '../api/servers'
@@ -46,6 +47,7 @@ const observabilityByInstance = ref<Record<string, ServiceObservability>>({})
 const observabilityLoadingIds = ref<Set<string>>(new Set())
 const observabilityErrors = ref<Record<string, string>>({})
 const observabilityMinutes = ref(1440)
+const controlAuthorizationSavingIds = ref<Set<string>>(new Set())
 const serverObservabilityById = ref<Record<string, ServerObservability>>({})
 const serverObservabilityLoadingIds = ref<Set<string>>(new Set())
 const serverObservabilityErrors = ref<Record<string, string>>({})
@@ -376,8 +378,45 @@ function runtimeActionAvailable(instance: ServiceInstance): boolean {
   return Boolean(
     instance.server_id &&
       instance.runtime_name &&
-      instance.runtime_type === 'systemd',
+      instance.runtime_type === 'systemd' &&
+      instance.control_enabled,
   )
+}
+
+function controlAuthorizationAvailable(instance: ServiceInstance): boolean {
+  return Boolean(
+    instance.server_id &&
+      instance.runtime_type === 'systemd' &&
+      instance.runtime_name?.endsWith('.service'),
+  )
+}
+
+async function toggleControlAuthorization(instance: ServiceInstance) {
+  if (!controlAuthorizationAvailable(instance)) return
+  const enabled = !instance.control_enabled
+  const confirmation = enabled
+    ? `确定为 ${instance.runtime_name} 开启控制授权？\n\n系统会同步加入目标服务器 root 白名单；开启后，AI 可以在人工审批通过后发起启动、停止或重启。`
+    : `确定关闭 ${instance.runtime_name} 的控制授权？\n\n系统会同时从目标服务器 root 白名单移除该服务，之后 AI 将不能再发起启动、停止或重启。`
+  if (!confirm(confirmation)) {
+    return
+  }
+
+  controlAuthorizationSavingIds.value = new Set([
+    ...controlAuthorizationSavingIds.value,
+    instance.id,
+  ])
+  error.value = null
+  try {
+    const saved = await updateServiceControlAuthorization(instance.id, enabled)
+    const index = instances.value.findIndex((item) => item.id === saved.id)
+    if (index !== -1) instances.value[index] = saved
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    const next = new Set(controlAuthorizationSavingIds.value)
+    next.delete(instance.id)
+    controlAuthorizationSavingIds.value = next
+  }
 }
 
 function requestRuntimeAction(instance: ServiceInstance, action: 'start' | 'stop') {
@@ -935,6 +974,33 @@ function serverStatusLabel(server: Server): string {
                 <div><dt>Loki</dt><dd>{{ instance.log_service || '未配置' }}</dd></div>
               </dl>
               <p v-if="instance.description" class="instance-description">{{ instance.description }}</p>
+              <div v-if="instance.runtime_type === 'systemd'" class="control-authorization">
+                <div>
+                  <strong>服务控制授权</strong>
+                  <span>
+                    {{
+                      instance.control_enabled
+                        ? 'AIOMS 与目标服务器白名单已同步授权'
+                        : '开启后将同步服务器白名单；操作仍需人工审批'
+                    }}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  class="control-switch"
+                  :class="{ active: instance.control_enabled }"
+                  role="switch"
+                  :aria-checked="instance.control_enabled"
+                  :aria-label="`${instance.runtime_name || instance.name} 服务控制授权`"
+                  :disabled="
+                    !controlAuthorizationAvailable(instance) ||
+                    controlAuthorizationSavingIds.has(instance.id)
+                  "
+                  @click="toggleControlAuthorization(instance)"
+                >
+                  <span aria-hidden="true" />
+                </button>
+              </div>
               <div class="runtime-actions">
                 <button type="button" class="btn-secondary" @click="refreshSelectedStatuses">
                   检测状态
@@ -943,14 +1009,22 @@ function serverStatusLabel(server: Server): string {
                   type="button"
                   class="btn-secondary action-start"
                   :disabled="!runtimeActionAvailable(instance)"
-                  title="进入运维对话，发送后仍需人工审批"
+                  :title="
+                    runtimeActionAvailable(instance)
+                      ? '进入运维对话，发送后仍需人工审批'
+                      : '请先为该 systemd 实例开启服务控制授权'
+                  "
                   @click="requestRuntimeAction(instance, 'start')"
                 >启动服务</button>
                 <button
                   type="button"
                   class="btn-secondary action-stop"
                   :disabled="!runtimeActionAvailable(instance)"
-                  title="进入运维对话，发送后仍需人工审批"
+                  :title="
+                    runtimeActionAvailable(instance)
+                      ? '进入运维对话，发送后仍需人工审批'
+                      : '请先为该 systemd 实例开启服务控制授权'
+                  "
                   @click="requestRuntimeAction(instance, 'stop')"
                 >停止服务</button>
               </div>
@@ -1704,6 +1778,71 @@ button:disabled {
 
 .observability-controls {
   gap: 0.45rem;
+}
+
+.control-authorization {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0.85rem;
+  border-radius: var(--radius-sm);
+  padding: 0.7rem 0.8rem;
+  background: #f8f9fa;
+}
+
+.control-authorization > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.18rem;
+}
+
+.control-authorization strong {
+  font-size: 0.76rem;
+}
+
+.control-authorization span {
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+}
+
+.control-switch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 24px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0;
+  background: #cbd2dc;
+  cursor: pointer;
+  transition: background 0.18s ease;
+}
+
+.control-switch > span {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(16 24 40 / 22%);
+  transition: transform 0.18s ease;
+}
+
+.control-switch.active {
+  background: #3157c8;
+}
+
+.control-switch.active > span {
+  transform: translateX(18px);
+}
+
+.control-switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .observability-controls select {

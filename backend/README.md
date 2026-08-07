@@ -112,7 +112,7 @@ uv run python scripts/migrate_chat_runs.py
 | `GRAFANA_BASE_URL`              | `http://localhost:3000`    | 生成 Explore 链接                                     |
 | `REDIS_URL`                     | `redis://localhost:6379`   | arq broker                                            |
 | `OBS_HTTP_TIMEOUT`              | `10`                       | 可观测性 HTTP 请求超时秒数                            |
-| `SSH_SERVICE_CONTROL_ALLOWLIST` | 空                           | 允许启停/重启的完整 `.service` 单元，逗号分隔；空值表示全部禁止 |
+| `SSH_SERVICE_CONTROL_ALLOWLIST` | 空                           | 生成目标部署包时写入的初始 root 控制白名单；完整 `.service` 单元用逗号分隔 |
 | `SSH_KEY_DIR`                   | 仓库根目录`ssh/`           | 生成和读取目标服务器 SSH 私钥                         |
 | `TARGET_SERVER_SCRIPTS_DIR`     | `scripts/target-server/`   | 生成目标服务器一键安装包的固定脚本目录                |
 
@@ -261,7 +261,20 @@ tests/             # 不依赖外部服务的自动化测试
 - Docker、监听 socket 和按 PID 只读查询在 SSH 端会改写为 `sudo -n -- /usr/local/sbin/aioms-*-read ...`；目标服务器的 root 所有包装脚本会再次校验子命令、容器名和 PID，sudoers 只授权这两个网关，不开放任意 `sudo docker/ss/ps`。
 - `register_server_services` 是服务目录写工具：审批卡片列出准备登记的服务器、环境和运行时映射；批准后会重新扫描核对对象仍然存在，再幂等写入逻辑服务与部署实例。
 - `preview_server_log_config` 是只读 Tool，只从服务目录生成 systemd/Docker 日志映射、摘要和警告，不连接目标服务器；`apply_server_log_config` 是高风险写 Tool，两步确认后重新计算并核对摘要，使用同一非 root AIOMS 身份上传到固定暂存路径，再调用固定 `apply-alloy` 网关校验、安装并重载 Alloy。
-- `start_service` 是中风险写工具，审批卡片确认一次；`stop_service`、`restart_service` 是高风险写工具，审批卡片后还必须在详情弹窗二次确认，后端也会校验二次确认标记。三者都通过同一非 root AIOMS 身份调用固定 `aioms-service-control` 网关，且 AIOMS 和目标服务器两端都必须命中 `SSH_SERVICE_CONTROL_ALLOWLIST`；默认空白名单拒绝全部服务控制。
+- `start_service` 是中风险写工具，审批卡片确认一次；`stop_service`、`restart_service` 是高风险写工具，审批卡片后还必须在详情弹窗二次确认，后端也会校验二次确认标记。三者都要求服务目录对应 systemd 实例已开启“控制授权”，并通过同一非 root AIOMS 身份调用固定 `aioms-service-control` 网关。
+- 服务目录开关通过固定 `aioms-service-policy add/remove` 网关同步目标服务器 root 白名单；远端成功后才保存数据库状态，数据库保存失败时会尽力回滚远端。策略网关不执行启停、不接受文件路径或 Shell，服务发现和目录注册也不会自动调用它。
+- 已授权实例不能直接修改服务器/运行时身份或删除，逻辑服务也不能级联删除仍授权的实例；必须先关闭授权，让目标服务器移除白名单后再修改目录。
+
+已有数据库增加实例级控制授权字段：
+
+```bash
+psql -d aioms -v ON_ERROR_STOP=1 \
+  -f scripts/database/20260807_add_service_control_authorization.sql
+
+# 新策略同步网关上线时，关闭无法证明已同步的旧授权；安装网关后由用户重新开启。
+psql -d aioms -v ON_ERROR_STOP=1 \
+  -f scripts/database/20260807_reset_legacy_service_control_authorizations.sql
+```
 - `create_alert_rule` 是中风险写工具：人工审批后复用预警规则页面相同的字段校验、PromQL 校验、数据库写入和 Prometheus 热重载流程。
 - 工具执行节点会再次校验审批决议和高风险二次确认，不能只靠模型是否正确路由；后台 worker 设置 `allow_write_tools=False`，从模型绑定和执行节点两层禁止写工具。
 - 本地 SSH 沙箱当前使用 `known_hosts=None`，只适用于一次性本地容器，不能直接用于生产服务器。
