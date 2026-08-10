@@ -8,11 +8,12 @@ flowchart LR
     LLM["LLM / Specialist"] --> TOOL["agents/tools<br/>模型参数协议"]
     TOOL --> BROKER["Operation Broker"]
     BROKER --> POLICY["Policy<br/>角色 / 环境 / 运行模式 / 风险"]
-    POLICY -->|allow| AUDIT["operation_records<br/>冻结请求与状态机"]
+    POLICY -->|root-read allow| READ_AUDIT["operation_records<br/>先记录只读请求"]
+    READ_AUDIT --> READ_SANDBOX["一次性 Docker 沙箱<br/>root 读取 / 宿主只读"]
     POLICY -->|approval_required| APPROVAL["LangGraph interrupt<br/>人工审批"]
-    APPROVAL --> AUDIT
+    APPROVAL --> WRITE_AUDIT["operation_records<br/>冻结请求与状态机"]
     POLICY -->|deny| RESULT["拒绝结果"]
-    AUDIT --> EXECUTOR["operations/executors<br/>业务校验与执行"]
+    WRITE_AUDIT --> EXECUTOR["operations/executors<br/>业务校验与执行"]
     EXECUTOR --> GATEWAY["目标机 root 固定网关<br/>最小 sudoers / 白名单"]
 ```
 
@@ -22,13 +23,14 @@ flowchart LR
 - `agents/tools/catalog.py`：登记每项操作的读写属性、风险等级和审批展示；读写工具不能重名。
 - `operations/broker.py`：唯一操作入口，先查注册表、再调用策略、最后调度获配执行器。
 - `operations/policy.py`：纯规则判断，不访问数据库、不连接服务器，输出 `allow / approval_required / deny`。
-- `operation_records`：保存规范化参数、摘要、发起人、审批人、策略上下文、状态和结果；执行前使用行锁，避免重复执行。
+- `operation_records`：写操作保存冻结请求、审批和状态机；root-read 在执行前保存完整命令、发起人、服务器，执行后保存退出码、超时和脱敏结果。
 - `operations/executors/`：执行数据库复查、SSH/SFTP 和业务逻辑；即使上层批准，也不能绕过服务目录授权和参数校验。
-- `scripts/target-server/`：最终权限边界。SSH 用户不能修改 root 包装脚本，sudoers 只放行固定入口，不开放任意 Shell。
+- `scripts/target-server/root-read/`：通用调查边界。固定镜像无网络运行；宿主根挂载禁用递归，安全子挂载逐项只读加入，敏感路径另行遮蔽。当前单一交互身份无需审批，但必须审计。
+- `scripts/target-server/` 的其他目录：写操作最终权限边界。SSH 用户不能修改 root 包装脚本，sudoers 只放行固定参数入口，不开放任意宿主机写 Shell。
 
 ## 默认策略
 
-- 读操作允许在交互会话和无人值守任务中运行。
+- 普通读操作自动允许；通用 root-read 不区分额外管理员角色，但必须先成功落审计记录。
 - `viewer` 和 `system` 不能发起写操作；`operator / approver / admin` 可以发起。
 - 写操作默认需要人工审批，只有 `approver / admin` 可以批准。
 - `high` 操作仍需要详情弹窗二次确认；`critical` 操作始终拒绝执行，只能给建议。
@@ -48,3 +50,21 @@ flowchart LR
 5. 增加策略边界、未审批不可执行、执行器白名单和审计状态测试。
 
 审计查询接口是 `GET /operations`，可使用 `chat_run_id`、`status` 和 `limit` 筛选。
+
+## 已有开发数据库升级
+
+`create_all()` 不会修改已经存在的表。已有本地 `operation_records` 需要执行一次：
+
+```sql
+BEGIN;
+ALTER TABLE operation_records ADD COLUMN IF NOT EXISTS exit_code integer;
+ALTER TABLE operation_records ADD COLUMN IF NOT EXISTS timed_out boolean;
+ALTER TABLE operation_records DROP CONSTRAINT IF EXISTS ck_operation_records_effect;
+ALTER TABLE operation_records
+  ADD CONSTRAINT ck_operation_records_effect CHECK (effect IN ('read', 'write'));
+ALTER TABLE operation_records DROP CONSTRAINT IF EXISTS ck_operation_records_risk_level;
+ALTER TABLE operation_records
+  ADD CONSTRAINT ck_operation_records_risk_level
+  CHECK (risk_level IN ('low', 'medium', 'high', 'critical'));
+COMMIT;
+```

@@ -107,6 +107,18 @@ async def _fake_run_diagnostic_command(server_name: str, command: str) -> str:
     return f"{server_name}: {command}: ok"
 
 
+@tool("run_root_read_command")
+async def _fake_run_root_read_command(
+    server_name: str,
+    command: str,
+) -> OperationResult:
+    """返回带退出元数据、但不访问 SSH 的 root 只读结果。"""
+    return OperationResult.success(
+        f"{server_name}: {command}: root-read-ok",
+        metadata={"exit_code": 0, "timed_out": False},
+    )
+
+
 _write_calls: list[tuple[str, str]] = []
 _catalog_write_calls: list[tuple[str, int, str]] = []
 
@@ -407,6 +419,81 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
                 and "uptime: ok" in str(message.content)
                 for message in result["messages"]
             )
+        )
+
+    async def test_root_read_does_not_interrupt_but_is_audited(self) -> None:
+        """root-read 无需审批，但必须先落审计，完成后写入退出元数据。"""
+        chat_graph.SPECIALIST_READ_TOOLS["infrastructure_agent"] = [
+            _fake_run_root_read_command
+        ]
+        base = _FakeBaseLLM(["infrastructure_agent", "finish"])
+        chat_graph._base_llm = lambda: base
+        chat_graph._specialist_llm = _fake_specialist_factory(
+            [
+                AIMessage(
+                    "",
+                    tool_calls=[
+                        {
+                            "name": "run_root_read_command",
+                            "args": {
+                                "server_name": "demo",
+                                "command": "rg redis /host/etc",
+                            },
+                            "id": "root-read-call",
+                            "type": "tool_call",
+                        }
+                    ],
+                ),
+                AIMessage("root 只读证据已获取"),
+            ]
+        )
+
+        state = _initial_state(allow_write_tools=True)
+        state["operation_run_id"] = str(uuid.uuid4())
+        begin = AsyncMock(return_value=SimpleNamespace(status="executing"))
+        finish = AsyncMock()
+        with (
+            patch.object(
+                chat_graph,
+                "AsyncSessionLocal",
+                return_value=_SessionContext(),
+            ),
+            patch.object(
+                chat_graph.operation_record_service,
+                "begin_read_execution",
+                begin,
+            ),
+            patch.object(
+                chat_graph.operation_record_service,
+                "finish_execution",
+                finish,
+            ),
+        ):
+            graph = chat_graph.build_chat_graph()
+            result = await graph.ainvoke(
+                state,
+                config={"configurable": {"thread_id": "root-read-test"}},
+            )
+
+        self.assertFalse(
+            (
+                await graph.aget_state(
+                    {"configurable": {"thread_id": "root-read-test"}}
+                )
+            ).interrupts
+        )
+        self.assertTrue(
+            any(
+                isinstance(message, ToolMessage)
+                and "root-read-ok" in str(message.content)
+                for message in result["messages"]
+            )
+        )
+        begin.assert_awaited_once()
+        finish.assert_awaited_once()
+        self.assertEqual(
+            finish.await_args.kwargs["metadata"],
+            {"exit_code": 0, "timed_out": False},
         )
 
     async def test_approved_write_tool_executes_once(self) -> None:

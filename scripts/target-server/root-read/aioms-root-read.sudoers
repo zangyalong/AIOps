@@ -1,0 +1,4 @@
+# 该文件由 install.sh 把 @AIOMS_SSH_USER@ 替换成目标服务器上的 SSH 用户名。
+# 空参数字符串要求调用方不能附加任何命令行参数；诊断请求只允许通过 stdin JSON 传入。
+
+@AIOMS_SSH_USER@ ALL=(root) NOPASSWD: /usr/local/sbin/aioms-root-read ""

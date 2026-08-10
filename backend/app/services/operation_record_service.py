@@ -81,6 +81,56 @@ async def ensure_pending(
     )
 
 
+async def begin_read_execution(
+    db: AsyncSession,
+    *,
+    chat_run_id: uuid.UUID,
+    prepared: PreparedOperation,
+) -> OperationRecord:
+    """在真实执行前落下低风险只读审计；审计不可用时调用方必须停止执行。"""
+    if prepared.spec.effect != "read" or not prepared.spec.audit_execution:
+        raise OperationRecordError("该读操作没有登记为强制审计操作")
+    if prepared.decision.result != "allow":
+        raise OperationRecordError("只有策略允许的只读操作才能开始执行")
+
+    existing = await operation_record_repository.get_by_run_and_tool_call(
+        db,
+        chat_run_id,
+        prepared.call.id,
+    )
+    if existing is not None:
+        _validate_binding(existing, prepared)
+        if existing.status != "executing":
+            raise OperationRecordError(
+                f"只读操作当前状态为 {existing.status}，不能重复执行。"
+            )
+        return existing
+
+    now = _now()
+    return await operation_record_repository.create(
+        db,
+        OperationRecord(
+            chat_run_id=chat_run_id,
+            tool_call_id=prepared.call.id,
+            operation_name=prepared.call.name,
+            effect="read",
+            risk_level=prepared.spec.risk_level,
+            normalized_args=prepared.call.normalized_args(),
+            request_hash=prepared.call.request_hash(prepared.spec, prepared.context),
+            approval_view={},
+            actor_id=prepared.context.actor_id,
+            actor_role=prepared.context.actor_role,
+            run_mode=prepared.context.run_mode,
+            environment=prepared.context.environment,
+            policy_reason=prepared.decision.reason or None,
+            status="executing",
+            decision_at=now,
+            started_at=now,
+            expires_at=now,
+        ),
+    )
+
+
 async def authorize_execution(
     db: AsyncSession,
     *,
@@ -141,6 +191,7 @@ async def finish_execution(
     tool_call_id: str,
     result: object | None = None,
     error: str | None = None,
+    metadata: dict[str, object] | None = None,
 ) -> OperationRecord:
     record = await operation_record_repository.get_by_run_and_tool_call(
         db,
@@ -152,6 +203,13 @@ async def finish_execution(
     if record.status != "executing":
         raise OperationRecordError(f"操作状态 {record.status} 不能结束执行")
     record.finished_at = _now()
+    if metadata is not None:
+        raw_exit_code = metadata.get("exit_code")
+        raw_timed_out = metadata.get("timed_out")
+        if isinstance(raw_exit_code, int) and not isinstance(raw_exit_code, bool):
+            record.exit_code = raw_exit_code
+        if isinstance(raw_timed_out, bool):
+            record.timed_out = raw_timed_out
     if error is not None:
         record.status = "failed"
         record.error_message = error[:MAX_RESULT_CHARS]

@@ -5,10 +5,11 @@
 也可以把整个 `scripts/target-server/` 目录复制到目标 Linux 服务器，按底层步骤分别执行。
 首次安装可以完成：
 
-1. 安装 AIOMS 服务发现所需的只读命令网关和精确 sudoers 权限。
-2. 为同一个非 root `aioms` 用户安装统一的 systemd / Docker 白名单服务控制写网关；白名单留空时拒绝全部。
-3. 按需安装 Grafana Alloy 基础组件；服务发现并注册后由 AI 生成日志配置并审批启用。
-4. 按独立开关部署 node_exporter、cAdvisor、MySQL、PostgreSQL 和 Redis exporter。
+1. 安装无网络、宿主机只读并遮蔽敏感路径的 root 诊断沙箱。
+2. 安装 AIOMS 服务发现所需的结构化只读网关和精确 sudoers 权限。
+3. 为同一个非 root `aioms` 用户安装统一的 systemd / Docker 白名单服务控制写网关；白名单留空时拒绝全部。
+4. 按需安装 Grafana Alloy 基础组件；服务发现并注册后由 AI 生成日志配置并审批启用。
+5. 按独立开关部署 node_exporter、cAdvisor、MySQL、PostgreSQL 和 Redis exporter。
 
 如果目标服务器还没有 AIOMS 专用 SSH 用户，先使用 `bootstrap/prepare-client.sh` 在客户端
 生成一组密钥和一个独立角色包。服务器管理员只需接收一个公钥和角色配置脚本，不需要接收
@@ -74,8 +75,8 @@ cd aioms-web01
 sudo ./install.sh
 ```
 
-这一条命令内部依次配置单一 SSH 角色、安装 discovery 和固定写网关、按开关安装基础指标及未配置服务映射的
-Alloy。完成后即可回到 AIOMS 对话中发现、注册服务，再预览并审批应用日志配置。压缩包不含
+这一条命令内部依次配置单一 SSH 身份、安装 root 只读沙箱、discovery 和固定写网关，再按开关安装基础指标及未配置服务映射的
+Alloy。完成后即可回到 AIOMS 对话中调查、发现、注册服务，再预览并审批应用日志配置。压缩包不含
 私钥；如果启用了数据库 exporter，会包含配置引用的监控凭据，因此仍要通过受控渠道传输。
 
 ## 目录说明
@@ -86,9 +87,17 @@ target-server/
 ├── deploy.sh                    # 一键部署总入口
 ├── deploy.conf.example          # 每台服务器的部署参数模板
 ├── bootstrap/
-│   ├── prepare-client.sh        # 客户端生成两组密钥和独立角色包
+│   ├── prepare-client.sh        # 客户端生成一组密钥和单一角色包
 │   ├── server-bootstrap.sh      # 角色包中 configure-role.sh 的源文件
 │   └── README.md                # 首次引导的完整操作流程
+├── root-read/
+│   ├── Dockerfile               # 固定诊断工具镜像
+│   ├── entrypoint.py            # stdin JSON 校验、超时、截断和脱敏
+│   ├── host_mounts.py           # 安全枚举宿主机独立挂载点
+│   ├── aioms-root-read          # root 持有的一次性沙箱启动器
+│   ├── aioms-root-read.sudoers  # 只开放无参数固定入口
+│   ├── install.sh               # 构建镜像并固定不可变 image ID
+│   └── README.md                # 沙箱边界与验收命令
 ├── discovery/
 │   ├── install.sh               # 只读发现网关安装器，由 deploy.sh 调用
 │   ├── aioms-service-read       # socket、指定 PID 和 systemd unit 只读查询网关
@@ -123,9 +132,9 @@ target-server/
     └── README.md                # 数据库账号、权限、端口和中央抓取说明
 ```
 
-运行包还会安装 `files/` 下的受控文件网关。文件白名单默认为空，需要在 AIOMS 服务目录的实例详情中登记“可读目录或文件”或“精确可写文件”；页面会通过同一个非 root SSH 身份把授权同步到目标机 root 持有的 `/etc/aioms/file-access.allowlist`。
+普通配置、代码和日志调查由 `root-read/` 提供，不需要维护读取命令或业务目录白名单。运行包仍会安装 `files/` 下的受控文件网关；它用于“准备修改文件”的快照、哈希复核和审批写入。文件写白名单默认为空，需要在 AIOMS 服务目录的实例详情中登记“精确可写文件”；页面会通过同一个非 root SSH 身份把授权同步到目标机 root 持有的 `/etc/aioms/file-access.allowlist`。
 
-通用文件读取仅支持不超过 64 KiB 的文本文件并自动脱敏。通用写入不会接收密码、Token、私钥或脱敏占位符，执行前必须展示完整 diff 并通过高风险二次确认；目标机备份位于 `/var/lib/aioms/file-backups/`。
+受控文件快照仅支持不超过 64 KiB 的文本文件并自动脱敏。受控写入不会接收密码、Token、私钥或脱敏占位符，执行前必须展示完整 diff 并通过高风险二次确认；目标机备份位于 `/var/lib/aioms/file-backups/`。
 
 长期生效的文件会安装到 `/usr/local/sbin/`、`/etc/sudoers.d/`、`/etc/alloy/` 和
 `/etc/aioms-exporters/`。上传到临时目录的配置包在验证完成后可以删除。
@@ -138,14 +147,14 @@ target-server/
 - AIOMS 用于 SSH 登录的普通用户已经存在并安装公钥，例如 `aioms`；没有时先执行下一节的
   首次 SSH 初始化。
 - 启用 Alloy 时，目标服务器能访问中央 Loki 的 HTTP 推送地址。
-- Docker 是可选的；启用任一指标 exporter 时必须已有 Docker 和 Docker Compose。
+- Docker Engine 25+ 是 root 只读沙箱禁用递归并逐项只读挂载的必需依赖；Linux 5.10 可用。启用任一指标 exporter 时还必须已有 Docker Compose。
 
 日常 `deploy.sh` 不会创建 SSH 用户或写入公钥；只有管理员主动执行首次 bootstrap 才会做这两
 件事。两个流程都不会修改 `sshd_config`，服务器包永远不包含客户端私钥。
 
 ## 零、首次 SSH 初始化（每台服务器只做一次）
 
-在 AIOMS 项目根目录生成只读和部署两组密钥：
+在 AIOMS 项目根目录生成一组共用的 SSH 密钥：
 
 ```bash
 scripts/target-server/bootstrap/prepare-client.sh \
@@ -167,8 +176,9 @@ sha256sum -c SHA256SUMS
 sudo ./configure-role.sh --user aioms
 ```
 
-bootstrap 创建或复用一个 `aioms` 普通用户。它既用于只读查询，也用于审批后调用固定写网关；
-用户自身不能指定任意 root 脚本、配置路径、`systemctl`、Shell 或 Docker 命令。
+bootstrap 创建或复用一个 `aioms` 普通用户。它既用于只读查询，也用于审批后调用固定写网关。
+该用户可以把通用调查命令送入 root 只读沙箱，但不能在宿主机执行任意 root Shell，也不能指定
+额外脚本、挂载、镜像、网络、`systemctl` 或 Docker 控制命令。
 
 角色脚本还会生成 `/usr/local/sbin/aioms-target-deploy` 和
 `/etc/sudoers.d/aioms-target-deploy`，并预留 root 所有的 `/opt/aioms-target-server/`。它不会复制运行

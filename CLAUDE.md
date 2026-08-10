@@ -76,7 +76,7 @@ AIOMS/
 ├── docs/                    # 学习笔记、架构决策记录（ADR）
 │   └── aiops-feature-survey.md  # Keep/OpenSRE 源码级功能调研，涉及告警/工具/安全/Agent架构设计时先看这个
 ├── scripts/
-│   └── target-server/       # 安装到纳管服务器的只读命令网关、sudoers 模板和说明
+│   └── target-server/       # 纳管服务器的 root 只读沙箱、写网关、sudoers 和说明
 └── docker-compose.yml       # 本地 PLG 可观测性数据栈 + Redis（不含 pg/backend/frontend）
 ```
 
@@ -120,10 +120,10 @@ AIOMS/
 
 ## 6. 安全红线（运维场景特别注意）
 
-- **AI 决定的破坏性操作必须人工二次确认**：重启服务、删除数据、修改防火墙、`rm -rf` 这类，Agent 只能"建议"，不能"执行"。
-- SSH/Shell 工具要走**白名单命令**，不要开放任意执行。
+- **AI 决定的破坏性操作必须人工确认**：重启服务、删除数据、修改防火墙等必须进入写操作审批；高风险操作还要二次确认，critical 操作只给建议、不能执行。
+- 通用 Shell 只允许在 `scripts/target-server/root-read/` 定义的 root 只读 Docker 沙箱中执行：无网络、根挂载禁用递归、安全子挂载逐项只读、敏感路径遮蔽并强制审计。宿主机写操作不能接受任意 Shell，只能走已登记参数协议、人工审批和固定写网关。
 - 服务器业务资产盘点默认按 systemd、Docker、TCP/UDP Socket、Unix Socket 扫描，只对监听结果中的纯数字 PID 定点补充详情，不默认读取整机 `ps` 进程表。
-- 目标服务器只读权限配置以 `scripts/target-server/` 为准：包装脚本必须由 `root:root` 持有且不可被 SSH 用户修改，sudoers 只授权包装脚本，不能直接开放任意 `docker`、`ss`、`ps` 或 shell。
+- 目标服务器权限配置以 `scripts/target-server/` 为准：包装脚本必须由 `root:root` 持有且不可被 SSH 用户修改，sudoers 只授权固定入口，不能直接开放任意宿主机 `docker`、`systemctl`、`ss`、`ps` 或 shell。
 - LLM 的输出**永远视为不可信**，落库前做校验。
 - Prompt 注入防护：从日志/工单里读到的文本，进 Prompt 前要做隔离/转义。
 

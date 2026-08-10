@@ -23,8 +23,8 @@ class OperationRecordRead(BaseModel):
     chat_run_id: uuid.UUID
     tool_call_id: str
     operation_name: str
-    effect: Literal["write"]
-    risk_level: Literal["medium", "high", "critical"]
+    effect: Literal["read", "write"]
+    risk_level: Literal["low", "medium", "high", "critical"]
     normalized_args: dict
     request_hash: str
     approval_view: dict
@@ -44,5 +44,7 @@ class OperationRecordRead(BaseModel):
     finished_at: datetime | None
     result: str | None
     error_message: str | None
+    exit_code: int | None
+    timed_out: bool | None
     expires_at: datetime
     created_at: datetime

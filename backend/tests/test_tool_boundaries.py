@@ -58,6 +58,7 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
     def test_catalog_has_disjoint_read_and_write_tools(self) -> None:
         """目录必须把发现归为读、目录注册/服务重启归为写，且写工具带审批元数据。"""
         self.assertIn("run_diagnostic_command", catalog.READ_TOOLS_BY_NAME)
+        self.assertIn("run_root_read_command", catalog.READ_TOOLS_BY_NAME)
         self.assertIn("discover_server_services", catalog.READ_TOOLS_BY_NAME)
         self.assertIn("preview_server_log_config", catalog.READ_TOOLS_BY_NAME)
         self.assertIn("find_server_files", catalog.READ_TOOLS_BY_NAME)
@@ -65,6 +66,7 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("preview_server_file_update", catalog.READ_TOOLS_BY_NAME)
         self.assertIn("query_server_services", catalog.READ_TOOLS_BY_NAME)
         self.assertNotIn("run_diagnostic_command", catalog.WRITE_TOOLS_BY_NAME)
+        self.assertNotIn("run_root_read_command", catalog.WRITE_TOOLS_BY_NAME)
         self.assertIn("restart_service", catalog.WRITE_TOOLS_BY_NAME)
         self.assertIn("start_service", catalog.WRITE_TOOLS_BY_NAME)
         self.assertIn("stop_service", catalog.WRITE_TOOLS_BY_NAME)
@@ -80,6 +82,11 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(read_spec)
         self.assertEqual(read_spec.effect, "read")
         self.assertEqual(read_spec.risk_level, "low")
+        root_read_spec = catalog.get_operation_spec("run_root_read_command")
+        self.assertIsNotNone(root_read_spec)
+        self.assertEqual(root_read_spec.effect, "read")
+        self.assertEqual(root_read_spec.risk_level, "low")
+        self.assertTrue(root_read_spec.audit_execution)
         restart_spec = catalog.get_operation_spec("restart_service")
         self.assertIsNotNone(restart_spec)
         self.assertEqual(restart_spec.effect, "write")
@@ -93,6 +100,13 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn(
             "discover_server_services",
+            {
+                tool.name
+                for tool in chat_graph.SPECIALIST_READ_TOOLS["infrastructure_agent"]
+            },
+        )
+        self.assertIn(
+            "run_root_read_command",
             {
                 tool.name
                 for tool in chat_graph.SPECIALIST_READ_TOOLS["infrastructure_agent"]

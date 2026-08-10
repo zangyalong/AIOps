@@ -21,16 +21,27 @@ class OperationResult:
     ok: bool
     message: str
     code: str
+    metadata: Mapping[str, Any] | None = None
 
     @classmethod
-    def success(cls, message: str, *, code: str = "completed") -> OperationResult:
-        return cls(ok=True, message=message, code=code)
+    def success(
+        cls,
+        message: str,
+        *,
+        code: str = "completed",
+        metadata: Mapping[str, Any] | None = None,
+    ) -> OperationResult:
+        return cls(ok=True, message=message, code=code, metadata=metadata)
 
     @classmethod
     def failure(
-        cls, message: str, *, code: str = "execution_failed"
+        cls,
+        message: str,
+        *,
+        code: str = "execution_failed",
+        metadata: Mapping[str, Any] | None = None,
     ) -> OperationResult:
-        return cls(ok=False, message=message, code=code)
+        return cls(ok=False, message=message, code=code, metadata=metadata)
 
     def __str__(self) -> str:
         return self.message
@@ -89,6 +100,7 @@ class OperationSpec:
     effect: OperationEffect
     risk_level: RiskLevel
     environment_arg: str | None = None
+    audit_execution: bool = False
 
 
 @dataclass(frozen=True)

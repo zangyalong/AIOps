@@ -27,6 +27,7 @@ from app.agents.tools.metrics import (
     query_metrics,
     query_server_metrics,
 )
+from app.agents.tools.root_read import run_root_read_command
 from app.agents.tools.server_files import (
     find_server_files,
     preview_server_file_update,
@@ -195,6 +196,7 @@ def _update_server_file_action(args: dict[str, Any]) -> dict[str, Any]:
 READ_TOOLS: tuple[BaseTool, ...] = (
     query_servers,
     run_diagnostic_command,
+    run_root_read_command,
     query_server_metrics,
     query_metrics,
     list_metric_instances,
@@ -288,7 +290,12 @@ def _registered_read_operation(tool: BaseTool) -> RegisteredOperation:
         return await tool.ainvoke(call.normalized_args())
 
     return RegisteredOperation(
-        spec=OperationSpec(name=tool.name, effect="read", risk_level="low"),
+        spec=OperationSpec(
+            name=tool.name,
+            effect="read",
+            risk_level="low",
+            audit_execution=tool.name == run_root_read_command.name,
+        ),
         executor=execute,
     )
 

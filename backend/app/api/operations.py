@@ -28,7 +28,7 @@ async def list_operations(
     | None = None,
     limit: int = Query(default=100, ge=1, le=500),
 ) -> list[OperationRecord]:
-    """按时间倒序查询写操作审批与执行审计记录。"""
+    """按时间倒序查询 root 只读调查及写操作审批、执行审计。"""
     return await operation_record_service.list_operation_records(
         db,
         chat_run_id=chat_run_id,

@@ -1,0 +1,233 @@
+#!/bin/bash
+
+set -euo pipefail
+
+fail() {
+    echo "aioms-root-read: $*" >&2
+    exit 126
+}
+
+[[ $EUID -eq 0 ]] || fail "必须由 sudo 以 root 身份调用"
+[[ $# -eq 0 ]] || fail "不接受命令行参数；请求只能通过 stdin JSON 传入"
+
+readonly MAX_REQUEST_BYTES=16384
+readonly OUTER_TIMEOUT_SECONDS=30
+readonly IMAGE_ID_FILE="/etc/aioms/root-read.image-id"
+readonly EMPTY_DIR="/var/lib/aioms/root-read/empty-dir"
+readonly EMPTY_FILE="/var/lib/aioms/root-read/empty-file"
+readonly HOST_MOUNTS_HELPER="/usr/local/libexec/aioms/root-read-host-mounts.py"
+readonly DOCKER_BIN="$(command -v docker || true)"
+
+[[ -n "$DOCKER_BIN" ]] || fail "找不到 Docker CLI"
+[[ -r "$IMAGE_ID_FILE" ]] || fail "缺少固定镜像 ID：$IMAGE_ID_FILE"
+[[ -d "$EMPTY_DIR" && -f "$EMPTY_FILE" ]] || fail "敏感路径遮蔽资源不完整"
+[[ -x "$HOST_MOUNTS_HELPER" ]] || fail "缺少 root 所有的宿主机挂载解析器"
+command -v timeout >/dev/null 2>&1 || fail "系统缺少 timeout 命令"
+command -v mktemp >/dev/null 2>&1 || fail "系统缺少 mktemp 命令"
+command -v python3 >/dev/null 2>&1 || fail "系统缺少 python3 命令"
+
+readonly IMAGE_ID="$(tr -d '[:space:]' <"$IMAGE_ID_FILE")"
+[[ "$IMAGE_ID" =~ ^sha256:[a-f0-9]{64}$ ]] || fail "固定镜像 ID 格式不合法"
+
+readonly REQUEST_FILE="$(mktemp /run/aioms-root-read-request.XXXXXX)"
+readonly MOUNT_LIST_FILE="$(mktemp /run/aioms-root-read-mounts.XXXXXX)"
+readonly CONTAINER_NAME="aioms-root-read-$$-${RANDOM}"
+
+cleanup() {
+    "$DOCKER_BIN" rm -f -- "$CONTAINER_NAME" >/dev/null 2>&1 || true
+    rm -f -- "$REQUEST_FILE" "$MOUNT_LIST_FILE"
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+chmod 0600 "$REQUEST_FILE"
+chmod 0600 "$MOUNT_LIST_FILE"
+if ! timeout --signal=KILL 3s \
+    head -c "$((MAX_REQUEST_BYTES + 1))" >"$REQUEST_FILE"; then
+    fail "读取 stdin 超时"
+fi
+readonly REQUEST_SIZE="$(wc -c <"$REQUEST_FILE")"
+[[ "$REQUEST_SIZE" -gt 0 ]] || fail "stdin 为空"
+[[ "$REQUEST_SIZE" -le "$MAX_REQUEST_BYTES" ]] || fail "stdin 请求过长"
+
+mount_args=(
+    --mount "type=bind,src=/,dst=/host,readonly,bind-recursive=disabled"
+)
+
+hidden_directory_paths=(
+    /dev
+    /proc
+    /run
+    /sys
+    /tmp
+    /var/tmp
+    /etc/ssl/private
+    /etc/pki/private
+    /etc/aioms-exporters
+    /etc/kubernetes
+    /etc/letsencrypt
+    /etc/openvpn
+    /etc/rancher
+    /etc/wireguard
+    /opt/aioms-target-server
+    /var/lib/aioms
+    /var/lib/containerd
+    /var/lib/docker
+    /var/lib/kubelet
+    /var/lib/k0s
+    /var/lib/rancher
+    /var/lib/mysql
+    /var/lib/postgresql
+    /var/lib/private
+    /var/lib/redis
+    /var/lib/cloud/instances
+)
+
+hidden_file_paths=(
+    /etc/shadow
+    /etc/gshadow
+    /etc/sudoers
+    /etc/ipsec.secrets
+)
+
+for home_path in /root /home/*; do
+    [[ -d "$home_path" ]] || continue
+    for hidden_name in .ssh .aws .azure .config/gcloud .docker .gnupg .kube; do
+        hidden_directory_paths+=("$home_path/$hidden_name")
+    done
+    for hidden_name in \
+        .bash_history \
+        .zsh_history \
+        .mysql_history \
+        .psql_history \
+        .rediscli_history \
+        .python_history \
+        .netrc \
+        .npmrc \
+        .pypirc \
+        .git-credentials; do
+        hidden_file_paths+=("$home_path/$hidden_name")
+    done
+done
+
+is_hidden_path() {
+    local candidate="$1"
+    local hidden_path
+    for hidden_path in "${hidden_directory_paths[@]}"; do
+        if [[ "$candidate" == "$hidden_path" || "$candidate" == "$hidden_path/"* ]]; then
+            return 0
+        fi
+    done
+    local hidden_file
+    for hidden_file in "${hidden_file_paths[@]}"; do
+        if [[ "$candidate" == "$hidden_file" ]]; then
+            return 0
+        fi
+    done
+    [[ "$candidate" == /etc/ssh/ssh_host_*_key ]] && return 0
+    return 1
+}
+
+if ! "$HOST_MOUNTS_HELPER" >"$MOUNT_LIST_FILE"; then
+    fail "无法解析宿主机挂载点"
+fi
+
+supplemental_mount_count=0
+while IFS= read -r -d '' mount_path \
+    && IFS= read -r -d '' filesystem_type; do
+    [[ "$mount_path" != "/" ]] || continue
+    [[ "$mount_path" != *$'\n'* && "$mount_path" != *$'\r'* ]] || continue
+    [[ "$mount_path" != *,* ]] || continue
+    is_hidden_path "$mount_path" && continue
+    case "$filesystem_type" in
+        proc | sysfs | devtmpfs | devpts | tmpfs | cgroup | cgroup2 | securityfs | \
+            debugfs | tracefs | configfs | bpf | pstore | efivarfs | mqueue | \
+            hugetlbfs | fusectl | rpc_pipefs | binfmt_misc | autofs | nsfs)
+            continue
+            ;;
+    esac
+    if [[ -d "$mount_path" ]]; then
+        ((supplemental_mount_count += 1))
+        mount_args+=(
+            --mount
+            "type=bind,src=$mount_path,dst=/host$mount_path,readonly,bind-recursive=disabled"
+        )
+    elif [[ -f "$mount_path" ]]; then
+        ((supplemental_mount_count += 1))
+        mount_args+=(
+            --mount
+            "type=bind,src=$mount_path,dst=/host$mount_path,readonly"
+        )
+    fi
+    ((supplemental_mount_count <= 128)) || fail "安全子挂载超过 128 个，已拒绝启动"
+done <"$MOUNT_LIST_FILE"
+
+hide_directory() {
+    local host_path="$1"
+    if [[ -d "$host_path" && ! -L "$host_path" ]]; then
+        mount_args+=(--mount "type=bind,src=$EMPTY_DIR,dst=/host$host_path,readonly")
+    fi
+}
+
+hide_file() {
+    local host_path="$1"
+    if [[ -f "$host_path" && ! -L "$host_path" ]]; then
+        mount_args+=(--mount "type=bind,src=$EMPTY_FILE,dst=/host$host_path,readonly")
+    fi
+}
+
+for path in "${hidden_directory_paths[@]}"; do
+    hide_directory "$path"
+done
+
+for path in "${hidden_file_paths[@]}"; do
+    hide_file "$path"
+done
+
+for path in /etc/ssh/ssh_host_*_key; do
+    hide_file "$path"
+done
+
+set +e
+timeout \
+    --signal=TERM \
+    --kill-after=2s \
+    "${OUTER_TIMEOUT_SECONDS}s" \
+    "$DOCKER_BIN" run \
+        --rm \
+        --name "$CONTAINER_NAME" \
+        --hostname aioms-root-read \
+        --pull never \
+        --network none \
+        --ipc none \
+        --cgroupns private \
+        --read-only \
+        --cap-drop ALL \
+        --cap-add DAC_READ_SEARCH \
+        --security-opt no-new-privileges:true \
+        --security-opt seccomp=builtin \
+        --pids-limit 128 \
+        --memory 256m \
+        --memory-swap 256m \
+        --cpus 0.5 \
+        --ulimit nofile=1024:1024 \
+        --tmpfs /tmp:rw,noexec,nosuid,nodev,size=67108864,mode=1777 \
+        --user 0:0 \
+        --workdir /tmp \
+        --env HOME=/tmp \
+        --env PAGER=cat \
+        --env SYSTEMD_PAGER=cat \
+        "${mount_args[@]}" \
+        "$IMAGE_ID" <"$REQUEST_FILE"
+status=$?
+set -e
+
+if [[ $status -eq 124 || $status -eq 137 ]]; then
+    cleanup
+    printf '{"exit_code":124,"timed_out":true,"truncated":false,"output":"root-read 容器超过外层 30 秒限制，已强制销毁"}\n'
+    exit 124
+fi
+
+exit "$status"

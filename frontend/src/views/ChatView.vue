@@ -77,6 +77,7 @@ const TOOL_LABELS: Record<string, string> = {
   discover_server_services: '发现服务器运行服务',
   register_server_services: '注册服务目录',
   run_diagnostic_command: '执行只读诊断',
+  run_root_read_command: '执行 root 只读调查',
   find_server_files: '查找服务器文件',
   read_server_file: '读取服务器文件',
   preview_server_file_update: '预览服务器文件变更',

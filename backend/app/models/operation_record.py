@@ -9,6 +9,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -21,13 +22,15 @@ from app.models.base import Base, UUIDMixin
 
 
 class OperationRecord(Base, UUIDMixin):
-    """写操作从待审批到执行结束的持久化审计记录。"""
+    """需要审计的读操作及写操作审批、执行记录。"""
 
     __tablename__ = "operation_records"
     __table_args__ = (
-        CheckConstraint("effect = 'write'", name="ck_operation_records_effect"),
         CheckConstraint(
-            "risk_level IN ('medium', 'high', 'critical')",
+            "effect IN ('read', 'write')", name="ck_operation_records_effect"
+        ),
+        CheckConstraint(
+            "risk_level IN ('low', 'medium', 'high', 'critical')",
             name="ck_operation_records_risk_level",
         ),
         CheckConstraint(
@@ -101,6 +104,8 @@ class OperationRecord(Base, UUIDMixin):
     )
     result: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    exit_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    timed_out: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )

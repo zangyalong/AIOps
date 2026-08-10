@@ -69,6 +69,29 @@ def _record(
     )
 
 
+def _prepared_read() -> PreparedOperation:
+    return PreparedOperation(
+        call=OperationCall(
+            id="root-read-1",
+            name="run_root_read_command",
+            args={"server_name": "web01", "command": "rg redis /host/etc"},
+        ),
+        spec=OperationSpec(
+            name="run_root_read_command",
+            effect="read",
+            risk_level="low",
+            audit_execution=True,
+        ),
+        context=OperationContext(
+            actor_id="operator-1",
+            actor_role="operator",
+            run_mode="interactive",
+            environment="production",
+        ),
+        decision=PolicyDecision(result="allow", reason="只读操作自动允许"),
+    )
+
+
 class OperationCallBindingTest(unittest.TestCase):
     def test_hash_is_stable_for_equivalent_nested_arguments(self) -> None:
         spec = OperationSpec("register", "write", "medium")
@@ -135,6 +158,8 @@ class OperationCallBindingTest(unittest.TestCase):
                 "finished_at",
                 "result",
                 "error_message",
+                "exit_code",
+                "timed_out",
                 "expires_at",
                 "created_at",
             },
@@ -142,6 +167,47 @@ class OperationCallBindingTest(unittest.TestCase):
 
 
 class OperationRecordServiceTest(unittest.IsolatedAsyncioTestCase):
+    async def test_audited_read_is_recorded_before_execution(self) -> None:
+        prepared = _prepared_read()
+        repository = operation_record_service.operation_record_repository
+        create = AsyncMock(side_effect=lambda _db, record: record)
+        with (
+            patch.object(
+                repository,
+                "get_by_run_and_tool_call",
+                AsyncMock(return_value=None),
+            ),
+            patch.object(repository, "create", create),
+        ):
+            result = await operation_record_service.begin_read_execution(
+                AsyncMock(),
+                chat_run_id=uuid.uuid4(),
+                prepared=prepared,
+            )
+
+        self.assertEqual(result.effect, "read")
+        self.assertEqual(result.risk_level, "low")
+        self.assertEqual(result.status, "executing")
+        self.assertEqual(result.approval_view, {})
+        self.assertEqual(result.normalized_args["command"], "rg redis /host/etc")
+        self.assertIsNotNone(result.started_at)
+        create.assert_awaited_once()
+
+    async def test_non_audited_read_cannot_create_read_record(self) -> None:
+        prepared = _prepared_read()
+        prepared = PreparedOperation(
+            call=prepared.call,
+            spec=OperationSpec("ordinary_read", "read", "low"),
+            context=prepared.context,
+            decision=prepared.decision,
+        )
+        with self.assertRaises(operation_record_service.OperationRecordError):
+            await operation_record_service.begin_read_execution(
+                AsyncMock(),
+                chat_run_id=uuid.uuid4(),
+                prepared=prepared,
+            )
+
     async def test_ensure_pending_is_idempotent_and_rejects_changed_request(
         self,
     ) -> None:
@@ -288,6 +354,9 @@ class OperationRecordServiceTest(unittest.IsolatedAsyncioTestCase):
                 chat_run_id=completed.chat_run_id,
                 tool_call_id=completed.tool_call_id,
                 result="已重启",
+                metadata={"exit_code": 0, "timed_out": False},
             )
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.result, "已重启")
+        self.assertEqual(result.exit_code, 0)
+        self.assertFalse(result.timed_out)
