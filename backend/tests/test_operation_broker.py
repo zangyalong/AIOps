@@ -110,6 +110,7 @@ class OperationBrokerTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(prepared.context.environment, "non_production")
         self.assertEqual(prepared.decision.result, "allow")
+        self.assertEqual(prepared.approval_view["tool_call_id"], "register-1")
 
     def test_undeclared_environment_argument_cannot_change_policy_context(self) -> None:
         prepared = self.broker.prepare(

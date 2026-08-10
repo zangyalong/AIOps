@@ -499,6 +499,78 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
         finish.assert_awaited_once()
         self.assertEqual(result["messages"][0].status, "success")
 
+    async def test_auto_approved_non_production_write_keeps_audit_flow(self) -> None:
+        """自动放行只跳过人工中断，仍要冻结请求、授权并完成审计。"""
+        chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"] = [
+            _fake_register_server_services
+        ]
+        run_id = uuid.uuid4()
+        state = _initial_state(allow_write_tools=True)
+        state["operation_context"]["auto_approve_non_production_medium"] = True
+        state.update(
+            {
+                "work_messages": [
+                    AIMessage(
+                        "",
+                        tool_calls=[
+                            {
+                                "name": "register_server_services",
+                                "args": {
+                                    "server_name": "demo",
+                                    "services": [],
+                                    "environment": "dev",
+                                },
+                                "id": "auto-approved-register",
+                                "type": "tool_call",
+                            }
+                        ],
+                    )
+                ],
+                "operation_run_id": str(run_id),
+            }
+        )
+        authorize = AsyncMock(return_value=SimpleNamespace(status="executing"))
+        finish = AsyncMock()
+
+        async def ensure_pending(*_args: object, **kwargs: object) -> None:
+            prepared = kwargs["prepared"]
+            self.assertEqual(prepared.decision.result, "allow")
+            self.assertIsNotNone(prepared.approval_view)
+
+        self.assertEqual(chat_graph.route_after_specialist(state), "tools")
+        with (
+            patch.object(
+                chat_graph,
+                "AsyncSessionLocal",
+                return_value=_SessionContext(),
+            ),
+            patch.object(
+                chat_graph.operation_record_service,
+                "ensure_pending",
+                side_effect=ensure_pending,
+            ) as pending,
+            patch.object(
+                chat_graph.operation_record_service,
+                "authorize_execution",
+                authorize,
+            ),
+            patch.object(
+                chat_graph.operation_record_service,
+                "finish_execution",
+                finish,
+            ),
+        ):
+            result = await chat_graph.specialist_tools_node(
+                "infrastructure_agent",
+                state,
+            )
+
+        self.assertEqual(result["messages"][0].status, "success")
+        self.assertEqual(_catalog_write_calls, [("demo", 0, "dev")])
+        pending.assert_awaited_once()
+        authorize.assert_awaited_once()
+        finish.assert_awaited_once()
+
     async def test_high_risk_write_rejects_missing_second_confirmation(self) -> None:
         """即使第一次批准，高风险写工具没有详情弹窗二次确认也不能执行。"""
         chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"] = [

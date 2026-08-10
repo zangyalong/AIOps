@@ -38,7 +38,7 @@ class OperationBroker:
         )
         decision = evaluate_operation(operation.spec, resolved_context)
         approval_view = None
-        if decision.result == "approval_required":
+        if operation.spec.effect == "write":
             builder = operation.build_approval_view
             if builder is None:
                 raise RuntimeError(f"写操作缺少审批展示构造器：{call.name}")
