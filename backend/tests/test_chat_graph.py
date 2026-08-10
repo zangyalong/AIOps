@@ -239,7 +239,18 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(_write_calls, [])
 
         result = await graph.ainvoke(
-            Command(resume={"approved": False, "reason": "测试拒绝"}),
+            Command(
+                resume={
+                    "decisions": {
+                        "ssh-call": {
+                            "approved": False,
+                            "reason": "测试拒绝",
+                            "approver_id": "approver-1",
+                            "approver_role": "admin",
+                        }
+                    }
+                }
+            ),
             config=config,
         )
 
@@ -430,9 +441,15 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
         await graph.ainvoke(
             Command(
                 resume={
-                    "approved": True,
-                    "second_confirmation": True,
-                    "reason": "测试批准",
+                    "decisions": {
+                        "approved-restart": {
+                            "approved": True,
+                            "second_confirmation": True,
+                            "reason": "测试批准",
+                            "approver_id": "approver-1",
+                            "approver_role": "admin",
+                        }
+                    }
                 }
             ),
             config=config,
@@ -469,9 +486,15 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
                     )
                 ],
                 "approval": {
-                    "approved": True,
-                    "second_confirmation": True,
-                    "reason": "值班员确认",
+                    "decisions": {
+                        "persisted-restart": {
+                            "approved": True,
+                            "second_confirmation": True,
+                            "reason": "值班员确认",
+                            "approver_id": "approver-1",
+                            "approver_role": "admin",
+                        }
+                    }
                 },
                 "operation_run_id": str(run_id),
             }
@@ -609,10 +632,14 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
                     )
                 ],
                 "approval": {
-                    "approved": True,
-                    "second_confirmation": True,
-                    "approver_id": "approver-1",
-                    "approver_role": "admin",
+                    "decisions": {
+                        "failed-restart": {
+                            "approved": True,
+                            "second_confirmation": True,
+                            "approver_id": "approver-1",
+                            "approver_role": "admin",
+                        }
+                    }
                 },
                 "operation_run_id": str(run_id),
             }
@@ -677,7 +704,19 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
                 "specialist_instruction": "",
                 "tool_iterations": 0,
                 "allow_write_tools": True,
-                "approval": {"approved": True, "reason": "只做了第一次确认"},
+                "operation_context": _initial_state(allow_write_tools=True)[
+                    "operation_context"
+                ],
+                "approval": {
+                    "decisions": {
+                        "missing-second-confirmation": {
+                            "approved": True,
+                            "reason": "只做了第一次确认",
+                            "approver_id": "approver-1",
+                            "approver_role": "admin",
+                        }
+                    }
+                },
             },
         )
 
@@ -782,6 +821,49 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
             },
         )
 
+        self.assertIn("无人值守", str(result["messages"][0].content))
+        self.assertEqual(_write_calls, [])
+
+    async def test_flat_legacy_approval_cannot_bypass_per_operation_binding(
+        self,
+    ) -> None:
+        chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"] = [
+            _fake_restart_service
+        ]
+        state = _initial_state(allow_write_tools=True)
+        state.update(
+            {
+                "work_messages": [
+                    AIMessage(
+                        "",
+                        tool_calls=[
+                            {
+                                "name": "restart_service",
+                                "args": {
+                                    "server_name": "demo",
+                                    "service_name": "nginx.service",
+                                },
+                                "id": "legacy-flat-approval",
+                                "type": "tool_call",
+                            }
+                        ],
+                    )
+                ],
+                "approval": {
+                    "approved": True,
+                    "second_confirmation": True,
+                    "approver_id": "approver-1",
+                    "approver_role": "admin",
+                },
+            }
+        )
+
+        result = await chat_graph.specialist_tools_node(
+            "infrastructure_agent",
+            state,
+        )
+
+        self.assertEqual(result["messages"][0].status, "error")
         self.assertIn("缺少人工审批决议", str(result["messages"][0].content))
         self.assertEqual(_write_calls, [])
 
@@ -830,7 +912,18 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
                 "specialist_instruction": "",
                 "tool_iterations": 0,
                 "allow_write_tools": True,
-                "approval": {"approved": True, "reason": ""},
+                "operation_context": _initial_state(allow_write_tools=True)[
+                    "operation_context"
+                ],
+                "approval": {
+                    "decisions": {
+                        "write-call": {
+                            "approved": True,
+                            "approver_id": "approver-1",
+                            "approver_role": "admin",
+                        }
+                    }
+                },
             },
         )
 

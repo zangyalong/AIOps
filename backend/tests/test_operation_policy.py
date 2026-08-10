@@ -110,6 +110,19 @@ class OperationPolicyTest(unittest.TestCase):
         self.assertEqual(decision.result, "deny")
         self.assertIn("没有审批", decision.reason)
 
+    def test_missing_approver_identity_defaults_to_viewer_and_is_denied(self) -> None:
+        approval = ApprovalDecision.from_mapping({"approved": True})
+        assert approval is not None
+        decision = evaluate_operation(
+            OperationSpec("service.start", "write", "medium"),
+            _interactive_context(approval=approval),
+        )
+
+        self.assertEqual(approval.approver_id, "anonymous")
+        self.assertEqual(approval.approver_role, "viewer")
+        self.assertEqual(decision.result, "deny")
+        self.assertIn("viewer", decision.reason)
+
     def test_high_risk_operation_requires_second_confirmation(self) -> None:
         decision = evaluate_operation(
             OperationSpec("service.restart", "write", "high"),

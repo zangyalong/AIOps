@@ -157,6 +157,8 @@ class OperationBrokerTest(unittest.IsolatedAsyncioTestCase):
                 approval=ApprovalDecision(
                     approved=True,
                     second_confirmation=True,
+                    approver_id="approver-1",
+                    approver_role="admin",
                 ),
             ),
         )

@@ -170,8 +170,8 @@ class ApprovalDecision:
     approved: bool
     second_confirmation: bool = False
     reason: str = ""
-    approver_id: str = "local-user"
-    approver_role: ActorRole = "admin"
+    approver_id: str = "anonymous"
+    approver_role: ActorRole = "viewer"
     operation_id: str = ""
     tool_call_id: str = ""
 
@@ -179,13 +179,13 @@ class ApprovalDecision:
     def from_mapping(cls, value: Mapping[str, Any] | None) -> ApprovalDecision | None:
         if value is None:
             return None
-        raw_role = str(value.get("approver_role") or "admin")
+        raw_role = str(value.get("approver_role") or "viewer")
         approver_role: ActorRole = raw_role if raw_role in _ACTOR_ROLES else "viewer"  # type: ignore[assignment]
         return cls(
             approved=bool(value.get("approved", False)),
             second_confirmation=bool(value.get("second_confirmation", False)),
             reason=str(value.get("reason") or ""),
-            approver_id=str(value.get("approver_id") or "local-user"),
+            approver_id=str(value.get("approver_id") or "anonymous"),
             approver_role=approver_role,
             operation_id=str(value.get("operation_id") or ""),
             tool_call_id=str(value.get("tool_call_id") or ""),
