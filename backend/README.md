@@ -121,19 +121,7 @@ SSH 私钥默认放在仓库根目录的 `ssh/`，数据库只保存私钥文件
 AIOMS 身份；目标服务器 sudoers 只授权 root 持有的白名单包装器，不开放任意 `systemctl`、
 Shell、Docker 或 root 登录。服务器编辑页还会把
 非敏感部署参数保存在 `servers.deployment_config`；数据库 exporter 密码只用于当次下载或部署
-请求，不会落库。已有数据库先执行：
-
-```bash
-psql -d aioms -v ON_ERROR_STOP=1 \
-  -f scripts/database/20260803_add_server_deployment_config.sql
-```
-
-旧双角色数据库在确认单角色已可用后，可清理不再使用的两列（此脚本不会自动执行）：
-
-```bash
-psql -d aioms -v ON_ERROR_STOP=1 \
-  -f scripts/database/20260806_remove_server_deploy_ssh_identity.sql
-```
+请求，不会落库。
 
 `POST /servers/{server_id}/deployment-bundle` 会先删除当前服务器固定命名的旧公私钥并重新生成密钥对，
 再在后端临时目录生成不含私钥的安装包并直接下载；若打包失败会恢复原密钥对。响应完成后清理
@@ -275,20 +263,6 @@ tests/             # 不依赖外部服务的自动化测试
 - 服务目录开关通过固定 `aioms-service-policy add/remove` 网关同步目标服务器 root 白名单；远端成功后才保存数据库状态，数据库保存失败时会尽力回滚远端。策略网关不执行启停、不接受文件路径或 Shell，服务发现和目录注册也不会自动调用它。
 - 已授权实例不能直接修改服务器/运行时身份或删除，逻辑服务也不能级联删除仍授权的实例；必须先关闭授权，让目标服务器移除白名单后再修改目录。
 
-已有数据库增加实例级控制授权字段：
-
-```bash
-psql -d aioms -v ON_ERROR_STOP=1 \
-  -f scripts/database/20260807_add_service_control_authorization.sql
-
-# 新策略同步网关上线时，关闭无法证明已同步的旧授权；安装网关后由用户重新开启。
-psql -d aioms -v ON_ERROR_STOP=1 \
-  -f scripts/database/20260807_reset_legacy_service_control_authorizations.sql
-
-# 将控制授权约束从仅 systemd 扩展为 systemd 与 Docker。
-psql -d aioms -v ON_ERROR_STOP=1 \
-  -f scripts/database/20260807_add_docker_service_control_authorization.sql
-```
 - `create_alert_rule` 是中风险写工具：人工审批后复用预警规则页面相同的字段校验、PromQL 校验、数据库写入和 Prometheus 热重载流程。
 - 工具执行节点会再次校验审批决议和高风险二次确认，不能只靠模型是否正确路由；后台 worker 设置 `allow_write_tools=False`，从模型绑定和执行节点两层禁止写工具。
 - 本地 SSH 沙箱当前使用 `known_hosts=None`，只适用于一次性本地容器，不能直接用于生产服务器。

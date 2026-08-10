@@ -26,13 +26,6 @@ Alloy，需要哪类指标就单独启用对应 exporter。
 
 ## 推荐：前端生成一个安装包、服务器执行一条命令
 
-已有数据库先增加保存非敏感部署参数的 JSONB 列：
-
-```bash
-psql -d aioms -v ON_ERROR_STOP=1 \
-  -f scripts/database/20260803_add_server_deployment_config.sql
-```
-
 在 AIOMS 前端打开“服务器 → 编辑”，依次填写：
 
 1. AIOMS SSH 身份：端口和非 root 用户名（例如 `22`、`aioms`）。
