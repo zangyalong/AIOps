@@ -174,7 +174,7 @@ class ChatStreamTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             [event["type"] for event in events],
-            ["token", "tool_start", "tool_end", "token", "done"],
+            ["narration", "tool_start", "tool_end", "token", "done"],
         )
         self.assertEqual(events[0]["content"], "我先查询服务器的实时指标。")
         self.assertEqual(events[3]["content"], "一次生成的最终回答")
@@ -184,6 +184,20 @@ class ChatStreamTest(unittest.IsolatedAsyncioTestCase):
             [call.args[1] for call in set_status.await_args_list],
             ["running", "completed"],
         )
+
+    def test_compact_narration_keeps_only_first_progress_sentence(self) -> None:
+        narration = chat_service._compact_narration(
+            "我先核对 web-01 上目标单元及当前状态。"
+            "然后我需要重新审视所有可能路径并逐项权衡。"
+        )
+
+        self.assertEqual(narration, "我先核对 web-01 上目标单元及当前状态。")
+
+    def test_compact_narration_has_hard_length_limit(self) -> None:
+        narration = chat_service._compact_narration("核对目标" * 80)
+
+        self.assertLessEqual(len(narration), 96)
+        self.assertTrue(narration.endswith("…"))
 
     async def test_stream_timeout_returns_readable_error(self) -> None:
         run_id = uuid.uuid4()

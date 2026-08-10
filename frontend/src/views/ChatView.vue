@@ -19,6 +19,7 @@ import type { ChatMessage, ChatRunHistory } from '../types/chat'
 // tool_calls；审批行来自写工具的 tool_call + 它配对的返回（据此还原当初是执行了还是被拒）。
 type TimelineItem =
   | { kind: 'message'; key: string; role: 'user' | 'assistant'; content: string }
+  | { kind: 'narration'; key: string; content: string }
   | { kind: 'tool'; key: string; id: string; tool: string; done: boolean; failed?: boolean }
   | { kind: 'run-error'; key: string; content: string }
   | {
@@ -230,6 +231,9 @@ async function consume(stream: AsyncGenerator<ChatStreamEvent>) {
     lastEventSequence.value = Math.max(lastEventSequence.value, event.seq)
     if (event.type === 'token') {
       appendToken(event.content)
+    } else if (event.type === 'narration') {
+      assistantOpen = false
+      timeline.value.push({ kind: 'narration', key: uid(), content: event.content })
     } else if (event.type === 'tool_start') {
       // 工具过程与最终回答分块展示；正常情况下最终回答尚未出现，这里关闭气泡是防御性处理。
       assistantOpen = false
@@ -456,7 +460,7 @@ function buildTimeline(
     const run = message.run_id ? runById.get(message.run_id) : undefined
     if (message.role === 'assistant' && message.tool_calls?.length) {
       if (message.content) {
-        items.push({ kind: 'message', key: uid(), role: 'assistant', content: message.content })
+        items.push({ kind: 'narration', key: uid(), content: message.content })
       }
       for (const toolCall of message.tool_calls) {
         const toolResultKey = toolCall.id
@@ -630,6 +634,10 @@ onBeforeUnmount(() => {
                 :content="item.content"
               />
               <span v-else class="plain-message">{{ item.content }}</span>
+            </div>
+            <div v-else-if="item.kind === 'narration'" class="expert-narration">
+              <span class="narration-label">专家旁白</span>
+              <span>{{ item.content }}</span>
             </div>
             <div v-else-if="item.kind === 'tool'" class="tool-line" :class="{ done: item.done, failed: item.failed }">
               {{ item.failed ? '✕' : item.done ? '✓' : '›' }}
@@ -851,6 +859,27 @@ h1 {
   border-radius: var(--radius);
   background: #eaf1fe;
   color: var(--color-text);
+}
+
+.expert-narration {
+  align-self: stretch;
+  display: flex;
+  align-items: baseline;
+  gap: 0.65rem;
+  padding: 0.55rem 0.7rem;
+  border-left: 2px solid #8ba7d3;
+  background: #f6f8fc;
+  color: var(--color-text-muted);
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
+.narration-label {
+  flex-shrink: 0;
+  color: #526b92;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
 }
 
 /* 工具调用渲染成单行文本：运行时黑色，完成后变灰以区分。不是气泡/胶囊。 */

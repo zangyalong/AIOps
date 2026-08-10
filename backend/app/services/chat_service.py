@@ -11,6 +11,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents.presentation import compact_narration as _compact_narration
 from app.agents.tools.catalog import TOOLS_BY_NAME, WRITE_TOOL_NAMES
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
@@ -24,7 +25,7 @@ from app.services import (
 
 
 class ChatStreamEvent(TypedDict, total=False):
-    type: str  # token/tool/approval/done/error
+    type: str  # narration/token/tool/approval/done/error
     seq: int  # ChatRunManager 写入的运行内事件序号，重连和审批续传使用
     content: str
     conversation_id: str  # 要经 json.dumps 发给前端，uuid.UUID 必须转成字符串
@@ -305,11 +306,9 @@ async def _drive_graph(
     这段不持有任何 db 连接（落库另开短事务），流式期间不占着连接。
     """
     config = {"configurable": {"thread_id": thread_id}}
-    # 专家最终内部报告和“准备调用工具”的旁白都来自模型文本流，开始时无法区分。先按模型 run_id
-    # 缓冲；一旦同一响应出现真实业务 tool_call，才把旁白发给前端。没有 tool_call 的内部报告在
-    # on_chat_model_end 时直接丢弃，避免把它和最终 synthesize 回答重复展示。
+    # 专家最终内部报告和工具旁白都来自模型文本流，开始时无法区分。按模型 run_id 缓冲到响应
+    # 结束：有真实业务 tool_call 时压成一条 narration；没有 tool_call 的内部报告直接丢弃。
     pending_narration: dict[str, list[str]] = {}
-    visible_narration_runs: set[str] = set()
     final_answer_chunks: list[str] = []
     try:
         await _set_run_status(run_id, "running")
@@ -366,27 +365,14 @@ async def _drive_graph(
                 model_run_id = event["run_id"]
                 if content:
                     pending_narration.setdefault(model_run_id, []).append(content)
-                if _business_tool_names(chunk):
-                    visible_narration_runs.add(model_run_id)
-                    buffered = "".join(pending_narration.pop(model_run_id, []))
-                    if buffered:
-                        yield {"type": "token", "content": buffered}
-                elif model_run_id in visible_narration_runs and content:
-                    # 极少数模型会在 tool_call chunk 后继续输出文字；确认可见后可以直接续流。
-                    yield {"type": "token", "content": content}
             elif kind == "on_chat_model_end" and node != "synthesize":
                 model_run_id = event["run_id"]
                 output = event.get("data", {}).get("output")
-                # 某些 OpenAI 兼容服务不在 stream chunk 里给完整工具名，只在最终 AIMessage 给；
-                # 在模型结束事件再兜底识别一次，此时仍早于真正的 on_tool_start。
-                if model_run_id not in visible_narration_runs and _business_tool_names(
-                    output
-                ):
-                    buffered = "".join(pending_narration.pop(model_run_id, []))
-                    if buffered:
-                        yield {"type": "token", "content": buffered}
-                pending_narration.pop(model_run_id, None)
-                visible_narration_runs.discard(model_run_id)
+                buffered = "".join(pending_narration.pop(model_run_id, []))
+                if _business_tool_names(output):
+                    narration = _compact_narration(buffered)
+                    if narration:
+                        yield {"type": "narration", "content": narration}
 
         # 图停下来了：先看是不是停在审批门。带了 checkpointer，挂起状态能被 aget_state 读出来；
         # snapshot.interrupts 非空即为挂起，其 value 就是 approval_node 里 interrupt(...) 的入参。
