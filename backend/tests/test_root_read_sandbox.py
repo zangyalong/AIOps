@@ -45,6 +45,14 @@ class RootReadSandboxContractTest(unittest.TestCase):
         self.assertNotIn("docker.sock", launcher)
         self.assertNotIn("eval ", launcher)
 
+    def test_dockerfile_uses_the_daocloud_base_image_proxy(self) -> None:
+        dockerfile = (ROOT_READ_DIR / "Dockerfile").read_text()
+        self.assertIn(
+            "ARG BASE_IMAGE=m.daocloud.io/docker.io/library/debian:bookworm-slim",
+            dockerfile,
+        )
+        self.assertIn("FROM ${BASE_IMAGE}", dockerfile)
+
     def test_launcher_masks_control_and_secret_paths(self) -> None:
         launcher = (ROOT_READ_DIR / "aioms-root-read").read_text()
         for path in (
