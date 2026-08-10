@@ -7,6 +7,7 @@ from typing import Literal
 from langchain_core.tools import tool
 
 from app.operations.executors import alert_rule
+from app.operations.schemas import OperationResult
 
 
 @tool
@@ -19,7 +20,7 @@ async def create_alert_rule(
     description: str | None = None,
     labels: dict[str, str] | None = None,
     enabled: bool = True,
-) -> str:
+) -> OperationResult:
     """创建并应用一条由 AIOMS 管理的 Prometheus 预警规则。
 
     仅在用户明确要求新增预警规则，并且规则名、PromQL、持续时间、严重级别和摘要已经明确时

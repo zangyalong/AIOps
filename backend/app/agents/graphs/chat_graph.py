@@ -61,7 +61,12 @@ from app.agents.tools.service_discovery import (
 from app.agents.tools.service_topology import query_server_services
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
-from app.operations.schemas import ApprovalDecision, OperationCall, OperationContext
+from app.operations.schemas import (
+    ApprovalDecision,
+    OperationCall,
+    OperationContext,
+    OperationResult,
+)
 from app.services import operation_record_service
 
 AgentName = Literal[
@@ -623,16 +628,15 @@ async def specialist_tools_node(agent_name: AgentName, state: SpecialistState) -
                     operation_call,
                     operation_context,
                 )
-                content = (
-                    raw_result.content
-                    if isinstance(raw_result, ToolMessage)
-                    else raw_result
-                )
-                status = (
-                    raw_result.status
-                    if isinstance(raw_result, ToolMessage)
-                    else "success"
-                )
+                if isinstance(raw_result, OperationResult):
+                    content = raw_result.message
+                    status = "success" if raw_result.ok else "error"
+                elif isinstance(raw_result, ToolMessage):
+                    content = raw_result.content
+                    status = raw_result.status
+                else:
+                    content = raw_result
+                    status = "success"
                 result = _tool_message(
                     tool_call=tool_call,
                     content=content,

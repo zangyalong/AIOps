@@ -12,6 +12,30 @@ from typing import Any, Literal
 OperationEffect = Literal["read", "write"]
 RiskLevel = Literal["low", "medium", "high", "critical"]
 PolicyResult = Literal["allow", "approval_required", "deny"]
+
+
+@dataclass(frozen=True)
+class OperationResult:
+    """执行器的统一结果；上层不再从自然语言中猜测成功或失败。"""
+
+    ok: bool
+    message: str
+    code: str
+
+    @classmethod
+    def success(cls, message: str, *, code: str = "completed") -> OperationResult:
+        return cls(ok=True, message=message, code=code)
+
+    @classmethod
+    def failure(
+        cls, message: str, *, code: str = "execution_failed"
+    ) -> OperationResult:
+        return cls(ok=False, message=message, code=code)
+
+    def __str__(self) -> str:
+        return self.message
+
+
 ActorRole = Literal["viewer", "operator", "approver", "admin", "system"]
 RunMode = Literal["interactive", "unattended"]
 EnvironmentClass = Literal["production", "non_production", "unknown"]

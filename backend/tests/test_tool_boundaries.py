@@ -284,7 +284,8 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
                 {"server_name": "demo", "service_name": "nginx.service"}
             )
 
-        self.assertIn("尚未登记到服务目录", result)
+        self.assertFalse(result.ok)
+        self.assertIn("尚未登记到服务目录", result.message)
         connect.assert_not_called()
 
     async def test_restart_service_rejects_disabled_control_authorization(
@@ -312,7 +313,8 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
                 {"server_name": "demo", "service_name": "nginx.service"}
             )
 
-        self.assertIn("未开启控制授权", result)
+        self.assertFalse(result.ok)
+        self.assertIn("未开启控制授权", result.message)
         connect.assert_not_called()
 
     async def test_service_control_executes_fixed_gateway_with_shared_aioms_identity(
@@ -368,9 +370,12 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
                 "sudo -n -- /usr/local/sbin/aioms-service-control stop systemd bt.service",
             ],
         )
-        self.assertIn("当前状态：active", restart_result)
-        self.assertIn("当前状态：active", start_result)
-        self.assertIn("当前状态：inactive", stop_result)
+        self.assertTrue(restart_result.ok)
+        self.assertTrue(start_result.ok)
+        self.assertTrue(stop_result.ok)
+        self.assertIn("当前状态：active", restart_result.message)
+        self.assertIn("当前状态：active", start_result.message)
+        self.assertIn("当前状态：inactive", stop_result.message)
 
     async def test_docker_control_reuses_service_tools_and_gateway(self) -> None:
         server = SimpleNamespace(id="server-id", name="demo", ip_address="127.0.0.1")
@@ -421,4 +426,5 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
             connection.commands,
             ["sudo -n -- /usr/local/sbin/aioms-service-control stop docker orders-api"],
         )
-        self.assertIn("当前状态：exited", result)
+        self.assertTrue(result.ok)
+        self.assertIn("当前状态：exited", result.message)

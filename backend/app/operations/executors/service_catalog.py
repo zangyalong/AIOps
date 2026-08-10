@@ -7,6 +7,7 @@ from typing import Any, Protocol
 
 from app.db.session import AsyncSessionLocal
 from app.models.server import Server
+from app.operations.schemas import OperationResult
 from app.services import server_service, service_catalog_service
 from app.services.service_catalog_service import DiscoveredServiceRegistration
 
@@ -37,18 +38,21 @@ async def register_server_services(
     *,
     discover_runtime_services: DiscoverRuntimeServices,
     build_instance_name: InstanceNameBuilder,
-) -> str:
+) -> OperationResult:
     identifier = server_name.strip()
     target_environment = environment.strip()
     async with AsyncSessionLocal() as db:
         server = await server_service.get_server_by_name_or_ip(db, identifier)
     if server is None:
-        return f'没有找到名称或 IP 为 "{identifier}" 的已纳管服务器。'
+        return OperationResult.failure(
+            f'没有找到名称或 IP 为 "{identifier}" 的已纳管服务器。',
+            code="server_not_found",
+        )
 
     try:
         discovered = await discover_runtime_services(server)
     except ValueError as exc:
-        return str(exc)
+        return OperationResult.failure(str(exc), code="discovery_failed")
 
     actual = {
         (candidate.runtime_type, candidate.runtime_name): candidate
@@ -91,7 +95,10 @@ async def register_server_services(
 
     if not requested:
         suffix = f"；当前未发现：{'、'.join(missing)}" if missing else ""
-        return f"没有可注册的真实运行时服务，服务目录未修改{suffix}。"
+        return OperationResult.failure(
+            f"没有可注册的真实运行时服务，服务目录未修改{suffix}。",
+            code="no_runtime_candidates",
+        )
 
     async with AsyncSessionLocal() as db:
         result = await service_catalog_service.register_discovered_services(
@@ -115,4 +122,4 @@ async def register_server_services(
         )
     if discovered.warnings:
         lines.append("扫描提示：" + "；".join(discovered.warnings))
-    return "\n".join(lines)
+    return OperationResult.success("\n".join(lines))

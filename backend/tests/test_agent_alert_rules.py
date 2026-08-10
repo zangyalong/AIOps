@@ -50,7 +50,8 @@ class AgentAlertRuleToolTest(unittest.IsolatedAsyncioTestCase):
         data = create_rule.await_args.args[1]
         self.assertEqual(data.expression, "up == 0")
         self.assertEqual(data.summary, "节点不可用")
-        self.assertIn("已创建预警规则 NodeDown", result)
+        self.assertTrue(result.ok)
+        self.assertIn("已创建预警规则 NodeDown", result.message)
 
     async def test_create_alert_rule_rejects_invalid_name_before_database(self) -> None:
         with patch.object(
@@ -65,7 +66,8 @@ class AgentAlertRuleToolTest(unittest.IsolatedAsyncioTestCase):
             )
 
         create_rule.assert_not_awaited()
-        self.assertIn("参数校验失败", result)
+        self.assertFalse(result.ok)
+        self.assertIn("参数校验失败", result.message)
 
 
 if __name__ == "__main__":

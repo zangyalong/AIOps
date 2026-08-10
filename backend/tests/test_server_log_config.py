@@ -135,7 +135,8 @@ class ServerLogConfigTest(unittest.IsolatedAsyncioTestCase):
                 }
             )
 
-        self.assertIn("预览不一致", result)
+        self.assertFalse(result.ok)
+        self.assertIn("预览不一致", result.message)
         connect.assert_not_called()
 
     async def test_apply_uploads_only_fixed_map_and_runs_fixed_gateway(self) -> None:
@@ -178,4 +179,5 @@ class ServerLogConfigTest(unittest.IsolatedAsyncioTestCase):
             (log_config_executor.REMOTE_TEMP_MAP, log_config_executor.REMOTE_MAP),
         )
         self.assertEqual(connection.commands, [log_config_executor.APPLY_COMMAND])
-        self.assertIn("已在 web01 应用 1 个日志源", result)
+        self.assertTrue(result.ok)
+        self.assertIn("已在 web01 应用 1 个日志源", result.message)

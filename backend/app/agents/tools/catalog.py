@@ -285,7 +285,7 @@ WRITE_TOOL_NAMES = frozenset(WRITE_TOOLS_BY_NAME)
 
 def _registered_read_operation(tool: BaseTool) -> RegisteredOperation:
     async def execute(call: OperationCall) -> Any:
-        return await tool.ainvoke(call.as_tool_call())
+        return await tool.ainvoke(call.normalized_args())
 
     return RegisteredOperation(
         spec=OperationSpec(name=tool.name, effect="read", risk_level="low"),
@@ -295,7 +295,7 @@ def _registered_read_operation(tool: BaseTool) -> RegisteredOperation:
 
 def _registered_write_operation(write_spec: WriteToolSpec) -> RegisteredOperation:
     async def execute(call: OperationCall) -> Any:
-        return await write_spec.tool.ainvoke(call.as_tool_call())
+        return await write_spec.tool.ainvoke(call.normalized_args())
 
     def build_approval_view(call: OperationCall) -> Mapping[str, Any]:
         return write_spec.pending_action(call.as_tool_call())
@@ -336,7 +336,7 @@ def build_scoped_operation_broker(tools: Iterable[BaseTool]) -> OperationBroker:
         registered = OPERATION_REGISTRY.require(tool.name)
 
         async def execute(call: OperationCall, current_tool: BaseTool = tool) -> Any:
-            return await current_tool.ainvoke(call.as_tool_call())
+            return await current_tool.ainvoke(call.normalized_args())
 
         scoped.append(
             RegisteredOperation(

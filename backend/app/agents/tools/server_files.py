@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, field_validator
 from app.db.session import AsyncSessionLocal
 from app.models.server import Server
 from app.operations.executors import server_file as server_file_executor
+from app.operations.schemas import OperationResult
 from app.services import server_service
 from app.services.ssh_service import (
     SSHConnectParams,
@@ -30,7 +31,7 @@ MAX_DIFF_CHARS = 12_000
 _SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 _FILENAME_PATTERN = re.compile(r"^[A-Za-z0-9_.@*?-]{1,100}$")
 _SENSITIVE_CONTENT = re.compile(
-    r'(?im)(password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|'
+    r"(?im)(password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|"
     r'client[_-]?secret|credential|authorization)["\']?\s*[:=]\s*\S+'
     r"|://[^\s/:@]+:[^\s@]+@"
 )
@@ -120,7 +121,9 @@ def _validate_new_content(content: str) -> str | None:
     if "-----BEGIN " in content and "PRIVATE KEY-----" in content:
         return "禁止通过 Agent 写入私钥"
     if _SENSITIVE_CONTENT.search(content):
-        return "新内容疑似包含密码、Token、密钥或带密码的连接串，禁止进入 Agent 工具参数"
+        return (
+            "新内容疑似包含密码、Token、密钥或带密码的连接串，禁止进入 Agent 工具参数"
+        )
     return None
 
 
@@ -315,7 +318,9 @@ async def preview_server_file_update(
         return "当前文件包含已脱敏字段，禁止整文件覆盖；请改用业务专用配置工具。"
     preview = _build_preview(snapshot, new_content)
     if preview["diff_truncated"]:
-        return "完整差异超过审批展示上限，禁止通过通用工具写入；请改用业务专用配置工具。"
+        return (
+            "完整差异超过审批展示上限，禁止通过通用工具写入；请改用业务专用配置工具。"
+        )
     return json.dumps(preview, ensure_ascii=False, indent=2)
 
 
@@ -327,7 +332,7 @@ async def update_server_file(
     expected_sha256: str,
     preview_hash: str,
     preview_diff: str,
-) -> str:
+) -> OperationResult:
     """审批后更新精确授权的服务器文本文件。
 
     这是高风险写操作。执行前重新读取文件并核对旧哈希、预览哈希和差异；随后上传到固定暂存目录，

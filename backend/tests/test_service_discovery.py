@@ -348,7 +348,8 @@ class ServiceDiscoveryToolTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(process_registration.runtime_name, "uvicorn:tcp-8010")
         self.assertIn("监听端口=tcp/8010", process_registration.description)
         self.assertIn("启动命令=/opt/venv/bin/python", process_registration.description)
-        self.assertIn("ghost.service", result)
+        self.assertTrue(result.ok)
+        self.assertIn("ghost.service", result.message)
 
     async def test_registration_does_not_write_when_all_candidates_disappeared(
         self,
@@ -399,7 +400,8 @@ class ServiceDiscoveryToolTest(unittest.IsolatedAsyncioTestCase):
             )
 
         register.assert_not_awaited()
-        self.assertIn("服务目录未修改", result)
+        self.assertFalse(result.ok)
+        self.assertIn("服务目录未修改", result.message)
 
 
 class DiscoveredServiceRegistrationTest(unittest.IsolatedAsyncioTestCase):

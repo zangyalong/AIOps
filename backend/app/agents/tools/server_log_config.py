@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.db.session import AsyncSessionLocal
 from app.operations.executors import log_config as log_config_executor
+from app.operations.schemas import OperationResult
 from app.services import server_service, service_catalog_service
 
 RuntimeType = Literal["systemd", "docker", "process"]
@@ -236,7 +237,7 @@ async def apply_server_log_config(
     server_name: str,
     preview_hash: str,
     mappings: list[LogMappingItem],
-) -> str:
+) -> OperationResult:
     """审批后应用服务目录生成的 Alloy 配置，并启动或重载 Alloy。
 
     工具会重新读取服务目录并核对预览哈希与每项映射；不会接受任意配置正文。核对成功后使用

@@ -10,6 +10,7 @@ from typing import Any, Protocol
 import asyncssh
 
 from app.models.server import Server
+from app.operations.schemas import OperationResult
 from app.services.ssh_service import SSHConnectParams
 
 FILE_WRITE_GATEWAY = "/usr/local/sbin/aioms-file-write"
@@ -44,33 +45,48 @@ async def update_server_file(
     read_snapshot: ReadSnapshot,
     build_preview: BuildPreview,
     connect_params: ConnectParams,
-) -> str:
+) -> OperationResult:
     content_error = validate_content(new_content)
     if content_error:
-        return f"已拒绝写入：{content_error}。"
+        return OperationResult.failure(
+            f"已拒绝写入：{content_error}。", code="invalid_content"
+        )
     server, error = await resolve_server(server_name)
     if server is None:
-        return error or "服务器不存在"
+        return OperationResult.failure(error or "服务器不存在", code="server_not_found")
     snapshot, read_error = await read_snapshot(server, path)
     if snapshot is None:
-        return read_error or "读取失败"
+        return OperationResult.failure(read_error or "读取失败", code="read_failed")
     if snapshot.redacted:
-        return "当前文件包含敏感字段，禁止通过通用工具整文件覆盖。"
+        return OperationResult.failure(
+            "当前文件包含敏感字段，禁止通过通用工具整文件覆盖。",
+            code="sensitive_content",
+        )
     current_preview = build_preview(snapshot, new_content)
     if not current_preview["changed"]:
-        return "新旧内容相同，没有修改服务器。"
+        return OperationResult.success(
+            "新旧内容相同，没有修改服务器。", code="no_change"
+        )
     if current_preview["diff_truncated"]:
-        return "完整差异超过审批展示上限，已拒绝通过通用工具写入。"
+        return OperationResult.failure(
+            "完整差异超过审批展示上限，已拒绝通过通用工具写入。",
+            code="diff_too_large",
+        )
     if (
         snapshot.sha256 != expected_sha256
         or current_preview["preview_hash"] != preview_hash
         or current_preview["preview_diff"] != preview_diff
     ):
-        return "文件内容或审批差异已变化，请重新生成预览并再次确认。"
+        return OperationResult.failure(
+            "文件内容或审批差异已变化，请重新生成预览并再次确认。",
+            code="preview_changed",
+        )
 
     params, connect_error = connect_params(server)
     if params is None:
-        return connect_error or "SSH 配置不可用"
+        return OperationResult.failure(
+            connect_error or "SSH 配置不可用", code="ssh_not_configured"
+        )
     token = secrets.token_hex(16)
     remote_path = f"{REMOTE_INCOMING_DIR}/{token}"
     command = shlex.join(
@@ -100,8 +116,14 @@ async def update_server_file(
                 await sftp.chmod(remote_path, 0o600)
             result = await conn.run(command, check=False, timeout=30)
     except (asyncssh.Error, OSError, TimeoutError) as exc:
-        return f"连接、上传或更新目标服务器文件失败：{exc}"
+        return OperationResult.failure(
+            f"连接、上传或更新目标服务器文件失败：{exc}",
+            code="ssh_failed",
+        )
     output = f"{result.stdout or ''}{result.stderr or ''}".strip()
     if result.exit_status != 0:
-        return f"更新文件失败（exit={result.exit_status}）：{output or '无输出'}"
-    return output or f"已更新 {snapshot.path}。"
+        return OperationResult.failure(
+            f"更新文件失败（exit={result.exit_status}）：{output or '无输出'}",
+            code="gateway_failed",
+        )
+    return OperationResult.success(output or f"已更新 {snapshot.path}。")

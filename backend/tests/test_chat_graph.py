@@ -13,6 +13,7 @@ from langchain_core.tools import tool
 from langgraph.types import Command
 
 from app.agents.graphs import chat_graph
+from app.operations.schemas import OperationResult
 
 
 class _SessionContext:
@@ -115,6 +116,16 @@ async def _fake_restart_service(server_name: str, service_name: str) -> str:
     """记录写工具是否真的越过审批门执行。"""
     _write_calls.append((server_name, service_name))
     return f"已重启 {server_name} 上的 {service_name}"
+
+
+@tool("restart_service")
+async def _fake_failed_restart_service(
+    server_name: str, service_name: str
+) -> OperationResult:
+    """返回结构化失败，验证图和审计不会把普通错误文本记成成功。"""
+    return OperationResult.failure(
+        f"重启 {server_name} 上的 {service_name} 失败", code="gateway_failed"
+    )
 
 
 @tool("discover_server_services")
@@ -570,6 +581,72 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
         pending.assert_awaited_once()
         authorize.assert_awaited_once()
         finish.assert_awaited_once()
+
+    async def test_structured_executor_failure_marks_tool_and_audit_failed(
+        self,
+    ) -> None:
+        chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"] = [
+            _fake_failed_restart_service
+        ]
+        run_id = uuid.uuid4()
+        state = _initial_state(allow_write_tools=True)
+        state.update(
+            {
+                "work_messages": [
+                    AIMessage(
+                        "",
+                        tool_calls=[
+                            {
+                                "name": "restart_service",
+                                "args": {
+                                    "server_name": "demo",
+                                    "service_name": "nginx.service",
+                                },
+                                "id": "failed-restart",
+                                "type": "tool_call",
+                            }
+                        ],
+                    )
+                ],
+                "approval": {
+                    "approved": True,
+                    "second_confirmation": True,
+                    "approver_id": "approver-1",
+                    "approver_role": "admin",
+                },
+                "operation_run_id": str(run_id),
+            }
+        )
+        finish = AsyncMock()
+        with (
+            patch.object(
+                chat_graph,
+                "AsyncSessionLocal",
+                return_value=_SessionContext(),
+            ),
+            patch.object(chat_graph.operation_record_service, "ensure_pending"),
+            patch.object(
+                chat_graph.operation_record_service,
+                "authorize_execution",
+                AsyncMock(return_value=SimpleNamespace(status="executing")),
+            ),
+            patch.object(
+                chat_graph.operation_record_service,
+                "finish_execution",
+                finish,
+            ),
+        ):
+            result = await chat_graph.specialist_tools_node(
+                "infrastructure_agent",
+                state,
+            )
+
+        self.assertEqual(result["messages"][0].status, "error")
+        self.assertIn("重启 demo", str(result["messages"][0].content))
+        self.assertEqual(
+            finish.await_args.kwargs["error"], "重启 demo 上的 nginx.service 失败"
+        )
+        self.assertIsNone(finish.await_args.kwargs["result"])
 
     async def test_high_risk_write_rejects_missing_second_confirmation(self) -> None:
         """即使第一次批准，高风险写工具没有详情弹窗二次确认也不能执行。"""

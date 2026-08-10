@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field, field_validator
 from app.db.session import AsyncSessionLocal
 from app.models.server import Server
 from app.operations.executors import service_catalog as service_catalog_executor
+from app.operations.schemas import OperationResult
 from app.services import server_service, service_catalog_service
 from app.services.ssh_service import (
     SSHKeyMissing,
@@ -666,7 +667,7 @@ async def register_server_services(
         Field(min_length=1, max_length=_MAX_CANDIDATES),
     ],
     environment: str = "prod",
-) -> str:
+) -> OperationResult:
     """把已发现的服务器运行时对象注册为服务目录中的逻辑服务和部署实例。
 
     这是服务目录写 Tool，必须先经人工审批。调用前必须先使用 discover_server_services；审批通过
