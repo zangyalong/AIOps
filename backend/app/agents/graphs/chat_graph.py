@@ -538,6 +538,24 @@ def _operation_context_from_state(
     return OperationContext.from_mapping(raw, approval=approval)
 
 
+def _approval_for_tool_call(
+    raw_approval: dict | None,
+    tool_call_id: str,
+    *,
+    allow_legacy_single: bool,
+) -> ApprovalDecision | None:
+    """只取当前冻结操作自己的裁决，避免一个批准标记放行同批其他写操作。"""
+    if raw_approval is None:
+        return None
+    decisions = raw_approval.get("decisions")
+    if isinstance(decisions, dict):
+        value = decisions.get(tool_call_id)
+        return ApprovalDecision.from_mapping(value) if isinstance(value, dict) else None
+    if allow_legacy_single:
+        return ApprovalDecision.from_mapping(raw_approval)
+    return None
+
+
 async def specialist_tools_node(agent_name: AgentName, state: SpecialistState) -> dict:
     """执行当前专家刚提出的工具调用，并回到同一专家继续分析。"""
     t0 = time.monotonic()
@@ -549,8 +567,10 @@ async def specialist_tools_node(agent_name: AgentName, state: SpecialistState) -
     ]
     tool_map = {tool.name: tool for tool in assigned_tools}
     operation_broker = build_scoped_operation_broker(assigned_tools)
-    approval = ApprovalDecision.from_mapping(state.get("approval"))
-    operation_context = _operation_context_from_state(state, approval)
+    raw_approval = state.get("approval")
+    write_call_count = sum(
+        1 for tool_call in last.tool_calls if is_write_tool(tool_call["name"])
+    )
     results: list[BaseMessage] = []
     raw_run_id = state.get("operation_run_id")
     operation_run_id = uuid.UUID(raw_run_id) if raw_run_id else None
@@ -566,6 +586,12 @@ async def specialist_tools_node(agent_name: AgentName, state: SpecialistState) -
             )
         else:
             try:
+                approval = _approval_for_tool_call(
+                    raw_approval,
+                    str(tool_call.get("id") or ""),
+                    allow_legacy_single=write_call_count == 1,
+                )
+                operation_context = _operation_context_from_state(state, approval)
                 operation_call = OperationCall.from_tool_call(tool_call)
                 prepared = operation_broker.prepare(
                     operation_call,

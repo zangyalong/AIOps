@@ -78,13 +78,20 @@ class ChatRunManagerTest(unittest.IsolatedAsyncioTestCase):
     async def test_approval_resume_keeps_same_run_and_continues_sequence(self) -> None:
         """审批前后属于同一 run，恢复订阅只需从旧 seq 后继续。"""
         manager = ChatRunManager()
+        operation_id = str(uuid.uuid4())
 
         async def approval_producer():
             yield {
                 "type": "approval_required",
                 "thread_id": "thread-1",
                 "conversation_id": "conversation-3",
-                "actions": [],
+                "actions": [
+                    {
+                        "tool_call_id": "write-1",
+                        "operation_id": operation_id,
+                        "risk_level": "medium",
+                    }
+                ],
             }
 
         run = manager.start(uuid.uuid4(), approval_producer)
@@ -97,7 +104,14 @@ class ChatRunManagerTest(unittest.IsolatedAsyncioTestCase):
         await manager.resume(
             run.id,
             thread_id="thread-1",
-            approved=True,
+            decisions=[
+                {
+                    "tool_call_id": "write-1",
+                    "operation_id": operation_id,
+                    "approved": True,
+                    "second_confirmation": False,
+                }
+            ],
             producer=resumed_producer,
         )
         replay = [event async for event in manager.subscribe(run.id, after=1)]
@@ -106,18 +120,26 @@ class ChatRunManagerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [event["type"] for event in replay], ["approval_resolved", "done"]
         )
-        self.assertTrue(replay[0]["approved"])
+        self.assertTrue(replay[0]["decisions"][0]["approved"])
         self.assertEqual(run.status, "completed")
 
     async def test_high_risk_resume_requires_second_confirmation(self) -> None:
         manager = ChatRunManager()
+        operation_id = str(uuid.uuid4())
 
         async def approval_producer():
             yield {
                 "type": "approval_required",
                 "thread_id": "high-risk-thread",
                 "conversation_id": "conversation-4",
-                "actions": [{"risk_level": "high", "title": "停止服务"}],
+                "actions": [
+                    {
+                        "tool_call_id": "stop-1",
+                        "operation_id": operation_id,
+                        "risk_level": "high",
+                        "title": "停止服务",
+                    }
+                ],
             }
 
         run = manager.start(uuid.uuid4(), approval_producer)
@@ -130,7 +152,14 @@ class ChatRunManagerTest(unittest.IsolatedAsyncioTestCase):
             await manager.resume(
                 run.id,
                 thread_id="high-risk-thread",
-                approved=True,
+                decisions=[
+                    {
+                        "tool_call_id": "stop-1",
+                        "operation_id": operation_id,
+                        "approved": True,
+                        "second_confirmation": False,
+                    }
+                ],
                 producer=resumed_producer,
             )
 
@@ -140,9 +169,59 @@ class ChatRunManagerTest(unittest.IsolatedAsyncioTestCase):
         await manager.resume(
             run.id,
             thread_id="high-risk-thread",
-            approved=True,
-            second_confirmation=True,
+            decisions=[
+                {
+                    "tool_call_id": "stop-1",
+                    "operation_id": operation_id,
+                    "approved": True,
+                    "second_confirmation": True,
+                }
+            ],
             producer=resumed_producer,
         )
         await run.task
         self.assertEqual(run.status, "completed")
+
+    async def test_resume_requires_an_independent_decision_for_every_operation(
+        self,
+    ) -> None:
+        manager = ChatRunManager()
+        operation_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+
+        async def approval_producer():
+            yield {
+                "type": "approval_required",
+                "thread_id": "batch-thread",
+                "conversation_id": "conversation-5",
+                "actions": [
+                    {
+                        "tool_call_id": f"write-{index}",
+                        "operation_id": operation_id,
+                        "risk_level": "medium",
+                    }
+                    for index, operation_id in enumerate(operation_ids)
+                ],
+            }
+
+        run = manager.start(uuid.uuid4(), approval_producer)
+        await run.task
+
+        async def resumed_producer():
+            yield {"type": "done", "conversation_id": "conversation-5"}
+
+        with self.assertRaisesRegex(ValueError, "逐项覆盖"):
+            await manager.resume(
+                run.id,
+                thread_id="batch-thread",
+                decisions=[
+                    {
+                        "tool_call_id": "write-0",
+                        "operation_id": operation_ids[0],
+                        "approved": True,
+                        "second_confirmation": False,
+                    }
+                ],
+                producer=resumed_producer,
+            )
+
+        self.assertEqual(run.status, "waiting_approval")

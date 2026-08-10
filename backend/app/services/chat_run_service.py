@@ -27,7 +27,7 @@ class ChatRun:
     status: ChatRunStatus = "running"
     events: list[ChatStreamEvent] = field(default_factory=list)
     approval_thread_id: str | None = None
-    approval_requires_second_confirmation: bool = False
+    pending_approval_actions: dict[str, dict] = field(default_factory=dict)
     task: asyncio.Task[None] | None = None
     condition: asyncio.Condition = field(default_factory=asyncio.Condition)
 
@@ -44,10 +44,11 @@ class ChatRun:
             if event_type == "approval_required":
                 self.status = "waiting_approval"
                 self.approval_thread_id = event.get("thread_id")
-                self.approval_requires_second_confirmation = any(
-                    action.get("risk_level") in {"high", "critical"}
+                self.pending_approval_actions = {
+                    str(action["tool_call_id"]): dict(action)
                     for action in event.get("actions", [])
-                )
+                    if action.get("tool_call_id") and action.get("operation_id")
+                }
             elif event_type == "done":
                 self.status = "completed"
             elif event_type == "error":
@@ -102,8 +103,7 @@ class ChatRunManager:
         run_id: str,
         *,
         thread_id: str,
-        approved: bool,
-        second_confirmation: bool = False,
+        decisions: list[dict],
         producer: EventProducer,
     ) -> ChatRun:
         run = self.get(run_id)
@@ -113,20 +113,31 @@ class ChatRunManager:
             raise ValueError("该对话当前没有等待审批的操作")
         if run.approval_thread_id != thread_id:
             raise ValueError("审批线程与当前挂起操作不匹配")
-        if (
-            approved
-            and run.approval_requires_second_confirmation
-            and not second_confirmation
-        ):
-            raise ValueError("高风险操作必须在详情弹窗中完成二次确认")
+        indexed_decisions = {
+            str(item.get("tool_call_id") or ""): item for item in decisions
+        }
+        if "" in indexed_decisions or len(indexed_decisions) != len(decisions):
+            raise ValueError("审批决议包含空或重复的 tool_call_id")
+        if set(indexed_decisions) != set(run.pending_approval_actions):
+            raise ValueError("审批决议必须逐项覆盖当前全部待批操作")
+        for tool_call_id, action in run.pending_approval_actions.items():
+            decision = indexed_decisions[tool_call_id]
+            if str(decision.get("operation_id") or "") != str(action["operation_id"]):
+                raise ValueError("审批操作与当前冻结请求不匹配")
+            if (
+                decision.get("approved")
+                and action.get("risk_level") in {"high", "critical"}
+                and not decision.get("second_confirmation")
+            ):
+                raise ValueError("高风险操作必须在详情弹窗中完成二次确认")
 
         run.status = "running"
-        run.approval_requires_second_confirmation = False
+        run.pending_approval_actions = {}
         await run.publish(
             {
                 "type": "approval_resolved",
                 "thread_id": thread_id,
-                "approved": approved,
+                "decisions": decisions,
             }
         )
         self._launch(run, producer)

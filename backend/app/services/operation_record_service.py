@@ -98,6 +98,11 @@ async def authorize_execution(
     if record is None:
         raise OperationRecordError("没有找到该操作的原始审批记录，已拒绝执行。")
     _validate_binding(record, prepared)
+    if approval is not None and (
+        (approval.operation_id and approval.operation_id != str(record.id))
+        or (approval.tool_call_id and approval.tool_call_id != record.tool_call_id)
+    ):
+        raise OperationRequestMismatch("审批决议与当前冻结操作不匹配，已拒绝执行。")
     if record.status != "pending_approval":
         raise OperationRecordError(
             f"操作当前状态为 {record.status}，不能重复审批或执行。"

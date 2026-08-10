@@ -191,6 +191,8 @@ class OperationRecordServiceTest(unittest.IsolatedAsyncioTestCase):
                     reason="值班员确认",
                     approver_id="approver-1",
                     approver_role="approver",
+                    operation_id=str(record.id),
+                    tool_call_id=record.tool_call_id,
                 ),
             )
 
@@ -200,6 +202,29 @@ class OperationRecordServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.approver_id, "approver-1")
         self.assertEqual(result.approver_role, "approver")
         self.assertIsNotNone(result.started_at)
+
+    async def test_authorize_rejects_decision_bound_to_another_operation(self) -> None:
+        prepared = _prepared()
+        record = _record(prepared)
+        repository = operation_record_service.operation_record_repository
+        with (
+            patch.object(
+                repository,
+                "get_by_run_and_tool_call",
+                AsyncMock(return_value=record),
+            ),
+            self.assertRaises(operation_record_service.OperationRequestMismatch),
+        ):
+            await operation_record_service.authorize_execution(
+                AsyncMock(),
+                chat_run_id=record.chat_run_id,
+                prepared=prepared,
+                approval=ApprovalDecision(
+                    approved=True,
+                    operation_id=str(uuid.uuid4()),
+                    tool_call_id=record.tool_call_id,
+                ),
+            )
 
     async def test_denied_and_expired_requests_never_enter_executing(self) -> None:
         denied = _prepared(result="deny", reason="缺少二次确认")

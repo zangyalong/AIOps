@@ -43,7 +43,7 @@ export interface PendingAction {
   service_names?: string[]
   risk_level?: 'medium' | 'high' | 'critical'
   args?: Record<string, unknown>
-  operation_id?: string
+  operation_id: string
   request_hash?: string
   expires_at?: string
 }

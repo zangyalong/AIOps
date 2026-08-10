@@ -7,6 +7,7 @@ import {
   startChatMessage,
   streamChatRun,
   type ChatStreamEvent,
+  type OperationApprovalDecision,
 } from '../api/chat'
 import { fetchConversationDetail } from '../api/conversations'
 import ConversationList from '../components/ConversationList.vue'
@@ -25,10 +26,12 @@ type TimelineItem =
       kind: 'approval'
       key: string
       threadId: string // 挂起恢复用；历史重建的已决定项为 '' （无需也无法再恢复）
+      toolCallId: string
+      operationId: string
       command: string // 展示的命令 / 动作摘要
       label: string // 副标题（在哪台执行等），可空
       riskLevel?: 'medium' | 'high' | 'critical'
-      status: 'pending' | 'approved' | 'rejected' | 'failed'
+      status: 'pending' | 'selected_approved' | 'selected_rejected' | 'approved' | 'rejected' | 'failed'
     }
 type ApprovalItem = Extract<TimelineItem, { kind: 'approval' }>
 
@@ -45,7 +48,11 @@ const conversationListRef = ref<InstanceType<typeof ConversationList> | null>(nu
 const messagesEl = ref<HTMLElement | null>(null)
 // 当前是否有一个写操作挂在审批门上等裁决。非空时输入框禁用（先处理确认再继续对话），
 // 记住要恢复哪条挂起（threadId）——裁决时按 threadId 把这次挂起的所有待批行一起翻状态。
-const pendingApproval = ref<{ runId: string; threadId: string } | null>(null)
+const pendingApproval = ref<{
+  runId: string
+  threadId: string
+  decisions: Record<string, OperationApprovalDecision>
+} | null>(null)
 // 高风险操作第一次点击“执行”时只打开详情弹窗；弹窗确认后才真正恢复后端运行。
 const confirmationApproval = ref<ApprovalItem | null>(null)
 const activeRunId = ref<string | null>(null)
@@ -161,7 +168,7 @@ function requestApproval(item: ApprovalItem) {
     confirmationApproval.value = item
     return
   }
-  void decide(true, false)
+  void selectApproval(item, true, false)
 }
 
 function closeConfirmation() {
@@ -169,7 +176,9 @@ function closeConfirmation() {
 }
 
 async function confirmHighRiskApproval() {
-  await decide(true, true)
+  if (confirmationApproval.value) {
+    await selectApproval(confirmationApproval.value, true, true)
+  }
   if (!error.value) confirmationApproval.value = null
 }
 
@@ -230,7 +239,7 @@ async function consume(stream: AsyncGenerator<ChatStreamEvent>) {
       if (item && item.kind === 'tool') item.done = true
     } else if (event.type === 'approval_required') {
       // 图挂在写操作审批门上：每个待批动作画一条紧凑审批行（浅底 + 右侧执行/不执行按钮），门控
-      // 输入框，等用户点按钮由 decide() 续跑。记下 conversation（可能这轮新建的）+ thread_id。
+      // 输入框，等用户逐项裁决后续跑。记下 conversation（可能这轮新建的）+ thread_id。
       if (event.conversation_id) conversationId.value = event.conversation_id
       assistantOpen = false
       for (const a of event.actions) {
@@ -238,6 +247,8 @@ async function consume(stream: AsyncGenerator<ChatStreamEvent>) {
           kind: 'approval',
           key: uid(),
           threadId: event.thread_id,
+          toolCallId: a.tool_call_id,
+          operationId: a.operation_id ?? '',
           command: a.command ?? (a.args ? JSON.stringify(a.args) : a.title),
           label: [a.server_name, a.environment].filter(Boolean).join(' · '),
           riskLevel: a.risk_level,
@@ -247,15 +258,18 @@ async function consume(stream: AsyncGenerator<ChatStreamEvent>) {
       pendingApproval.value = {
         runId: activeRunId.value as string,
         threadId: event.thread_id,
+        decisions: {},
       }
     } else if (event.type === 'approval_resolved') {
+      const decisions = new Map(event.decisions.map((item) => [item.tool_call_id, item]))
       for (const item of timeline.value) {
         if (
           item.kind === 'approval' &&
           item.threadId === event.thread_id &&
-          item.status === 'pending'
+          item.status !== 'failed'
         ) {
-          item.status = event.approved ? 'approved' : 'rejected'
+          const decision = decisions.get(item.toolCallId)
+          if (decision) item.status = decision.approved ? 'approved' : 'rejected'
         }
       }
       if (pendingApproval.value?.threadId === event.thread_id) {
@@ -341,9 +355,26 @@ async function send() {
 
 // 对当前挂起的写操作作出裁决：批准就真去执行，拒绝就回喂"已拒绝"让 agent 改口。两种都从挂起点
 // 续跑同一轮对话（可能又冒出下一张待批卡片，consume 里会照样处理）。
-async function decide(approved: boolean, secondConfirmation = false) {
+async function selectApproval(
+  item: ApprovalItem,
+  approved: boolean,
+  secondConfirmation = false,
+) {
   const pending = pendingApproval.value
-  if (!pending || sending.value) return
+  if (!pending || sending.value || item.status !== 'pending') return
+
+  pending.decisions[item.toolCallId] = {
+    tool_call_id: item.toolCallId,
+    operation_id: item.operationId,
+    approved,
+    second_confirmation: secondConfirmation,
+  }
+  item.status = approved ? 'selected_approved' : 'selected_rejected'
+  const pendingItems = timeline.value.filter(
+    (candidate): candidate is ApprovalItem =>
+      candidate.kind === 'approval' && candidate.threadId === pending.threadId,
+  )
+  if (pendingItems.some((candidate) => candidate.status === 'pending')) return
 
   sending.value = true
   error.value = null
@@ -355,13 +386,18 @@ async function decide(approved: boolean, secondConfirmation = false) {
       runId: pending.runId,
       conversationId: conversationId.value as string,
       threadId: pending.threadId,
-      approved,
-      secondConfirmation,
+      decisions: Object.values(pending.decisions),
     })
     void attachRun(pending.runId, after)
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
     sending.value = false
+    pending.decisions = {}
+    for (const candidate of pendingItems) {
+      if (candidate.status === 'selected_approved' || candidate.status === 'selected_rejected') {
+        candidate.status = 'pending'
+      }
+    }
   }
 }
 
@@ -433,6 +469,8 @@ function buildTimeline(
             kind: 'approval',
             key: uid(),
             threadId: '',
+            toolCallId: toolCall.id ?? '',
+            operationId: '',
             command: historyApprovalCommand(toolCall.name, args),
             label: [args.server_name, args.environment].filter(Boolean).map(String).join(' · '),
             riskLevel: historyRiskLevel(toolCall.name),
@@ -600,7 +638,11 @@ onBeforeUnmount(() => {
             <p v-else-if="item.kind === 'run-error'" class="run-error">本轮失败：{{ item.content }}</p>
             <div v-else-if="item.kind === 'approval'" class="approval-line" :class="item.status">
               <span class="approval-icon">{{
-                item.status === 'pending' ? '›' : item.status === 'approved' ? '✓' : '✕'
+                item.status === 'pending'
+                  ? '›'
+                  : item.status === 'approved' || item.status === 'selected_approved'
+                    ? '✓'
+                    : '✕'
               }}</span>
               <span class="approval-text">
                 <span class="approval-verb">{{
@@ -608,6 +650,10 @@ onBeforeUnmount(() => {
                     ? '待确认'
                     : item.status === 'approved'
                       ? '已批准'
+                      : item.status === 'selected_approved'
+                        ? '已选择执行'
+                        : item.status === 'selected_rejected'
+                          ? '已选择不执行'
                       : item.status === 'failed'
                         ? '未完成'
                         : '已拒绝'
@@ -618,7 +664,7 @@ onBeforeUnmount(() => {
               </span>
               <span v-if="item.status === 'pending'" class="approval-btns">
                 <button type="button" class="approve" :disabled="sending" @click="requestApproval(item)">执行</button>
-                <button type="button" class="reject" :disabled="sending" @click="decide(false)">不执行</button>
+                <button type="button" class="reject" :disabled="sending" @click="selectApproval(item, false)">不执行</button>
               </span>
             </div>
           </template>
@@ -854,11 +900,13 @@ h1 {
   flex-shrink: 0;
 }
 
-.approval-line.approved .approval-icon {
+.approval-line.approved .approval-icon,
+.approval-line.selected_approved .approval-icon {
   color: var(--color-accent);
 }
 
 .approval-line.rejected .approval-icon,
+.approval-line.selected_rejected .approval-icon,
 .approval-line.failed .approval-icon {
   color: var(--color-status-unreachable);
 }

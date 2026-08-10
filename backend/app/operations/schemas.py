@@ -148,6 +148,8 @@ class ApprovalDecision:
     reason: str = ""
     approver_id: str = "local-user"
     approver_role: ActorRole = "admin"
+    operation_id: str = ""
+    tool_call_id: str = ""
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any] | None) -> ApprovalDecision | None:
@@ -161,6 +163,8 @@ class ApprovalDecision:
             reason=str(value.get("reason") or ""),
             approver_id=str(value.get("approver_id") or "local-user"),
             approver_role=approver_role,
+            operation_id=str(value.get("operation_id") or ""),
+            tool_call_id=str(value.get("tool_call_id") or ""),
         )
 
 

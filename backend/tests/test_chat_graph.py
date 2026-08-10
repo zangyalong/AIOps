@@ -535,6 +535,71 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("缺少详情弹窗二次确认", str(result["messages"][0].content))
         self.assertEqual(_write_calls, [])
 
+    async def test_batch_write_calls_use_their_own_approval_decisions(self) -> None:
+        """同批多个写操作可以混合批准/拒绝，批准一项不能放行另一项。"""
+        chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"] = [
+            _fake_restart_service
+        ]
+        result = await chat_graph.specialist_tools_node(
+            "infrastructure_agent",
+            {
+                "messages": [],
+                "work_messages": [
+                    AIMessage(
+                        "",
+                        tool_calls=[
+                            {
+                                "name": "restart_service",
+                                "args": {
+                                    "server_name": "demo",
+                                    "service_name": "approved.service",
+                                },
+                                "id": "approved-write",
+                                "type": "tool_call",
+                            },
+                            {
+                                "name": "restart_service",
+                                "args": {
+                                    "server_name": "demo",
+                                    "service_name": "rejected.service",
+                                },
+                                "id": "rejected-write",
+                                "type": "tool_call",
+                            },
+                        ],
+                    )
+                ],
+                "reports": {},
+                "specialist_instruction": "",
+                "tool_iterations": 0,
+                "allow_write_tools": True,
+                "operation_context": _initial_state(allow_write_tools=True)[
+                    "operation_context"
+                ],
+                "approval": {
+                    "decisions": {
+                        "approved-write": {
+                            "approved": True,
+                            "second_confirmation": True,
+                            "approver_id": "approver-1",
+                            "approver_role": "admin",
+                        },
+                        "rejected-write": {
+                            "approved": False,
+                            "reason": "只批准第一项",
+                            "approver_id": "approver-1",
+                            "approver_role": "admin",
+                        },
+                    }
+                },
+            },
+        )
+
+        self.assertEqual(_write_calls, [("demo", "approved.service")])
+        self.assertEqual(result["messages"][0].status, "success")
+        self.assertEqual(result["messages"][1].status, "error")
+        self.assertIn("只批准第一项", str(result["messages"][1].content))
+
     async def test_write_tool_node_rejects_missing_approval_decision(self) -> None:
         """即使绕过图路由直达执行节点，没有审批决议也必须硬拒绝。"""
         chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"] = [

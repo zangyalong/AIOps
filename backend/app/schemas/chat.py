@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ChatRequest(BaseModel):
@@ -14,18 +14,23 @@ class ChatRequest(BaseModel):
     conversation_id: uuid.UUID | None = None
 
 
+class OperationApprovalDecision(BaseModel):
+    """用户对 approval_required 中某一项冻结操作作出的独立决议。"""
+
+    tool_call_id: str = Field(min_length=1)
+    operation_id: uuid.UUID
+    approved: bool
+    second_confirmation: bool = False
+    reason: str | None = None
+
+
 class ResumeApprovalRequest(BaseModel):
-    """恢复一次挂在写操作审批门上的对话：带回 approval_required 里发出的 thread_id + 用户裁决。"""
+    """恢复挂起对话：每个待批操作都必须带回独立且可核对的裁决。"""
 
     run_id: str
     conversation_id: uuid.UUID
     thread_id: str
-    approved: bool
-    # high / critical 操作必须经过审批卡片 + 详情弹窗两步确认。后端仍校验这个标记，
-    # 防止前端漏做弹窗时直接恢复高风险写工具。
-    second_confirmation: bool = False
-    # 拒绝时可选带一句理由，会回喂给 agent 让它据此向用户说明
-    reason: str | None = None
+    decisions: list[OperationApprovalDecision] = Field(min_length=1)
 
 
 class ChatRunOut(BaseModel):

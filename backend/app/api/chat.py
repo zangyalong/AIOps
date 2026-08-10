@@ -132,16 +132,13 @@ async def chat_resume(
         run = await manager.resume(
             data.run_id,
             thread_id=data.thread_id,
-            approved=data.approved,
-            second_confirmation=data.second_confirmation,
+            decisions=[item.model_dump(mode="json") for item in data.decisions],
             producer=lambda: chat_service.resume_chat_turn(
                 graph,
                 conversation.id,
                 uuid.UUID(run.id),
                 data.thread_id,
-                data.approved,
-                data.second_confirmation,
-                data.reason,
+                data.decisions,
             ),
         )
     except (LookupError, ValueError) as exc:

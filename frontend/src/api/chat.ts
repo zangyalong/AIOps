@@ -19,7 +19,12 @@ export type ChatStreamEvent =
       actions: PendingAction[]
       title?: string
     }
-  | { type: 'approval_resolved'; seq: number; thread_id: string; approved: boolean }
+  | {
+      type: 'approval_resolved'
+      seq: number
+      thread_id: string
+      decisions: OperationApprovalDecision[]
+    }
   | { type: 'done'; seq: number; conversation_id: string; title?: string }
   | { type: 'error'; seq: number; message: string }
 
@@ -102,9 +107,7 @@ export async function resumeApproval(params: {
   runId: string
   conversationId: string
   threadId: string
-  approved: boolean
-  secondConfirmation?: boolean
-  reason?: string
+  decisions: OperationApprovalDecision[]
 }): Promise<ChatRun> {
   const res = await fetch('/api/chat/resume', {
     method: 'POST',
@@ -113,11 +116,17 @@ export async function resumeApproval(params: {
       run_id: params.runId,
       conversation_id: params.conversationId,
       thread_id: params.threadId,
-      approved: params.approved,
-      second_confirmation: params.secondConfirmation ?? false,
-      reason: params.reason ?? null,
+      decisions: params.decisions,
     }),
   })
   if (!res.ok) throw await responseError(res, '恢复审批任务失败')
   return res.json()
+}
+
+export interface OperationApprovalDecision {
+  tool_call_id: string
+  operation_id: string
+  approved: boolean
+  second_confirmation: boolean
+  reason?: string | null
 }

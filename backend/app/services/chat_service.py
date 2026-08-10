@@ -15,6 +15,7 @@ from app.agents.tools.catalog import TOOLS_BY_NAME, WRITE_TOOL_NAMES
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models.message import Message
+from app.schemas.chat import OperationApprovalDecision
 from app.services import (
     chat_run_record_service,
     conversation_service,
@@ -35,7 +36,7 @@ class ChatStreamEvent(TypedDict, total=False):
     actions: list[
         dict
     ]  # approval_required：待批的写操作（每项带 kind，前端按 kind 渲染）
-    approved: bool  # approval_resolved：人工裁决结果
+    decisions: list[dict]  # approval_resolved：逐项人工裁决结果
 
 
 @dataclass(frozen=True)
@@ -544,25 +545,26 @@ async def resume_chat_turn(
     conversation_id: uuid.UUID,
     run_id: uuid.UUID,
     thread_id: str,
-    approved: bool,
-    second_confirmation: bool = False,
-    reason: str | None = None,
+    decisions: list[OperationApprovalDecision],
 ) -> AsyncIterator[ChatStreamEvent]:
     """恢复一次挂在审批门上的对话：把用户裁决用 Command(resume=) 传回图，从挂起点接着往下跑
     （批准→执行写工具 / 拒绝→回喂已拒绝消息 → agent 收尾 → 落库）。不新增用户消息——它只是上一段的
     延续。thread_id 必须和当初 approval_required 里发出去的那个一致，才能接上同一次挂起。
     """
-    decision = {
-        "approved": approved,
-        "second_confirmation": second_confirmation,
-        "reason": reason or "",
-        "approver_id": settings.operation_actor_id,
-        "approver_role": settings.operation_actor_role,
+    approval_payload = {
+        "decisions": {
+            item.tool_call_id: {
+                **item.model_dump(mode="json"),
+                "approver_id": settings.operation_actor_id,
+                "approver_role": settings.operation_actor_role,
+            }
+            for item in decisions
+        }
     }
     async for event in _drive_graph(
         graph,
         conversation_id,
-        Command(resume=decision),
+        Command(resume=approval_payload),
         thread_id,
         run_id,
         new_title=None,
