@@ -7,7 +7,7 @@
 > **方法与可信度**：
 > - **「AIOMS 现状」部分**：读代码盘点，可靠。
 > - **「竞品」部分**：部分来自实时网查官方文档/GitHub（已标注来源），部分来自既有认知；一批联网调研子 agent 撞上 API 限流，故个别版本级细节（融资额、EOL 日期、最新产品命名、厂商自报的准确率/MTTR 数字）**时效性打折、以官方页为准**。方向性的模块构成与对比结论是可靠的。
-> - 日期：2026-07（撰写时）。
+> - 初稿日期：2026-07；AIOMS 当前架构说明更新于 2026-08。
 
 ---
 
@@ -21,21 +21,21 @@
 
 | # | 维度 | 状态 | 核心实现 |
 |---|------|------|---------|
-| 1 | 数据接入 | ✅ 有 | Prometheus/Loki/Alertmanager（docker-compose 起的真实源）+ Grafana 链接生成；工具集中登记为读/写两类，SSH 读诊断只允许 uptime/df/free |
+| 1 | 数据接入 | ✅ 有 | Prometheus/Loki/Alertmanager + Grafana 链接；模型通过统一 `investigate` 调查入口访问可观测性、服务目录、运行时探针和 root 只读宿主机证据 |
 | 2 | 告警去重/关联 | ⚠️ 半 | dedup 有（按 fingerprint）；关联是 **CEL 规则引擎**（`correlation.py`，按 instance+alertname 归组）——是关联的**雏形**，非 ML/跨服务收敛 |
-| 3 | 根因分析/自动诊断 | ✅ 有 | 事件触发 → arq worker 复用 Supervisor 多 Agent 图 → 调 correlate_incident/query_server_metrics/search_logs 调查 → 诊断回填事件 |
-| 4 | Agent 编排 | ✅ 有 | LangGraph StateGraph：`Supervisor → 专家子图 ↔ tools → synthesize`；最终回答只生成一次，并要求具体数据来自本轮工具证据 |
+| 3 | 根因分析/自动诊断 | ✅ 有 | 事件触发 → arq worker 复用统一 Ops Agent（禁写）→ `investigate` 路由跨信号调查 → 诊断回填事件 |
+| 4 | Agent 编排 | ✅ 有 | LangGraph StateGraph：`ops_agent → investigate/approval → ops_agent`；对模型只暴露调查和结构化变更两类能力 |
 | 5 | 事件生命周期 | ✅ 有 | `incidents` 一等实体，`FIRING/ACKNOWLEDGED/RESOLVED` 状态机，告警全 resolved 时自动 resolve，ack/resolve API |
 | 6 | 后台/事件驱动 | ✅ 有 | Alertmanager webhook → arq + Redis 队列 → 独立 worker 进程消费 |
-| 7 | 写操作/自动化+审批 | ⚠️ 半 | systemd 启停/重启和预警规则创建接入 LangGraph interrupt 真审批；服务控制受双端白名单限制，仍缺鉴权、RBAC 和不可篡改审计 |
+| 7 | 写操作/自动化+审批 | ⚠️ 半 | systemd/Docker 控制、文件更新、日志配置和规则创建接入真审批；固定参数网关、双端校验和执行审计已落地，仍缺鉴权、RBAC 和不可篡改审计存储 |
 | 8 | 知识/记忆/RAG | ❌ 无 | 无向量库/知识图谱/runbook 检索 |
-| 9 | 可观测性/工程化 | ⚠️ 部分 | 只有 print 日志 + 超时卡位；**无 tracing/LangSmith、无 eval 集、无测试套件** |
+| 9 | 可观测性/工程化 | ⚠️ 部分 | 已有后端单元测试、工具超时和 Chat Run 轨迹；仍无 Agent tracing/LangSmith 与系统化 eval 集 |
 | 10 | 通知/协作 | ❌ 无 | 推 Slack/IM 明确缓做，诊断只落库 + `GET /alerts` 可查 |
-| 11 | 鉴权/审计/RBAC/密钥 | ❌ 无 | 端点无 auth；SSH 执行无审计；acked_by 是自由文本；私钥放文件（方向三待办） |
-| 12 | 前端 UI | ⚠️ 部分 | ChatView（流式 + 工具卡片）、ServersView（增删查 + SSH 连接测试）；**无告警/事件/审计页** |
+| 11 | 鉴权/审计/RBAC/密钥 | ⚠️ 部分 | `operation_records` 记录调查与变更执行，审批身份由服务端配置；端点仍无正式 auth/RBAC，私钥仍以文件管理，审计日志尚不可篡改 |
+| 12 | 前端 UI | ⚠️ 部分 | 已有对话、服务器、服务目录、预警规则和事件中心；审批卡片已接入，仍缺独立操作审计与 Agent 质量看板 |
 | 13 | 数据库/迁移 | ⚠️ 部分 | SQLAlchemy + 启动 `create_all` + 手写脚本；**无 Alembic 等迁移工具**（方向四待办） |
 
-**生产就绪度**：处于「演示 → 原型」之间。内核成型，但方向三（审计/审批）未落地，**不应直接连真实设施使用**。
+**生产就绪度**：处于「原型 → 受控测试」之间。调查只读边界、审批和执行审计已成型，但正式鉴权、RBAC、主机指纹、密钥管理和不可篡改审计尚未完成，**不应直接暴露到生产网络**。
 
 ---
 
@@ -114,25 +114,25 @@
 | 数据接入（读） | ✅ PLG 三支柱（深） | ✅ 多、侧重 K8s/云 | ✅✅ 上百集成（广） |
 | 告警 dedup | ✅ fingerprint | ⚠️ 多数没有 | ✅ |
 | **告警关联（收敛成事件）** | ⚠️ CEL 归组（雏形） | ❌ 多数没有 | ✅✅ ML/图论（BigPanda/Moogsoft 招牌） |
-| **根因分析（AI）** | ✅ Supervisor+专家 ReAct+真实证据综合 | ✅ 各家核心 | ⚠️ 新叠 AI（Bits/Sift 已很强） |
-| Agent 编排 | ✅ LangGraph 图 | ⚠️ 多为顺序/单 ReAct，K8sGPT 甚至非 agent | ⚠️ 部分多 agent（incident.io/PD/Resolve） |
+| **根因分析（AI）** | ✅ 统一 Ops Agent + 多源真实证据 | ✅ 各家核心 | ⚠️ 新叠 AI（Bits/Sift 已很强） |
+| Agent 编排 | ✅ 单 Agent LangGraph 工具/审批状态机 | ⚠️ 多为顺序/单 ReAct，K8sGPT 甚至非 agent | ⚠️ 部分多 agent（incident.io/PD/Resolve） |
 | 三支柱关联原语 | ✅ correlate_incident | ⚠️ 部分（Holmes/Traversal 因果图） | ⚠️ 靠看板/Sift |
 | **事件生命周期** | ✅ FIRING/ACK/RESOLVED + 自动恢复 | ❌ 多数没有（OpenSRE 都没有） | ✅✅ 最成熟（合并/时间线/角色） |
 | 事件驱动/后台队列 | ✅ webhook+arq+Redis | ⚠️ | ✅ |
-| 写操作 + **审批门控** | ⚠️ 服务重启白名单 + 真审批，**仍无鉴权/审计** | ⚠️ 窄，且审批常缺/假（OSS 尤甚） | ✅ 真 workflow + 审批（PD/incident.io） |
+| 写操作 + **审批门控** | ⚠️ 固定写网关 + 真审批 + 执行审计，仍无正式鉴权/RBAC | ⚠️ 窄，且审批常缺/假（OSS 尤甚） | ✅ 真 workflow + 审批（PD/incident.io） |
 | **On-call / 排班 / 升级 / 通知路由** | ❌ **零** | ❌（少数有 sink 通知，如 K8sGPT/Robusta） | ✅✅ **命根子**（PD/Opsgenie/incident.io/Grafana） |
 | 复盘 / postmortem / 学习闭环 | ❌ | ❌（个别有记忆宣传） | ✅（incident.io/PD 强） |
 | 知识 / RAG / runbook | ❌ | ⚠️ 多为宣传（实测常是半成品） | ⚠️ 挂链接为主 |
 | **Agent 工程化（tracing/eval）** | ⚠️ 只有 print | ⚠️（OpenSRE 有 eval 套件、Cleric 有闭环度量） | ✅（Datadog 有 LLM judge eval 平台） |
-| UI / 看板 / SLA / 报表 | ⚠️ 仅 Chat+Servers | ❌ 多为 CLI/Slack | ✅✅ 重 UI + MTTA/MTTR/Insights |
+| UI / 看板 / SLA / 报表 | ⚠️ Chat+Servers+Services+Alerts+Incidents，无 SLA/审计看板 | ❌ 多为 CLI/Slack | ✅✅ 重 UI + MTTA/MTTR/Insights |
 | 对外 Status Page | ❌ | ❌ | ✅（incident.io 等） |
-| 鉴权 / 审计 / RBAC / 密钥 | ❌ **零** | ❌（Cleric/大厂有 SOC2） | ✅✅ 合规必备 |
+| 鉴权 / 审计 / RBAC / 密钥 | ⚠️ 有操作审计，缺 auth/RBAC/正式密钥管理 | ❌（Cleric/大厂有 SOC2） | ✅✅ 合规必备 |
 
 ---
 
 ## 6. AIOMS 领先 / 持平的地方（别妄自菲薄）
 
-- **诊断内核有章法**：Supervisor 调度领域专家执行真实 ReAct 调查，最终综合明确要求**具体数据必须来自本轮工具证据**；回答只生成一次，把修正权交给用户追问。
+- **诊断内核有章法**：统一 Ops Agent 只通过 `investigate` 获取真实证据，后端负责数据源路由和证据标注；最终回答由同一个 Agent 基于本轮工具结果生成，内部执行器不泄露给模型和用户。
 - **关联用规则不用 LLM**：上了 **CEL**（`cel-python`），正是 Keep 同款、survey 启发#1 的正解——很多打「AI 关联」旗号的开源版其实是死代码或企业版专享。
 - **事件生命周期状态机**：OpenSRE 这种专门的 AI-SRE **根本没有**；AIOMS 有一等 `incidents` + 三态 + 自动恢复。
 - **correlate_incident 三支柱对齐**：正是 survey 说的「AI SRE 和 chatbot 的分水岭」。
@@ -143,7 +143,7 @@
 ## 7. 真正让它「单薄」的缺口（按价值排序）
 
 1. **通知 / On-call / 升级**（❌零）——PagerDuty/Opsgenie/incident.io **整个产品的核心**；连 K8sGPT/Robusta 都有通知 sink。一个「事件管理」系统没有「通知到人 / 排班 / 升级」，是最扎眼的缺口。**蓝本：incident.io 的 On-call 模块**（schedule + follow-the-sun + escalation 带 P1/P2 分支和工作时间条件 + 5 渠道通知 + DND 绕过）。
-2. **鉴权 / 审计 / 真审批**（❌零）——每个商业平台的合规底座，也是你 CLAUDE.md 红线（方向三）。且如第 4 节所说，这是**开源同行普遍薄弱、能做成差异化**的点。
+2. **鉴权 / RBAC / 不可篡改审计**（⚠️部分）——真审批和数据库执行审计已经具备，下一步缺口是可信登录身份、角色授权、密钥托管和不可篡改存储；这仍是商业平台的合规底座。
 3. **复盘 / 时间线 / 学习闭环**（❌）——事件解决后的沉淀，成熟平台标配（incident.io 自动生成 postmortem）。
 4. **Agent 可观测性 / eval 集**（⚠️）——**这是让 AI「可靠」的关键**。Cleric 的话最扎心：「调查 agent 是个周末项目，让它可靠的那套系统才不是」。Datadog 专门建了带 LLM judge 的 eval 平台。AIOMS 现在只有 print，改 prompt/换模型无法量化回归（方向四）。
 5. **UI 看板**（⚠️）——无告警页/事件页/时间线，运维「看不见」全局。

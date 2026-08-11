@@ -2,20 +2,43 @@
 
 跟踪多步骤任务的进度。这不是项目路线图，只在用户明确列出一批任务时才新增/更新——规则见 [CLAUDE.md](../CLAUDE.md) 「与 Claude 的协作模式」第 9 条。
 
+## 统一 Ops Agent 与调查/变更入口重构
+
+- [ ] **阶段一：收敛 Agent 可见的调查能力**
+  - 新增统一调查门面，模型只描述证据类型、调查目标和必要筛选条件；Prometheus、Loki、服务目录、运行时探针与 root-read 保持内部执行器分工
+  - `run_diagnostic_command`、`run_root_read_command`、`/host`、容器 PATH 和命令白名单不再直接出现在 Agent Prompt 或用户结果中
+  - 调查结果统一标明“证据来源 / 目标服务器 / 是否完整”，root-read 的敏感路径遮蔽与输出脱敏继续由后端硬约束
+- [ ] **阶段二：简化为单一 Ops Agent 编排**
+  - 移除 Supervisor 与四专家 handoff，改为 `ops_agent → tools/approval → ops_agent → final` 的单图流程
+  - 保留工具调用上限、完整 Tool 协议修复、无人值守禁写、逐操作审批绑定和最终答案压缩
+  - 专家旁白继续实时展示，但只表达“正在调查什么 / 新证据与下一步”，不展示内部执行器和安全实现
+- [ ] **阶段三：统一调查与变更的策略、审计和展示**
+  - 统一调查入口自动允许并按独立执行 ID 进入读审计，交互对话与无人值守 worker 都覆盖；所有结构化变更继续由 Operation Broker 判定并进入人工审批
+  - 工具显示名称从内部函数名改为用户可理解的“调查服务器 / 查询可观测性 / 变更服务”等文案
+  - 审批卡片继续展示冻结后的准确目标、参数摘要和风险，不开放任意 root 写 Shell
+- [ ] **阶段四：适配聊天服务、前端和无人值守任务**
+  - SSE 继续按真实顺序发送“专家旁白 → 调查状态 → 最终回答”，去除 Supervisor/专家名称相关判断
+  - worker 复用同一个 Ops Agent 图并硬关闭写工具，事件自动诊断不再依赖专家交接提示
+  - 历史消息、审批恢复和失败现场保持协议兼容
+- [ ] **阶段五：测试、文档与真实环境验收**
+  - 补齐统一调查路由、单 Agent 循环、审批恢复、读审计、旁白和 worker 测试
+  - 更新架构说明和目标服务器诊断语境文档，清理旧工具名及多 Agent 对外描述
+  - 代码与静态检查完成后保持未勾选，等真实 web-01 完成调查、审批变更和旁白节奏验收后再勾选
+
 ## 单角色 root 只读沙箱 + 审批写网关
 
 - [ ] **目标服务器 root 只读沙箱**
   - 同一个 `aioms` SSH 身份可通过固定无参数入口启动一次性 Docker 诊断容器，不再维护 `grep/find/rg` 等只读 Shell 语义白名单
-  - 宿主机根文件系统禁用递归后只读挂载到 `/host`，安全子挂载逐项只读加入；容器无网络、无 Docker/systemd 控制 socket、无调用方挂载参数，并遮蔽私钥、凭据、运行时控制面和数据库数据目录
-  - root-read 的 Shell、PATH 和程序属于诊断容器，只有 `/host/...` 是宿主机文件；遮蔽路径显示 `AIOMS_PATH_MASKED`，不得伪装成空目录
+  - 宿主机根文件系统在内部只读挂载，安全子挂载逐项只读加入；容器无网络、无 Docker/systemd 控制 socket、无调用方挂载参数，并遮蔽私钥、凭据、运行时控制面和数据库数据目录
+  - 后端可进入宿主机真实根目录核验 PATH、程序和文件，也可使用内部工具箱搜索宿主文件；执行语境不暴露给 Agent，遮蔽路径显示 `AIOMS_PATH_MASKED`，不得伪装成空目录
   - 镜像在安装时构建，运行时只接受 root 持有配置中记录的不可变 image ID；命令只从 stdin JSON 传入，宿主机不 `eval`
 - [ ] **后端通用只读工具与审计**
-  - 新增 `run_root_read_command(server_name, command)`，当前单一交互角色无需审批即可调用
-  - 工具结果、基础设施专家和最终汇总统一携带执行语境；禁止把容器 OS、程序版本、PATH 或未加 `/host` 的路径写成宿主机事实
+  - root-read 作为统一 `investigate(area="host")` 的内部执行器，当前单一交互角色无需审批即可调用
+  - 工具结果统一携带证据来源和目标；宿主机事实必须在真实宿主机语境核验，工具箱内容不能冒充宿主机事实
   - root-read 的完整命令、操作者、服务器、起止时间、退出码、超时和脱敏输出摘要进入 `operation_records`
   - 现有 systemd / Docker 等实时状态查询继续走结构化只读工具；所有写操作继续走 Operation Broker、人工审批和固定写网关，不开放任意 root 写 Shell
 - [ ] **接入、测试与目标机验收**
-  - 更新基础设施专家路由、工具旁白、目标服务器安装包和安全文档
+  - 更新统一调查路由、工具旁白、目标服务器安装包和安全文档
   - 自动化验证成功读取、写入失败、无网络、无控制 socket、超时销毁、敏感输出脱敏和审计记录
   - 代码和静态检查完成后保持未勾选，等在真实 `web-01` 完成安装与验收后再勾选
 
@@ -23,8 +46,8 @@
 
 - [ ] **保留调查过程，同时压缩内部思考和最终回答**
   - 专家旁白独立于最终回答展示；每次工具调用前只报告调查目标，或“新增证据 + 下一步”
-  - 工具调用继续按真实顺序展示，专家内部报告继续只交给 Supervisor，不直接暴露给用户
-  - 收拢 Supervisor、专家和综合节点的重复提示词，写操作安全边界继续由 Operation Broker 和固定网关强制执行
+  - 工具调用继续按真实顺序展示，内部执行器名称、原始策略判断和安全实现不直接暴露给用户
+  - 收拢为一个 Ops Agent 提示词，写操作安全边界继续由 Operation Broker 和固定网关强制执行
   - 简单任务的最终回答先给结论，再列关键证据和未完成项，不重复播放已经展示过的调查过程
   - 代码与静态检查完成后保持未勾选，等用户在真实对话中验收旁白节奏与回答质量
 
@@ -117,10 +140,10 @@
 
 ## 运维 Agent 能力升级
 
-背景：现在的 chat 图（`plan → call_model ↔ call_tools → reflect`，见 `backend/app/agents/graphs/chat_graph.py`）只有 `query_servers` 一个工具、工具调用循环没有步数上限、前端看不到工具调用过程、也没有子 agent。这组任务把它往"能调多个运维工具、有专业子 agent"的方向推进。
+背景：这一节保留早期 Agent 能力演进记录；当前设计已经收敛为“统一 Ops Agent + 调查/变更入口”，不再把多 Agent handoff 作为目标。
 
 - [ ] **Agent 全程使用简体中文**
-  - Supervisor、四个专家和最终综合节点共享强制简体中文约束；命令、代码、PromQL、服务名和产品专有名词保留原文
+  - 统一 Ops Agent 强制使用简体中文；命令、代码、PromQL、服务名和产品专有名词保留原文
   - 代码与自动化检查完成后保持未勾选，等用户在真实多轮对话中确认不再出现英文过渡语
 - [ ] **systemd / Docker 服务启动、停止和重启受控写工具**
   - `start_service` / `stop_service` / `restart_service` 根据服务目录运行时身份统一控制 systemd 或 Docker，共用一个非 root AIOMS SSH 身份、固定写网关和 AIOMS 端白名单
@@ -140,10 +163,10 @@
 - [X] **前端展示工具调用过程**
   - 给 `chat_service.py` 的 SSE 事件流加 `tool_start`/`tool_end`（或类似）事件类型
   - 前端渲染成"正在调用 XXX 工具"这类过程提示，不再是纯黑盒等最终回答
-- [ ] **运维领域子 agent —— 用 LangGraph 原生多 agent supervisor 模式实现**
-  - 不做"子 agent 包成一个 tool"的简化版，用 supervisor / 多图 handoff 的标准写法——这是本项目的学习重点之一，不能图省事绕过去
-  - 具体设计（几个子 agent、supervisor 怎么路由、状态怎么在子图间传递）留到真正开始做这一步时再展开
-  - 已采用父级 Supervisor + metrics/logs/incident/infrastructure 四个独立子图；代码与静态检查完成后仍保持未勾选，等用户运行时验收再勾选
+- [ ] **统一 Ops Agent（取代早期多 Agent 方案）**
+  - 早期 Supervisor + 四专家实现作为已验证过的学习路径，不再是当前目标架构
+  - 当前由单一 Ops Agent 使用统一调查门面，专业化留在后端路由和结构化工具中，避免 handoff、重复提示词和内部报告泄露
+  - 代码与静态检查完成后保持未勾选，等用户运行时验收调查覆盖面、回答准确性和旁白节奏
 
 ---
 
@@ -183,7 +206,7 @@ CLAUDE.md 项目定位里"值班/告警诊断"的核心闭环。
 - [x] **后台任务 runner**：当前是纯请求-响应，需要 background/scheduled 能力（告警触发的诊断、定时值班报告都要它）
   - 用 arq + Redis 搭任务队列：webhook 落库时把「新触发」的告警入队，独立的 arq worker 进程（`app.worker.WorkerSettings`）消费。以后定时值班报告也挂这个 runner
 - [x] **告警自动 triage**：告警落库后自动触发 agent 调查（拉 metrics/logs）→ 诊断结果推 Slack/IM
-  - worker 的 `triage_incident` 复用 Supervisor 专家图：载入事件 → 按 `service_instances.metric_instance` 解析服务与服务器（旧 monitor_labels 回退）→ agent 调 correlate 工具调查 → 诊断回填到事件。**推 Slack/IM 这步先缓**（诊断已落库、`GET /incidents` 可查，通知渠道以后单接）
+  - worker 的 `triage_incident` 复用统一 Ops Agent 并硬关闭写工具：载入事件 → 按 `service_instances.metric_instance` 解析服务与服务器（旧 monitor_labels 回退）→ `investigate` 调查 → 诊断回填事件。**推 Slack/IM 这步先缓**（诊断已落库、`GET /incidents` 可查，通知渠道以后单接）
 - [x] **去重/关联层用规则引擎**（CEL 或等价），不用 LLM——survey 启发 #1，Keep 最成熟的实现就是纯规则，快/可解释/好测；这是 agent 之前的确定性预处理
   - `app/services/correlation.py`：用 CEL（celpy）写匹配条件 + group_by 归组，算出 `group_key`（同 key = 同一事件）。当前规则 by-instance：带 instance 的 critical/warning 告警按 `[instance, alertname]` 归组（同机同种告警去重、不同种各成事件）。ingest 时算 group_key 落库，**只有事件的第一条 firing 才入队诊断**，同事件其余静默归入——治好「同台机多条告警重复诊断」。dedup（按 fingerprint）本就有
 - [x] **事件生命周期状态机**：`alert_events` 从平铺一条记录升级成 `FIRING/ACK/RESOLVED` 状态机（谁认领、后续如何）——survey 模块 6 / 启发 #6
@@ -207,11 +230,11 @@ CLAUDE.md 项目定位里"值班/告警诊断"的核心闭环。
 - [ ] **可观测性**：tracing（LangSmith 之类）+ token 成本/延迟/工具成功率（当前只有 `print` 日志）
 - [ ] **工具调用超时/熔断**：一个卡住的 SSH 不该把整个 agent 拖死
 - [ ] **评估集（eval harness）**：一组运维场景的离线测试，改 prompt/换模型时能量化回归（当前验证全靠手跑）
-- [ ] **迁移工具 + 测试套件**：多环境同步时把 Alembic（或等价）补回来；补后端测试套件
+- [ ] **迁移工具 + 集成/eval 测试**：多环境同步时把 Alembic（或等价）补回来；在现有后端单元测试基础上补真实数据源集成测试和 Agent eval
 
 ### 方向五：知识 / RAG（不急）
 
 - [ ] **runbook / 历史事件 / postmortem 检索**：让 agent 用组织内部知识回答"我们通常怎么修 X"——向量库 pgvector/Chroma 后期决定
   - 注：survey 启发 #4，别因为"别人好像有"焦虑——两个调研项目真做出向量检索的一个都没有，工程量比宣传大，等真需要跨事件检索再做
 
-> **关联**：上面「运维领域子 agent（supervisor）」那条属于方向一/二的"专业化"（日志分析/指标分析/事件指挥官子 agent）。但 survey 模块 7 提醒：图框架不是必选，子 agent 的价值在"专业化 + 真实数据"——没有真实数据，子 agent 之间也没什么可分工。
+> **关联**：早期多 Agent 方案验证了 LangGraph handoff，但当前选择把专业化收回后端调查路由。survey 模块 7 的提醒仍适用：图框架不是目的，价值来自真实数据、清晰边界和可验证的证据。

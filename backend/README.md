@@ -1,6 +1,6 @@
 # AIOMS Backend
 
-AIOMS 的 FastAPI 后端，负责业务 API、LangGraph 多 Agent 工作流、工具调用、告警接入和后台自动诊断。
+AIOMS 的 FastAPI 后端，负责业务 API、LangGraph Ops Agent 工作流、工具调用、告警接入和后台自动诊断。
 
 当前后端已经接入 PostgreSQL、Prometheus、Loki、Alertmanager、Grafana、Redis/arq 和受控 SSH 工具，不再是只有模拟数据的聊天 Demo。
 
@@ -9,7 +9,7 @@ AIOMS 的 FastAPI 后端，负责业务 API、LangGraph 多 Agent 工作流、�
 - 服务器管理与 SSH 连通性测试
 - 多轮流式对话和会话历史；`chat_runs` 持久化每轮状态，消息正文只存在 `messages`
 - 工具调用旁白、工具状态与最终回答实时展示，刷新后按同一轨迹重建
-- Supervisor 调度四个专业 Agent
+- 单一 Ops Agent 通过统一调查入口获取证据，通过结构化变更工具进入人工审批
 - Prometheus 指标、Loki 日志、Alertmanager 告警查询；指标工具可按服务器名/IP 自动解析 instance
 - 预警规则通过前端维护并存入数据库，后端自动生成 Prometheus 运行时规则并热重载
 - 服务目录与部署实例；支持服务运行状态、指标和日志查询
@@ -24,19 +24,18 @@ AIOMS 的 FastAPI 后端，负责业务 API、LangGraph 多 Agent 工作流、�
 ```text
 FastAPI POST /chat → 创建后台 Chat Run
     ↓
-LangGraph Supervisor
-    ├── metrics_agent         → Prometheus / Grafana
-    ├── logs_agent            → Loki / Grafana
-    ├── incident_agent        → Alertmanager / 服务目录 / 跨信号关联
-    └── infrastructure_agent  → servers 表 / SSH 工具
-                                 ├── 只读诊断：直接执行
-                                 └── 服务启停/重启与规则创建：interrupt 人工审批
+LangGraph Ops Agent
+    ├── investigate → 调查路由
+    │                   ├── Prometheus / Loki / Alertmanager
+    │                   ├── 服务目录 / 运行时状态探针
+    │                   └── 宿主机 root 只读沙箱
+    └── 结构化变更 → Operation Broker → interrupt 人工审批 → 固定写网关
 
-Alertmanager webhook → PostgreSQL → Redis/arq → Supervisor 自动诊断
+Alertmanager webhook → PostgreSQL → Redis/arq → 同一 Ops Agent（禁用写工具）
                                                └── incidents.diagnosis
 ```
 
-四个专家是共享状态的独立 LangGraph 子图，不是包装成普通工具的函数。Supervisor 可以连续委派多个专家，最后由综合节点基于本轮真实工具证据生成一次用户回答并直接返回。
+Agent 对外只认识“调查”和“变更”。`investigate` 是唯一模型可见的读工具，后端根据证据领域选择可观测性查询、运行时探针或宿主机文件沙箱；所有写能力仍是固定参数工具，不能退化成任意 root Shell。
 
 聊天请求先创建数据库 `chat_runs` 记录并写入带 `run_id` 的用户消息，再返回 `run_id`；前端通过
 `GET /chat/runs/{run_id}/events` 订阅 SSE。LangGraph
@@ -215,7 +214,7 @@ uv run arq app.worker.WorkerSettings
 
 ## 测试与静态检查
 
-当前测试不访问 DeepSeek 或真实可观测性服务，使用内存假模型验证 Supervisor handoff、读写工具边界和审批安全边界；SSH 写工具测试使用假的连接对象核对精确命令：
+当前测试不访问 DeepSeek 或真实可观测性服务，使用内存假模型验证统一调查循环、读写工具边界和审批安全边界；SSH 写工具测试使用假的连接对象核对精确命令：
 
 ```bash
 cd backend
@@ -230,14 +229,20 @@ uvx ruff format --check app tests
 uvx ruff check app tests
 ```
 
+已有开发数据库升级到统一调查审计结构：
+
+```bash
+uv run python scripts/migrate_operation_records.py
+```
+
 ## 目录说明
 
 ```text
 app/
 ├── api/           # FastAPI 路由，只做协议转换和依赖注入
 ├── agents/
-│   ├── graphs/    # Supervisor、专业子图、审批与最终综合
-│   └── tools/     # 指标、日志、告警、关联、SSH 工具及集中式读写目录
+│   ├── graphs/    # 统一 Ops Agent、工具循环与审批恢复
+│   └── tools/     # 统一调查门面、内部读执行器及结构化写工具目录
 ├── core/          # 配置
 ├── db/            # SQLAlchemy 引擎和 Session
 ├── models/        # 唯一 Base 下的 ORM 模型
@@ -251,8 +256,11 @@ tests/             # 不依赖外部服务的自动化测试
 
 ## 当前安全边界
 
-- `catalog.py` 是唯一的工具分类入口；每个工具必须明确注册为读工具或写工具，两类不允许重叠。
-- `run_diagnostic_command` 是读工具，开放主机资源、进程、网络、systemd、journal、Docker、crictl 和 Kubernetes 的受控只读命令；固定命令精确匹配，带资源名的命令严格校验参数，并统一限制执行时间和输出长度，不进入人工审批。
+- `catalog.py` 是唯一的模型工具分类入口；模型可见的读能力只有 `investigate`，结构化写工具逐项登记风险和审批展示，两类不允许重叠。
+- 每次图执行都有独立 `execution_id`：交互调查同时关联 `chat_run_id`，worker 调查不需要伪造聊天记录也会写入同一张操作审计表；写操作缺少真实 Chat Run 时继续 fail-closed。
+- `investigate` 按 `servers/services/runtime/host/metrics/logs/alerts/incident/visualization/change` 证据领域路由。`run_diagnostic_command` 等旧读工具仍作为后端内部执行器存在，不再由模型直接选择或向用户展示。
+- `runtime` 调查使用后端定义的结构化选择器查询主机资源、systemd、journal、Docker、socket 等实时状态；参数和输出继续受超时、长度及目标格式校验，但这些内部命令白名单不进入 Prompt。
+- `host` 调查进入 root-read 的宿主机语境：`/`、PATH 和程序都来自目标服务器，因而 `python --version` 等结果是宿主机事实；宿主根仍为只读，网络、控制 socket、敏感路径和运行时数据路径继续隔离。
 - `discover_server_services` 是业务资产盘点工具：固定查询 systemd、Docker、TCP/UDP 和 Unix Socket，只对监听结果中的纯数字 PID 补充运行时长、unit 和启动命令，不再读取整机进程表；第三层只保留运行至少 60 秒且不属于 systemd service / Docker scope 的进程。机器发现的运行对象不等于业务服务。
 - Docker、监听 socket 和按 PID 只读查询在 SSH 端会改写为 `sudo -n -- /usr/local/sbin/aioms-*-read ...`；目标服务器的 root 所有包装脚本会再次校验子命令、容器名和 PID，sudoers 只授权这两个网关，不开放任意 `sudo docker/ss/ps`。
 - `register_server_services` 是服务目录写工具：审批卡片列出准备登记的服务器、环境和运行时映射；批准后会重新扫描核对对象仍然存在，再幂等写入逻辑服务与部署实例。

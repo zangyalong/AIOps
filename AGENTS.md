@@ -16,7 +16,7 @@
 
 | 层         | 选型                                               | 备注                                                                                                               |
 | ---------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| Agent 框架 | **LangChain + LangGraph**                    | LangChain 提供工具/模型抽象，LangGraph 编排多步骤/多Agent工作流                                                    |
+| Agent 框架 | **LangChain + LangGraph**                    | LangChain 提供工具/模型抽象，LangGraph 编排统一 Ops Agent、工具循环和审批状态机                                    |
 | 后端       | **FastAPI + Python 3.12+**                   | 用 `uv` 管理依赖                                                                                                  |
 | 前端       | **Vue3 + Vite + TypeScript**                 | 组合式 API，`<script setup>` 语法                                                                                |
 | 数据库     | **PostgreSQL 16+**                           | 业务数据；向量存储后期再决定（pgvector 或 Chroma）                                                                 |
@@ -121,7 +121,7 @@ AIOMS/
 ## 6. 安全红线（运维场景特别注意）
 
 - **AI 决定的破坏性操作必须人工确认**：重启服务、删除数据、修改防火墙等必须进入写操作审批；高风险操作还要二次确认，critical 操作只给建议、不能执行。
-- 通用 Shell 只允许在 `scripts/target-server/root-read/` 定义的 root 只读 Docker 沙箱中执行：Shell、PATH 和程序属于诊断容器，只有 `/host/...` 是宿主文件；无网络、根挂载禁用递归、安全子挂载逐项只读、敏感路径以 `AIOMS_PATH_MASKED` 明示遮蔽并强制审计。宿主机写操作不能接受任意 Shell，只能走已登记参数协议、人工审批和固定写网关。
+- 通用 Shell 只允许在 `scripts/target-server/root-read/` 定义的 root 只读 Docker 沙箱中执行。后端可以选择进入目标服务器真实根目录核验宿主机 PATH、程序和文件，也可以使用内部工具箱搜索宿主文件；这个选择不暴露给 Agent。两种语境都无网络、宿主根只读、敏感路径以 `AIOMS_PATH_MASKED` 明示遮蔽并强制审计。宿主机写操作不能接受任意 Shell，只能走已登记参数协议、人工审批和固定写网关。
 - 服务器业务资产盘点默认按 systemd、Docker、TCP/UDP Socket、Unix Socket 扫描，只对监听结果中的纯数字 PID 定点补充详情，不默认读取整机 `ps` 进程表。
 - 目标服务器权限配置以 `scripts/target-server/` 为准：包装脚本必须由 `root:root` 持有且不可被 SSH 用户修改，sudoers 只授权固定入口，不能直接开放任意宿主机 `docker`、`systemctl`、`ss`、`ps` 或 shell。
 - LLM 的输出**永远视为不可信**，落库前做校验。
@@ -142,7 +142,7 @@ cd frontend && npm run dev
 brew services list | grep postgres   # 确认 postgresql@18 是 started
 psql -d aioms                        # 连接 aioms 库
 
-# 跑后端测试（覆盖 Supervisor handoff、审批边界、服务发现和 worker 写工具隔离）
+# 跑后端测试（覆盖统一调查、审批边界、服务发现和 worker 写工具隔离）
 cd backend && uv run python -m unittest discover -s tests -v
 
 # 前端类型检查 + 生产构建

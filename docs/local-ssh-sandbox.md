@@ -1,11 +1,11 @@
 # 本地 SSH 测试沙箱
 
 用 Docker 在 macOS 上起一个装了 SSH server 的轻量 Linux 容器，把它注册进 `servers` 表，
-然后在 AIOMS 对话界面里让 `run_diagnostic_command` 真的通过 SSH 连上去执行命令——而不是
-之前那种写死的模拟结果（见 `app/agents/tools/commands.py`）。
+然后在 AIOMS 对话界面里让统一 `investigate` 调查入口通过 SSH 获取真实运行状态，而不是
+返回写死的模拟结果。模型只选择 `runtime` 证据领域；`commands.py` 中的探针是后端内部实现。
 
-**为什么用容器测，不直接连真实服务器**：这个工具本质是"AI 决定要不要执行一条命令"，
-碰的是 CLAUDE.md 安全红线那条"SSH/Shell 工具要走白名单命令"。容器是随时可以
+**为什么用容器测，不直接连真实服务器**：这一步验证的是“Agent 调查 → 后端路由 → SSH
+运行时探针”的整条链路。容器是随时可以
 `docker rm` 扔掉的沙箱，配置错了、命令跑飞了，代价也就是重新起一个容器，风险比一上来
 就对着真实服务器验证低得多。
 
@@ -114,11 +114,13 @@ curl -X POST http://localhost:8010/servers \
 
 > 帮我看看 docker-test-01 这台服务器现在的负载和内存情况
 
-正常的话 AI 会调用 `run_diagnostic_command`，后端日志里能看到真实的 SSH 执行过程，
-回答里会带上"（真实执行于 docker-test-01）"这样的字样和真实命令输出，不再是固定的模拟文本。
+正常的话 AI 会调用一次或多次 `investigate(area="runtime", target="docker-test-01", ...)`，
+后端再路由到内部 SSH 探针。界面只显示“调查运维证据”，结果会标明证据来源和目标服务器，
+不会展示内部函数名或命令白名单。
 
-这是纯读诊断工具，因此不会弹人工审批卡片。当前沙箱镜像默认关闭 sudo，也不运行 systemd，
-不能用它验证 systemd 服务控制写工具；写工具应在专门的、可随时重建的 systemd 测试机上验收。
+这是纯读调查，因此不会弹人工审批卡片。当前测试容器没有安装 AIOMS root-read 网关，默认也
+不运行 systemd，所以它只能验证普通 SSH 与部分运行时探针，不能验证宿主机 root 只读语境或
+systemd 服务控制；这两项应在专门、可重建的 Linux 测试机上验收。
 
 ## 写工具验收说明
 
@@ -149,9 +151,10 @@ SSH_SERVICE_CONTROL_ALLOWLIST=nginx.service
 - `app/agents/tools/commands.py` 里连接时传的是 `known_hosts=None`，也就是不校验目标主机
   的身份——这对一次性的本地测试沙箱没问题（流量根本没出这台 Mac），但**绝对不能带着这个设置去连真实/生产服务器**，那样谁都能冒充目标主机。真要接真实服务器，要么提前把
   host key 指纹加进 known_hosts，要么显式传一个真实的 `known_hosts` 路径。
-- 读诊断白名单目前硬编码在 `_ALLOWED_COMMANDS` 里，只有 `uptime` / `df -h` / `free -m` 三个
-  只读命令。想加新命令要改代码、过一遍是不是真的"只读、无害"，不要为了图方便把白名单
-  放开成任意命令。
+- 模型不会直接提交 `_ALLOWED_COMMANDS` 中的内部运行时命令；它只提交结构化的调查领域、目标和
+  选择器。需要扩充运行时状态时，应在 `investigation.py` 与 `commands.py` 中增加后端映射和校验。
+- 任意只读 Shell 只属于目标服务器的 root-read 沙箱。这个本地 SSH 容器没有安装该网关，不能用
+  普通 SSH 探针绕过这一边界。
 - 写工具不能复用读诊断命令入口。新增写工具必须注册到 `catalog.py` 的写工具目录，声明风险
   等级和审批内容，并在工具内部继续校验允许执行的具体对象。
 
