@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -100,6 +101,47 @@ class ConfigPatchHelperTest(unittest.TestCase):
 
 
 class FileGatewayContractTest(unittest.TestCase):
+    def test_read_gateway_accepts_exact_read_arity(self) -> None:
+        """实际执行 read 分支，防止 set -u 再次读取不存在的位置参数。"""
+        with tempfile.TemporaryDirectory() as directory:
+            temp_dir = Path(directory)
+            source = temp_dir / "app.conf"
+            source.write_text("port=8080\n")
+
+            common = temp_dir / "file-common"
+            common.write_text(
+                "MAX_FILE_BYTES=65536\n"
+                "file_fail() { echo \"aioms-file-read: $*\" >&2; exit 1; }\n"
+                "require_root_gateway() { :; }\n"
+                "validate_policy_file() { :; }\n"
+                "canonical_existing_path() { printf '%s\\n' \"$1\"; }\n"
+                "reject_sensitive_path() { :; }\n"
+                "policy_allows_read() { return 0; }\n"
+                "validate_text_file() { :; }\n"
+            )
+            gateway = temp_dir / "aioms-file-read"
+            gateway.write_text(
+                (FILES_DIR / "aioms-file-read")
+                .read_text()
+                .replace(
+                    'readonly COMMON="/usr/local/libexec/aioms/file-common"',
+                    f"readonly COMMON={shlex.quote(str(common))}",
+                )
+            )
+
+            result = subprocess.run(
+                ["bash", str(gateway), "read", str(source)],
+                capture_output=True,
+                check=False,
+                text=True,
+                timeout=5,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"PATH={source}", result.stdout)
+        self.assertIn("REDACTED=false", result.stdout)
+        self.assertTrue(result.stdout.endswith("---\nport=8080\n"))
+
     def test_fixed_gateways_expose_structured_patch_without_service_actions(
         self,
     ) -> None:

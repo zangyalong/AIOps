@@ -526,7 +526,10 @@ async def preview_server_file_update(
     if snapshot is None:
         return read_error or "读取失败"
     if snapshot.redacted:
-        return "当前文件包含已脱敏字段，禁止整文件覆盖；请改用业务专用配置工具。"
+        return (
+            "当前文件包含已脱敏字段，禁止整文件覆盖；如果只修改 dotenv 或 JSON 的已有"
+            "单个非敏感标量，请改用 change.query=config-patch-preview。"
+        )
     preview = _build_preview(snapshot, new_content)
     if preview["diff_truncated"]:
         return (

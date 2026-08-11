@@ -18,7 +18,7 @@ from typing import ClassVar
 from arq.connections import RedisSettings
 from langchain_core.messages import HumanMessage
 
-from app.agents.graphs.chat_graph import build_chat_graph
+from app.agents.graphs.chat_graph import build_chat_graph, graph_run_config
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models.incident import RESOLVED, Incident
@@ -65,7 +65,6 @@ async def triage_incident(ctx: dict, incident_id: str) -> dict:
         state = await graph.ainvoke(
             {
                 "messages": [HumanMessage(prompt)],
-                "tool_iterations": 0,
                 "allow_write_tools": False,
                 "approval": None,
                 "operation_execution_id": str(uuid.uuid4()),
@@ -79,11 +78,9 @@ async def triage_incident(ctx: dict, incident_id: str) -> dict:
                 },
             },
             # 同一事件的作业重试也要用新线程；否则 MemorySaver 会把上一次已完成状态叠进来。
-            config={
-                "configurable": {
-                    "thread_id": f"triage-{incident_id}-{uuid.uuid4().hex}"
-                }
-            },
+            config=graph_run_config(
+                f"triage-{incident_id}-{uuid.uuid4().hex}"
+            ),
         )
         final = state["messages"][-1]
         diagnosis = (

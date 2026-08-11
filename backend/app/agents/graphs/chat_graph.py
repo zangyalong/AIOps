@@ -11,7 +11,7 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-from langchain_core.runnables import Runnable
+from langchain_core.runnables import Runnable, RunnableConfig
 from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
@@ -48,10 +48,10 @@ OPS_WRITE_TOOLS: tuple[BaseTool, ...] = tuple(WRITE_TOOLS_BY_NAME.values())
 ensure_read_tools(OPS_READ_TOOLS)
 ensure_write_tools(OPS_WRITE_TOOLS)
 
-MAX_TOOL_ITERATIONS = 6
 SIMPLIFIED_CHINESE_REQUIREMENT = (
     "必须使用简体中文；命令、代码、PromQL、服务名、标签和产品专名可保留原文。"
 )
+GRAPH_RECURSION_LIMIT = 10_000
 
 OPS_AGENT_PROMPT = """你是 AIOMS 的统一 Ops Agent。用户只需要理解两个概念：调查与变更。
 
@@ -81,7 +81,6 @@ OPS_AGENT_PROMPT = """你是 AIOMS 的统一 Ops Agent。用户只需要理解�
 
 class ChatState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
-    tool_iterations: int
     # 交互聊天允许模型提出结构化写操作；无人值守 worker 必须传 False。
     allow_write_tools: bool
     approval: dict | None
@@ -89,6 +88,14 @@ class ChatState(TypedDict):
     operation_execution_id: str | None
     operation_chat_run_id: str | None
     operation_context: dict
+
+
+def graph_run_config(thread_id: str) -> RunnableConfig:
+    """构造聊天与 worker 共用的图配置，避免 LangGraph 默认 25 步误停长任务。"""
+    return {
+        "configurable": {"thread_id": thread_id},
+        "recursion_limit": GRAPH_RECURSION_LIMIT,
+    }
 
 
 @lru_cache(maxsize=1)
@@ -102,9 +109,7 @@ def _base_llm() -> ChatOpenAI:
 
 
 @cache
-def _ops_llm(mode: Literal["none", "auto"], allow_write_tools: bool) -> Runnable:
-    if mode == "none":
-        return _base_llm()
+def _ops_llm(allow_write_tools: bool) -> Runnable:
     tools = list(OPS_READ_TOOLS)
     if allow_write_tools:
         tools.extend(OPS_WRITE_TOOLS)
@@ -165,18 +170,15 @@ async def ops_agent_node(state: ChatState) -> dict:
     started_at = time.monotonic()
     protocol_repairs = _trailing_protocol_repairs(state.get("messages", []))
     model_messages = [*state["messages"], *protocol_repairs]
-    at_limit = state.get("tool_iterations", 0) >= MAX_TOOL_ITERATIONS
     guidance = (
-        "已达到本轮工具调用上限，不能再调用工具；请基于已有证据直接给出结论和阻塞点。"
-        if at_limit
-        else "需要当前事实就调用调查工具；证据足够时直接回答，不要为了展示过程而继续调用。"
+        "需要当前事实就调用调查工具；证据足够时直接回答，不要为了展示过程而继续调用。"
     )
-    mode: Literal["none", "auto"] = "none" if at_limit else "auto"
-    response = await _ops_llm(mode, state.get("allow_write_tools", False)).ainvoke(
+    system_prompt = (
+        f"{SIMPLIFIED_CHINESE_REQUIREMENT}\n\n{OPS_AGENT_PROMPT}\n\n{guidance}"
+    )
+    response = await _ops_llm(state.get("allow_write_tools", False)).ainvoke(
         [
-            SystemMessage(
-                f"{SIMPLIFIED_CHINESE_REQUIREMENT}\n\n{OPS_AGENT_PROMPT}\n\n{guidance}"
-            ),
+            SystemMessage(system_prompt),
             *model_messages,
         ]
     )
@@ -190,7 +192,7 @@ async def ops_agent_node(state: ChatState) -> dict:
         )
     print(
         f"[graph] ops_agent 耗时 {time.monotonic() - started_at:.1f}s，"
-        f"mode={mode}，tool_calls={response.tool_calls!r}"
+        f"tool_calls={response.tool_calls!r}"
     )
     return {"messages": [*protocol_repairs, response]}
 
@@ -387,7 +389,6 @@ async def tools_node(state: ChatState) -> dict:
     print(f"[graph] tools 耗时 {time.monotonic() - started_at:.1f}s")
     return {
         "messages": results,
-        "tool_iterations": state.get("tool_iterations", 0) + 1,
         "approval": None,
     }
 

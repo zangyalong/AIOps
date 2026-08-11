@@ -83,6 +83,7 @@ class ServerFileToolValidationTest(unittest.IsolatedAsyncioTestCase):
                 }
             )
         self.assertIn("禁止整文件覆盖", result)
+        self.assertIn("config-patch-preview", result)
 
     async def test_preview_returns_hash_and_exact_diff(self) -> None:
         server = SimpleNamespace(name="web-01")

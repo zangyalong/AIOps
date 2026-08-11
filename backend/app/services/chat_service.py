@@ -11,6 +11,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents.graphs.chat_graph import graph_run_config
 from app.agents.presentation import compact_narration as _compact_narration
 from app.agents.tools.catalog import TOOLS_BY_NAME, WRITE_TOOL_NAMES
 from app.core.config import settings
@@ -305,7 +306,7 @@ async def _drive_graph(
     thread_id 决定用哪个 checkpoint 线程；初次和它的恢复共用同一个 thread_id 才能接上同一次挂起。
     这段不持有任何 db 连接（落库另开短事务），流式期间不占着连接。
     """
-    config = {"configurable": {"thread_id": thread_id}}
+    config = graph_run_config(thread_id)
     # 同一个 Ops Agent 既生成工具旁白，也生成最终回答。模型流开始时无法确定本次是否会带
     # tool_call，因此按 run_id 暂存；结束后有工具调用就发送 narration，否则发送最终答案。
     pending_narration: dict[str, list[str]] = {}
@@ -486,7 +487,6 @@ async def prepare_chat_turn(
         run_id=chat_run.id,
         graph_input={
             "messages": [*history_messages, HumanMessage(user_message)],
-            "tool_iterations": 0,
             "allow_write_tools": True,
             "approval": None,
             "operation_execution_id": str(chat_run.id),

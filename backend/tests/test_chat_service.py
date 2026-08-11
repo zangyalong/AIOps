@@ -27,6 +27,7 @@ class _FakeGraph:
     """只提供 _drive_graph 用到的事件流和最终 checkpoint。"""
 
     def __init__(self) -> None:
+        self.run_config: dict | None = None
         self.events = [
             {
                 "event": "on_chat_model_stream",
@@ -96,7 +97,8 @@ class _FakeGraph:
         )
 
     async def astream_events(self, graph_input: object, config: dict, version: str):
-        del graph_input, config, version
+        self.run_config = config
+        del graph_input, version
         for event in self.events:
             yield event
 
@@ -171,6 +173,12 @@ class ChatStreamTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(events[0]["content"], "我先查询服务器的实时指标。")
         self.assertEqual(events[3]["content"], "一次生成的最终回答")
+        self.assertIsNotNone(graph.run_config)
+        assert graph.run_config is not None
+        self.assertEqual(
+            graph.run_config["recursion_limit"],
+            chat_service.graph_run_config("ignored")["recursion_limit"],
+        )
         persist_checkpoint.assert_awaited()
         self.assertEqual(
             [call.args[1] for call in set_status.await_args_list],

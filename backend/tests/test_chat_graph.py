@@ -49,7 +49,6 @@ def _initial_state(
     )
     return {
         "messages": [HumanMessage("检查测试服务器")],
-        "tool_iterations": 0,
         "allow_write_tools": allow_write_tools,
         "approval": None,
         "operation_execution_id": execution_id,
@@ -62,13 +61,13 @@ def _initial_state(
 
 def _fake_ops_factory(
     responses: list[AIMessage],
-    calls: list[tuple[str, bool]] | None = None,
-) -> Callable[[str, bool], RunnableLambda]:
+    calls: list[bool] | None = None,
+) -> Callable[[bool], RunnableLambda]:
     items = iter(responses)
 
-    def factory(mode: str, allow_write_tools: bool) -> RunnableLambda:
+    def factory(allow_write_tools: bool) -> RunnableLambda:
         if calls is not None:
-            calls.append((mode, allow_write_tools))
+            calls.append(allow_write_tools)
 
         async def invoke(_: object) -> AIMessage:
             return next(items)
@@ -170,8 +169,61 @@ class OpsAgentGraphTest(unittest.IsolatedAsyncioTestCase):
         chat_graph.OPS_READ_TOOLS = self.original_read_tools
         chat_graph.OPS_WRITE_TOOLS = self.original_write_tools
 
+    async def test_more_than_default_recursion_limit_can_finish_normally(self) -> None:
+        model_calls: list[bool] = []
+        responses = [
+            AIMessage(
+                f"核对第 {index} 项证据。",
+                tool_calls=[
+                    {
+                        "name": "investigate",
+                        "args": {
+                            "area": "host",
+                            "target": "web-01",
+                            "query": f"check-{index}",
+                        },
+                        "id": f"investigate-{index}",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+            for index in range(1, 14)
+        ]
+        responses.append(AIMessage("十三项证据均已核对完成。"))
+        chat_graph._ops_llm = _fake_ops_factory(
+            responses,
+            model_calls,
+        )
+        graph = chat_graph.build_chat_graph()
+        with (
+            patch.object(
+                chat_graph, "AsyncSessionLocal", return_value=_SessionContext()
+            ),
+            patch.object(
+                chat_graph.operation_record_service,
+                "begin_read_execution",
+                AsyncMock(return_value=SimpleNamespace(status="executing")),
+            ),
+            patch.object(
+                chat_graph.operation_record_service,
+                "finish_execution",
+                AsyncMock(),
+            ),
+        ):
+            result = await graph.ainvoke(
+                _initial_state(allow_write_tools=False, with_run_id=True),
+                config=chat_graph.graph_run_config("more-than-default-limit"),
+            )
+
+        self.assertEqual(result["messages"][-1].content, "十三项证据均已核对完成。")
+        self.assertEqual(model_calls, [False] * 14)
+        self.assertEqual(
+            sum(isinstance(message, ToolMessage) for message in result["messages"]),
+            13,
+        )
+
     async def test_single_agent_investigates_then_answers_without_handoff(self) -> None:
-        model_calls: list[tuple[str, bool]] = []
+        model_calls: list[bool] = []
         chat_graph._ops_llm = _fake_ops_factory(
             [
                 AIMessage(
@@ -218,7 +270,7 @@ class OpsAgentGraphTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             result["messages"][-1].content, "web-01 的 Python 版本已经核验。"
         )
-        self.assertEqual(model_calls, [("auto", False), ("auto", False)])
+        self.assertEqual(model_calls, [False, False])
         self.assertNotIn("reports", result)
         self.assertNotIn("supervisor_rounds", result)
         self.assertTrue(

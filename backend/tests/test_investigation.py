@@ -165,6 +165,34 @@ class InvestigationFacadeTest(unittest.IsolatedAsyncioTestCase):
             }
         )
 
+    async def test_change_area_rejects_parameters_for_another_preview_type(
+        self,
+    ) -> None:
+        preview = AsyncMock()
+        with patch.object(
+            investigation,
+            "preview_server_file_update",
+            SimpleNamespace(ainvoke=preview),
+        ):
+            result = await investigation.investigate.ainvoke(
+                {
+                    "area": "change",
+                    "target": "web-01",
+                    "query": "file-update-preview",
+                    "parameters": {
+                        "path": "/sub2api-deploy/.env",
+                        "config_format": "dotenv",
+                        "selector": "SERVER_PORT",
+                        "value": "8081",
+                    },
+                }
+            )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "invalid_investigation_request")
+        self.assertIn("config-patch-preview", result.message)
+        preview.assert_not_awaited()
+
 
 if __name__ == "__main__":
     unittest.main()
