@@ -62,6 +62,8 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("700/777", prompt)
         self.assertIn("不能据此推断", prompt)
         self.assertIn("本调查也始终不可写", prompt)
+        self.assertIn("config-patch-preview", prompt)
+        self.assertIn("apply_nginx_config", prompt)
         self.assertNotIn("run_diagnostic_command", prompt)
         self.assertNotIn("run_root_read_command", prompt)
         self.assertNotIn("/host", prompt)
@@ -80,6 +82,8 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("apply_server_log_config", catalog.WRITE_TOOLS_BY_NAME)
         self.assertIn("deploy_server_environment", catalog.WRITE_TOOLS_BY_NAME)
         self.assertIn("update_server_file", catalog.WRITE_TOOLS_BY_NAME)
+        self.assertIn("patch_server_config", catalog.WRITE_TOOLS_BY_NAME)
+        self.assertIn("apply_nginx_config", catalog.WRITE_TOOLS_BY_NAME)
         self.assertFalse(
             set(catalog.READ_TOOLS_BY_NAME) & set(catalog.WRITE_TOOLS_BY_NAME)
         )
@@ -92,6 +96,12 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(restart_spec)
         self.assertEqual(restart_spec.effect, "write")
         self.assertEqual(restart_spec.risk_level, "high")
+        patch_spec = catalog.get_operation_spec("patch_server_config")
+        self.assertIsNotNone(patch_spec)
+        self.assertEqual(patch_spec.risk_level, "medium")
+        nginx_spec = catalog.get_operation_spec("apply_nginx_config")
+        self.assertIsNotNone(nginx_spec)
+        self.assertEqual(nginx_spec.risk_level, "high")
         self.assertEqual(
             {tool.name for tool in chat_graph.OPS_READ_TOOLS}, {"investigate"}
         )
@@ -227,6 +237,44 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(deployment_action["risk_level"], "high")
         self.assertEqual(deployment_action["kind"], "server_environment_deploy")
         self.assertIn("aioms-target-deploy apply-config", deployment_action["command"])
+
+        config_patch_action = catalog.describe_write_action(
+            {
+                "id": "config-patch-1",
+                "name": "patch_server_config",
+                "args": {
+                    "server_name": "web01",
+                    "path": "/sub2api-deploy/.env",
+                    "config_format": "dotenv",
+                    "selector": "SERVER_PORT",
+                    "value": "8081",
+                    "expected_sha256": "a" * 64,
+                    "preview_hash": "b" * 64,
+                    "preview_diff": "-SERVER_PORT=8080\n+SERVER_PORT=8081\n",
+                },
+            }
+        )
+        self.assertEqual(config_patch_action["risk_level"], "medium")
+        self.assertEqual(config_patch_action["kind"], "server_config_patch")
+        self.assertIn("SERVER_PORT=8081", config_patch_action["command"])
+
+        nginx_action = catalog.describe_write_action(
+            {
+                "id": "nginx-apply-1",
+                "name": "apply_nginx_config",
+                "args": {
+                    "server_name": "web01",
+                    "path": "/www/server/panel/vhost/nginx/mingzang.online.conf",
+                    "new_content": "server {}\n",
+                    "expected_sha256": "a" * 64,
+                    "preview_hash": "b" * 64,
+                    "preview_diff": "-old\n+new\n",
+                },
+            }
+        )
+        self.assertEqual(nginx_action["risk_level"], "high")
+        self.assertEqual(nginx_action["kind"], "nginx_config_apply")
+        self.assertIn("失败自动恢复备份", nginx_action["command"])
 
     async def test_restart_service_rejects_unregistered_instance_before_ssh(
         self,

@@ -83,7 +83,10 @@ const TOOL_LABELS: Record<string, string> = {
   find_server_files: '查找服务器文件',
   read_server_file: '读取服务器文件',
   preview_server_file_update: '预览服务器文件变更',
+  preview_server_config_patch: '预览结构化配置补丁',
   update_server_file: '更新服务器文件',
+  patch_server_config: '修改服务器配置项',
+  apply_nginx_config: '发布并重载 Nginx 配置',
   start_service: '启动服务',
   stop_service: '停止服务',
   restart_service: '重启服务',
@@ -106,6 +109,8 @@ const WRITE_TOOLS = new Set([
   'apply_server_log_config',
   'deploy_server_environment',
   'update_server_file',
+  'patch_server_config',
+  'apply_nginx_config',
   'run_whitelisted_command',
 ])
 
@@ -113,6 +118,7 @@ const MEDIUM_RISK_TOOLS = new Set([
   'register_server_services',
   'create_alert_rule',
   'start_service',
+  'patch_server_config',
 ])
 const HIGH_RISK_TOOLS = new Set([
   'stop_service',
@@ -120,6 +126,7 @@ const HIGH_RISK_TOOLS = new Set([
   'apply_server_log_config',
   'deploy_server_environment',
   'update_server_file',
+  'apply_nginx_config',
 ])
 
 function historyApprovalCommand(name: string, args: Record<string, unknown>): string {
@@ -146,6 +153,15 @@ function historyApprovalCommand(name: string, args: Record<string, unknown>): st
   }
   if (name === 'update_server_file') {
     return String(args.preview_diff ?? `更新 ${String(args.path ?? '?')}`)
+  }
+  if (name === 'patch_server_config') {
+    return String(
+      args.preview_diff ??
+        `修改 ${String(args.path ?? '?')} 的 ${String(args.selector ?? '?')}`,
+    )
+  }
+  if (name === 'apply_nginx_config') {
+    return `${String(args.preview_diff ?? `更新 ${String(args.path ?? '?')}`)}\n校验通过后 reload；失败自动恢复备份`
   }
   return String(args.command ?? name)
 }

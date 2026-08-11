@@ -21,6 +21,7 @@ from app.agents.tools.metrics import (
 from app.agents.tools.root_read import inspect_host
 from app.agents.tools.server_files import (
     find_server_files,
+    preview_server_config_patch,
     preview_server_file_update,
     read_server_file,
 )
@@ -80,7 +81,17 @@ _ALLOWED_PARAMETERS: dict[InvestigationArea, frozenset[str]] = {
     "alerts": frozenset({"severity"}),
     "incident": frozenset({"at", "window_minutes", "service", "environment"}),
     "visualization": frozenset({"kind", "minutes"}),
-    "change": frozenset({"root_path", "filename_pattern", "path", "new_content"}),
+    "change": frozenset(
+        {
+            "root_path",
+            "filename_pattern",
+            "path",
+            "new_content",
+            "config_format",
+            "selector",
+            "value",
+        }
+    ),
 }
 
 
@@ -144,6 +155,17 @@ def _int_parameter(
     if not minimum <= value <= maximum:
         raise InvestigationRequestError(
             f"parameters.{name} 必须在 {minimum} 到 {maximum} 之间"
+        )
+    return value
+
+
+def _scalar_parameter(parameters: Mapping[str, Any], name: str) -> object:
+    if name not in parameters:
+        raise InvestigationRequestError(f"parameters.{name}不能为空")
+    value = parameters[name]
+    if isinstance(value, (dict, list)):
+        raise InvestigationRequestError(
+            f"parameters.{name} 只能是字符串、数字、布尔值或 null"
         )
     return value
 
@@ -322,9 +344,27 @@ async def _invoke(
                     "new_content": _text_parameter(parameters, "new_content"),
                 }
             )
+        if query == "config-patch-preview":
+            return await preview_server_config_patch.ainvoke(
+                {
+                    "server_name": server,
+                    "path": _required(
+                        _text_parameter(parameters, "path"), "parameters.path"
+                    ),
+                    "config_format": _required(
+                        _text_parameter(parameters, "config_format"),
+                        "parameters.config_format",
+                    ),
+                    "selector": _required(
+                        _text_parameter(parameters, "selector"),
+                        "parameters.selector",
+                    ),
+                    "value": _scalar_parameter(parameters, "value"),
+                }
+            )
         raise InvestigationRequestError(
             "change.query 只能是 log-config-preview、find-files、read-file 或 "
-            "file-update-preview"
+            "file-update-preview、config-patch-preview"
         )
 
     raise InvestigationRequestError(f"不支持的调查领域：{area}")

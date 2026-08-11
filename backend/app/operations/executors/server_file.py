@@ -5,7 +5,7 @@ from __future__ import annotations
 import secrets
 import shlex
 from collections.abc import Awaitable, Callable
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 import asyncssh
 
@@ -23,12 +23,26 @@ class RemoteFileSnapshot(Protocol):
     redacted: bool
 
 
+class ConfigPatchPreview(Protocol):
+    path: str
+    expected_sha256: str
+    preview_hash: str
+    preview_diff: str
+    changed: bool
+
+
 ValidateContent = Callable[[str], str | None]
 ResolveServer = Callable[[str], Awaitable[tuple[Server | None, str | None]]]
 ReadSnapshot = Callable[
     [Server, str], Awaitable[tuple[RemoteFileSnapshot | None, str | None]]
 ]
 BuildPreview = Callable[[RemoteFileSnapshot, str], dict[str, Any]]
+ValidatePatch = Callable[[str, str, str, object], str | None]
+PreviewPatch = Callable[
+    [Server, str, str, str, object],
+    Awaitable[tuple[ConfigPatchPreview | None, str | None]],
+]
+EncodeValue = Callable[[object], str]
 ConnectParams = Callable[[Server], tuple[SSHConnectParams | None, str | None]]
 
 
@@ -45,6 +59,7 @@ async def update_server_file(
     read_snapshot: ReadSnapshot,
     build_preview: BuildPreview,
     connect_params: ConnectParams,
+    gateway_action: Literal["apply", "apply-nginx"] = "apply",
 ) -> OperationResult:
     content_error = validate_content(new_content)
     if content_error:
@@ -95,7 +110,7 @@ async def update_server_file(
             "-n",
             "--",
             FILE_WRITE_GATEWAY,
-            "apply",
+            gateway_action,
             snapshot.path,
             snapshot.sha256,
             token,
@@ -127,3 +142,95 @@ async def update_server_file(
             code="gateway_failed",
         )
     return OperationResult.success(output or f"已更新 {snapshot.path}。")
+
+
+async def patch_server_config(
+    server_name: str,
+    path: str,
+    config_format: str,
+    selector: str,
+    value: object,
+    expected_sha256: str,
+    preview_hash: str,
+    preview_diff: str,
+    *,
+    validate_patch: ValidatePatch,
+    resolve_server: ResolveServer,
+    preview_patch: PreviewPatch,
+    encode_value: EncodeValue,
+    connect_params: ConnectParams,
+) -> OperationResult:
+    validation_error = validate_patch(path, config_format, selector, value)
+    if validation_error:
+        return OperationResult.failure(
+            f"已拒绝结构化配置补丁：{validation_error}。",
+            code="invalid_config_patch",
+        )
+    server, error = await resolve_server(server_name)
+    if server is None:
+        return OperationResult.failure(error or "服务器不存在", code="server_not_found")
+    current_preview, current_error = await preview_patch(
+        server, path, config_format, selector, value
+    )
+    if current_preview is None:
+        return OperationResult.failure(
+            current_error or "无法重新生成结构化配置预览",
+            code="config_preview_failed",
+        )
+    if not current_preview.changed:
+        return OperationResult.success(
+            f"{selector} 已是目标值，没有修改服务器。",
+            code="no_change",
+        )
+    if (
+        current_preview.expected_sha256 != expected_sha256
+        or current_preview.preview_hash != preview_hash
+        or current_preview.preview_diff != preview_diff
+    ):
+        return OperationResult.failure(
+            "文件内容或审批补丁已变化，请重新生成预览并再次确认。",
+            code="preview_changed",
+        )
+
+    params, connect_error = connect_params(server)
+    if params is None:
+        return OperationResult.failure(
+            connect_error or "SSH 配置不可用", code="ssh_not_configured"
+        )
+    value_json = encode_value(value)
+    command = shlex.join(
+        (
+            "sudo",
+            "-n",
+            "--",
+            FILE_WRITE_GATEWAY,
+            "config-apply",
+            path,
+            expected_sha256,
+            config_format,
+            selector,
+            value_json,
+        )
+    )
+    try:
+        async with asyncssh.connect(
+            params.host,
+            port=params.port,
+            username=params.username,
+            client_keys=params.client_keys,
+            known_hosts=None,
+            connect_timeout=5,
+        ) as conn:
+            result = await conn.run(command, check=False, timeout=30)
+    except (asyncssh.Error, OSError, TimeoutError) as exc:
+        return OperationResult.failure(
+            f"连接或应用目标服务器结构化配置补丁失败：{exc}",
+            code="ssh_failed",
+        )
+    output = f"{result.stdout or ''}{result.stderr or ''}".strip()
+    if result.exit_status != 0:
+        return OperationResult.failure(
+            f"应用结构化配置补丁失败（exit={result.exit_status}）：{output or '无输出'}",
+            code="gateway_failed",
+        )
+    return OperationResult.success(output or f"已更新 {path} 中的 {selector}。")

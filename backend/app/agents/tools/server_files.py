@@ -5,9 +5,11 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+import math
 import re
 import shlex
 from dataclasses import dataclass
+from typing import Literal
 
 import asyncssh
 from langchain_core.tools import tool
@@ -28,8 +30,15 @@ from app.services.ssh_service import (
 FILE_READ_GATEWAY = "/usr/local/sbin/aioms-file-read"
 MAX_FILE_BYTES = 65_536
 MAX_DIFF_CHARS = 12_000
+MAX_CONFIG_VALUE_BYTES = 4_096
 _SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 _FILENAME_PATTERN = re.compile(r"^[A-Za-z0-9_.@*?-]{1,100}$")
+_ENV_KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
+_SENSITIVE_SELECTOR = re.compile(
+    r"password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|"
+    r"client[_-]?secret|credential|authorization",
+    re.IGNORECASE,
+)
 _SENSITIVE_CONTENT = re.compile(
     r"(?im)(password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|"
     r'client[_-]?secret|credential|authorization)["\']?\s*[:=]\s*\S+'
@@ -103,12 +112,58 @@ class UpdateServerFileInput(PreviewServerFileUpdateInput):
         return value
 
 
+ConfigFormat = Literal["dotenv", "json"]
+ConfigScalar = str | int | float | bool | None
+
+
+class PreviewServerConfigPatchInput(ReadServerFileInput):
+    config_format: ConfigFormat
+    selector: str = Field(min_length=1, max_length=1024)
+    value: ConfigScalar
+
+    @field_validator("selector")
+    @classmethod
+    def clean_selector(cls, value: str) -> str:
+        value = value.strip()
+        if any(char in value for char in ("\x00", "\n", "\r")):
+            raise ValueError("选择器不能包含空字符或换行")
+        return value
+
+
+class PatchServerConfigInput(PreviewServerConfigPatchInput):
+    expected_sha256: str = Field(min_length=64, max_length=64)
+    preview_hash: str = Field(min_length=64, max_length=64)
+    preview_diff: str = Field(max_length=MAX_DIFF_CHARS)
+
+    @field_validator("expected_sha256", "preview_hash")
+    @classmethod
+    def validate_sha256(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not _SHA256_PATTERN.fullmatch(value):
+            raise ValueError("必须是 64 位 SHA-256 十六进制摘要")
+        return value
+
+
 @dataclass(frozen=True)
 class RemoteFileSnapshot:
     path: str
     sha256: str
     redacted: bool
     content: str
+
+
+@dataclass(frozen=True)
+class ConfigPatchPreview:
+    path: str
+    config_format: ConfigFormat
+    selector: str
+    before: ConfigScalar
+    after: ConfigScalar
+    expected_sha256: str
+    output_sha256: str
+    preview_hash: str
+    preview_diff: str
+    changed: bool
 
 
 def _validate_new_content(content: str) -> str | None:
@@ -125,6 +180,73 @@ def _validate_new_content(content: str) -> str | None:
             "新内容疑似包含密码、Token、密钥或带密码的连接串，禁止进入 Agent 工具参数"
         )
     return None
+
+
+def _config_value_json(value: ConfigScalar) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    )
+
+
+def _validate_config_patch(
+    path: str,
+    config_format: ConfigFormat,
+    selector: str,
+    value: ConfigScalar,
+) -> str | None:
+    filename = path.rsplit("/", 1)[-1]
+    if config_format == "dotenv":
+        if not (
+            filename == ".env"
+            or filename.startswith(".env.")
+            or filename.endswith(".env")
+        ):
+            return "dotenv 驱动只允许 .env、.env.* 或 *.env 文件"
+        if not _ENV_KEY_PATTERN.fullmatch(selector):
+            return "dotenv 选择器必须是合法环境变量名"
+        selector_parts = [selector]
+        if not isinstance(value, str):
+            return "dotenv 新值必须是字符串"
+    elif config_format == "json":
+        if not filename.endswith(".json"):
+            return "JSON 驱动只允许 .json 文件"
+        if not selector.startswith("/"):
+            return "JSON 选择器必须是非空 JSON Pointer，例如 /server/port"
+        raw_parts = selector[1:].split("/")
+        if any(re.search(r"~(?:[^01]|$)", part) for part in raw_parts):
+            return "JSON Pointer 中 ~ 只能写成 ~0 或 ~1"
+        selector_parts = [
+            part.replace("~1", "/").replace("~0", "~") for part in raw_parts
+        ]
+    else:
+        return "config_format 只支持 dotenv 或 json"
+    sensitive = next(
+        (part for part in selector_parts if _SENSITIVE_SELECTOR.search(part)), None
+    )
+    if sensitive is not None:
+        return f"选择器包含敏感字段 {sensitive}，禁止通过 Agent 修改"
+    if isinstance(value, float) and not math.isfinite(value):
+        return "数字必须是有限值"
+    if isinstance(value, str):
+        if len(value.encode("utf-8")) > MAX_CONFIG_VALUE_BYTES:
+            return f"字符串值超过 {MAX_CONFIG_VALUE_BYTES} 字节限制"
+        if any(char in value for char in ("\x00", "\n", "\r")):
+            return "字符串值不能包含空字符或换行"
+        content_error = _validate_new_content(f"value={value}\n")
+        if content_error:
+            return content_error
+    return None
+
+
+def _validate_nginx_path(path: str) -> str | None:
+    if path.startswith("/etc/nginx/") and path.endswith(".conf"):
+        return None
+    if path.startswith("/www/server/panel/vhost/nginx/") and path.endswith(".conf"):
+        return None
+    return "Nginx 发布只允许 /etc/nginx 下或宝塔 vhost/nginx 目录中的 .conf 文件"
 
 
 async def _resolve_server(server_name: str) -> tuple[Server | None, str | None]:
@@ -209,6 +331,103 @@ async def _read_snapshot(
     return snapshot, None
 
 
+def _same_scalar(left: object, right: object) -> bool:
+    return type(left) is type(right) and left == right
+
+
+def _config_diff(
+    config_format: ConfigFormat,
+    selector: str,
+    before: ConfigScalar,
+    after: ConfigScalar,
+) -> str:
+    if config_format == "dotenv":
+        return f"@@ dotenv {selector} @@\n-{selector}={before}\n+{selector}={after}\n"
+    return (
+        f"@@ json {selector} @@\n"
+        f"-{_config_value_json(before)}\n"
+        f"+{_config_value_json(after)}\n"
+    )
+
+
+async def _preview_config_patch(
+    server: Server,
+    path: str,
+    config_format: ConfigFormat,
+    selector: str,
+    value: ConfigScalar,
+) -> tuple[ConfigPatchPreview | None, str | None]:
+    value_json = _config_value_json(value)
+    status, output = await _run_read_gateway(
+        server,
+        "config-preview",
+        path,
+        config_format,
+        selector,
+        value_json,
+    )
+    if status != 0:
+        return None, output or f"结构化配置预览失败（exit={status}）"
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError:
+        return None, "目标服务器配置补丁网关返回了无法识别的结果"
+    if not isinstance(payload, dict):
+        return None, "目标服务器配置补丁网关返回的结果不是对象"
+    expected_sha256 = payload.get("source_sha256")
+    output_sha256 = payload.get("output_sha256")
+    before = payload.get("before")
+    after = payload.get("after")
+    changed = payload.get("changed")
+    if (
+        payload.get("format") != config_format
+        or payload.get("selector") != selector
+        or not _SHA256_PATTERN.fullmatch(str(expected_sha256 or ""))
+        or not _SHA256_PATTERN.fullmatch(str(output_sha256 or ""))
+        or not isinstance(changed, bool)
+        or not _same_scalar(after, value)
+        or isinstance(before, (dict, list))
+    ):
+        return None, "目标服务器配置补丁网关返回的字段不完整或与请求不一致"
+    preview_diff = (
+        _config_diff(config_format, selector, before, after)
+        if changed
+        else "（配置值没有变化）"
+    )
+    preview_hash = hashlib.sha256(
+        json.dumps(
+            {
+                "path": path,
+                "format": config_format,
+                "selector": selector,
+                "before": before,
+                "after": after,
+                "expected_sha256": expected_sha256,
+                "output_sha256": output_sha256,
+                "preview_diff": preview_diff,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return (
+        ConfigPatchPreview(
+            path=path,
+            config_format=config_format,
+            selector=selector,
+            before=before,
+            after=after,
+            expected_sha256=str(expected_sha256),
+            output_sha256=str(output_sha256),
+            preview_hash=preview_hash,
+            preview_diff=preview_diff,
+            changed=changed,
+        ),
+        None,
+    )
+
+
 def _build_preview(snapshot: RemoteFileSnapshot, new_content: str) -> dict[str, object]:
     diff = "".join(
         difflib.unified_diff(
@@ -241,6 +460,11 @@ def _build_preview(snapshot: RemoteFileSnapshot, new_content: str) -> dict[str, 
         "preview_diff": diff or "（内容没有变化）",
         "changed": bool(diff),
         "diff_truncated": diff_truncated,
+        "write_tool": (
+            "apply_nginx_config"
+            if _validate_nginx_path(snapshot.path) is None
+            else "update_server_file"
+        ),
     }
 
 
@@ -303,7 +527,8 @@ async def preview_server_file_update(
     """读取当前文件并生成统一差异预览，不修改服务器。
 
     文件只要含脱敏字段，就拒绝整文件预览，以免模型用脱敏占位符覆盖真实凭据。成功返回的哈希和
-    preview_diff 必须原样交给 update_server_file。
+    preview_diff 必须原样交给返回结果指定的 write_tool；Nginx 配置只能交给
+    apply_nginx_config，其他普通文本交给 update_server_file。
     """
     content_error = _validate_new_content(new_content)
     if content_error:
@@ -324,6 +549,50 @@ async def preview_server_file_update(
     return json.dumps(preview, ensure_ascii=False, indent=2)
 
 
+@tool(args_schema=PreviewServerConfigPatchInput)
+async def preview_server_config_patch(
+    server_name: str,
+    path: str,
+    config_format: ConfigFormat,
+    selector: str,
+    value: ConfigScalar,
+) -> str:
+    """预览已授权配置文件中的一个非敏感标量补丁，不返回其他真实配置值。
+
+    dotenv 使用环境变量名作为 selector；JSON 使用 JSON Pointer（例如 /server/port）。只修改
+    已存在且唯一的字段，不允许密码、Token、密钥、新增字段、对象或数组。成功返回的三个审批
+    字段必须原样交给 patch_server_config。
+    """
+    validation_error = _validate_config_patch(path, config_format, selector, value)
+    if validation_error:
+        return f"无法生成结构化配置预览：{validation_error}。"
+    server, error = await _resolve_server(server_name)
+    if server is None:
+        return error or "服务器不存在"
+    preview, preview_error = await _preview_config_patch(
+        server, path, config_format, selector, value
+    )
+    if preview is None:
+        return f"无法生成结构化配置预览：{preview_error or '配置状态不明确'}。"
+    return json.dumps(
+        {
+            "path": preview.path,
+            "config_format": preview.config_format,
+            "selector": preview.selector,
+            "expected_sha256": preview.expected_sha256,
+            "preview_hash": preview.preview_hash,
+            "preview_diff": preview.preview_diff,
+            "changed": preview.changed,
+            "notice": (
+                "目标机只修改该非敏感标量；其他字段、密码和密钥不会返回给模型，"
+                "也不会被脱敏占位符覆盖。"
+            ),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
 @tool(args_schema=UpdateServerFileInput)
 async def update_server_file(
     server_name: str,
@@ -338,6 +607,11 @@ async def update_server_file(
     这是高风险写操作。执行前重新读取文件并核对旧哈希、预览哈希和差异；随后上传到固定暂存目录，
     由 root 网关备份、保留所有权与权限并原子替换。不能写入敏感凭据或任意未授权路径。
     """
+    if _validate_nginx_path(path) is None:
+        return OperationResult.failure(
+            "Nginx 配置必须使用 apply_nginx_config，以确保校验、reload 和失败回滚。",
+            code="nginx_requires_transactional_apply",
+        )
     return await server_file_executor.update_server_file(
         server_name,
         path,
@@ -349,5 +623,71 @@ async def update_server_file(
         resolve_server=_resolve_server,
         read_snapshot=_read_snapshot,
         build_preview=_build_preview,
+        connect_params=_connect_params_or_error,
+    )
+
+
+@tool(args_schema=UpdateServerFileInput)
+async def apply_nginx_config(
+    server_name: str,
+    path: str,
+    new_content: str,
+    expected_sha256: str,
+    preview_hash: str,
+    preview_diff: str,
+) -> OperationResult:
+    """审批后发布已精确授权的 Nginx 配置并在目标机完成校验与 reload。
+
+    使用 file-update-preview 的完整差异。root 网关原子替换后执行固定 Nginx 二进制的配置测试；
+    测试或 reload 失败会立即恢复备份，不能用于普通文本文件。
+    """
+    path_error = _validate_nginx_path(path)
+    if path_error:
+        return OperationResult.failure(path_error, code="invalid_nginx_path")
+    return await server_file_executor.update_server_file(
+        server_name,
+        path,
+        new_content,
+        expected_sha256,
+        preview_hash,
+        preview_diff,
+        validate_content=_validate_new_content,
+        resolve_server=_resolve_server,
+        read_snapshot=_read_snapshot,
+        build_preview=_build_preview,
+        connect_params=_connect_params_or_error,
+        gateway_action="apply-nginx",
+    )
+
+
+@tool(args_schema=PatchServerConfigInput)
+async def patch_server_config(
+    server_name: str,
+    path: str,
+    config_format: ConfigFormat,
+    selector: str,
+    value: ConfigScalar,
+    expected_sha256: str,
+    preview_hash: str,
+    preview_diff: str,
+) -> OperationResult:
+    """审批后原子修改已授权 dotenv 或 JSON 文件中的一个非敏感标量。
+
+    执行前会在目标机重新生成同一补丁并核对旧文件哈希与审批差异；root 网关备份旧文件、保留
+    所有权和权限后原子替换。真实密钥始终留在目标机。
+    """
+    return await server_file_executor.patch_server_config(
+        server_name,
+        path,
+        config_format,
+        selector,
+        value,
+        expected_sha256,
+        preview_hash,
+        preview_diff,
+        validate_patch=_validate_config_patch,
+        resolve_server=_resolve_server,
+        preview_patch=_preview_config_patch,
+        encode_value=_config_value_json,
         connect_params=_connect_params_or_error,
     )

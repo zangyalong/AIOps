@@ -121,7 +121,7 @@ AIOMS/
 ## 6. 安全红线（运维场景特别注意）
 
 - **AI 决定的破坏性操作必须人工确认**：重启服务、删除数据、修改防火墙等必须进入写操作审批；高风险操作还要二次确认，critical 操作只给建议、不能执行。
-- 通用 Shell 只允许在 `scripts/target-server/root-read/` 定义的 root 只读 Docker 沙箱中执行。后端可以选择进入目标服务器真实根目录核验宿主机 PATH、程序和文件，也可以使用内部工具箱搜索宿主文件；这个选择不暴露给 Agent。两种语境都无网络、宿主根只读、敏感路径以 `AIOMS_PATH_MASKED` 明示遮蔽并强制审计。宿主机写操作不能接受任意 Shell，只能走已登记参数协议、人工审批和固定写网关。
+- 通用 Shell 只允许在 `scripts/target-server/root-read/` 定义的 root 只读 Docker 沙箱中执行。后端可以选择进入目标服务器真实根目录核验宿主机 PATH、程序和文件，也可以使用内部工具箱搜索宿主文件；这个选择不暴露给 Agent。两种语境都无网络、宿主根只读、敏感路径以 `AIOMS_PATH_MASKED` 明示遮蔽并强制审计。宿主机写操作不能接受任意 Shell，只能走已登记参数协议、人工审批和固定写网关；普通文本用完整 diff 原子替换，dotenv/JSON 非敏感标量用目标机结构化补丁，Nginx 用校验、reload、失败回滚的一体化发布。
 - 服务器业务资产盘点默认按 systemd、Docker、TCP/UDP Socket、Unix Socket 扫描，只对监听结果中的纯数字 PID 定点补充详情，不默认读取整机 `ps` 进程表。
 - 目标服务器权限配置以 `scripts/target-server/` 为准：包装脚本必须由 `root:root` 持有且不可被 SSH 用户修改，sudoers 只授权固定入口，不能直接开放任意宿主机 `docker`、`systemctl`、`ss`、`ps` 或 shell。
 - LLM 的输出**永远视为不可信**，落库前做校验。

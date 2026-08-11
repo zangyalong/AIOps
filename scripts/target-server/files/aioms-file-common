@@ -4,6 +4,8 @@
 
 POLICY_FILE="/etc/aioms/file-access.allowlist"
 MAX_FILE_BYTES=65536
+CONFIG_PATCH_PYTHON="/usr/bin/python3.11"
+CONFIG_PATCH_HELPER="/usr/local/libexec/aioms/config-patch.py"
 
 file_fail() {
     echo "${AIOMS_FILE_GATEWAY:-aioms-file}: $*" >&2
@@ -70,4 +72,15 @@ validate_text_file() {
     if (( size > 0 )) && ! LC_ALL=C grep -Iq . "$path"; then
         file_fail "只允许读取或写入 UTF-8/文本配置文件：$path"
     fi
+}
+
+validate_config_patch_helper() {
+    [[ -x "$CONFIG_PATCH_PYTHON" ]] || file_fail "缺少 Python 3.11 配置补丁运行时"
+    [[ -f "$CONFIG_PATCH_HELPER" && ! -L "$CONFIG_PATCH_HELPER" ]] ||
+        file_fail "结构化配置补丁器不存在或不安全"
+    local owner mode
+    read -r owner mode < <(stat -c '%u %a' "$CONFIG_PATCH_HELPER")
+    [[ "$owner" == "0" ]] || file_fail "结构化配置补丁器必须由 root 持有"
+    (( (8#$mode & 8#022) == 0 )) ||
+        file_fail "结构化配置补丁器不能由组或其他用户写入"
 }

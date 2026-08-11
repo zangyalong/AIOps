@@ -268,6 +268,8 @@ tests/             # 不依赖外部服务的自动化测试
 - `start_service` 是中风险写工具，审批卡片确认一次；`stop_service`、`restart_service` 是高风险写工具，审批卡片后还必须在详情弹窗二次确认，后端也会校验二次确认标记。三者根据服务目录中的运行时身份统一控制 systemd 服务或 Docker 容器，要求对应实例已开启“控制授权”，并通过同一非 root AIOMS 身份调用固定 `aioms-service-control` 网关。
 - `find_server_files` / `read_server_file` 只在服务实例已登记的文件范围内查找和读取不超过 64 KiB 的文本配置；目标机固定网关做真实路径校验，敏感字段按整行脱敏，私钥、shadow、sudoers 等路径始终禁止。
 - `preview_server_file_update` 先重新读取当前文件并生成统一差异；`update_server_file` 是高风险写工具，要求精确文件授权、审批卡片与详情弹窗两步确认，并重新核对旧内容 SHA-256、预览摘要和完整 diff。目标机写网关保存 root 备份、保留原所有权/权限并原子替换；含敏感字段的文件不能用通用工具整文件覆盖。
+- `preview_server_config_patch` / `patch_server_config` 补充字段级配置修改：dotenv 使用变量名、JSON 使用 JSON Pointer，只允许更新已存在的非敏感标量。预览和补丁都在目标机固定网关中完成，其他真实字段不进入模型；执行仍核对旧文件 SHA-256、审批摘要并备份原子替换。YAML 在固定的保格式解析器落地前保持拒绝。
+- `apply_nginx_config` 复用完整文件预览，但调用 Nginx 专用发布模式：原子替换后执行固定二进制的 `nginx -t` 与 reload，校验或 reload 失败自动恢复备份，避免“文件已改但服务未生效”的半完成状态。
 - 服务目录开关通过固定 `aioms-service-policy add/remove` 网关同步目标服务器 root 白名单；远端成功后才保存数据库状态，数据库保存失败时会尽力回滚远端。策略网关不执行启停、不接受文件路径或 Shell，服务发现和目录注册也不会自动调用它。
 - 已授权实例不能直接修改服务器/运行时身份或删除，逻辑服务也不能级联删除仍授权的实例；必须先关闭授权，让目标服务器移除白名单后再修改目录。
 

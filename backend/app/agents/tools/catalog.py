@@ -18,7 +18,11 @@ from app.agents.tools.actions import restart_service, start_service, stop_servic
 from app.agents.tools.alert_rules import create_alert_rule
 from app.agents.tools.deployment import deploy_server_environment
 from app.agents.tools.investigation import investigate
-from app.agents.tools.server_files import update_server_file
+from app.agents.tools.server_files import (
+    apply_nginx_config,
+    patch_server_config,
+    update_server_file,
+)
 from app.agents.tools.server_log_config import (
     apply_server_log_config,
 )
@@ -174,6 +178,36 @@ def _update_server_file_action(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _patch_server_config_action(args: dict[str, Any]) -> dict[str, Any]:
+    server = str(args.get("server_name") or "?")
+    path = str(args.get("path") or "?")
+    selector = str(args.get("selector") or "?")
+    preview_diff = str(args.get("preview_diff") or "（缺少字段补丁预览）")
+    return {
+        "kind": "server_config_patch",
+        "title": f"修改 {server} 上 {path} 的配置项 {selector}",
+        "server_name": server,
+        "path": path,
+        "selector": selector,
+        "command": preview_diff,
+        "preview_hash": str(args.get("preview_hash") or ""),
+    }
+
+
+def _apply_nginx_config_action(args: dict[str, Any]) -> dict[str, Any]:
+    server = str(args.get("server_name") or "?")
+    path = str(args.get("path") or "?")
+    preview_diff = str(args.get("preview_diff") or "（缺少 Nginx 差异预览）")
+    return {
+        "kind": "nginx_config_apply",
+        "title": f"发布并重载 {server} 上的 Nginx 配置 {path}",
+        "server_name": server,
+        "path": path,
+        "command": f"{preview_diff}\n校验通过后 reload；失败自动恢复备份",
+        "preview_hash": str(args.get("preview_hash") or ""),
+    }
+
+
 READ_TOOLS: tuple[BaseTool, ...] = (investigate,)
 
 _WRITE_SPECS = (
@@ -216,6 +250,16 @@ _WRITE_SPECS = (
         tool=update_server_file,
         risk_level="high",
         build_action_details=_update_server_file_action,
+    ),
+    WriteToolSpec(
+        tool=patch_server_config,
+        risk_level="medium",
+        build_action_details=_patch_server_config_action,
+    ),
+    WriteToolSpec(
+        tool=apply_nginx_config,
+        risk_level="high",
+        build_action_details=_apply_nginx_config_action,
     ),
 )
 

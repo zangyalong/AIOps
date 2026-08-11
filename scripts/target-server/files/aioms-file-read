@@ -13,7 +13,8 @@ source "$COMMON"
 
 require_root_gateway
 validate_policy_file
-[[ $# -ge 2 ]] || file_fail "用法：aioms-file-read find ROOT NAME_PATTERN | read FILE"
+[[ $# -ge 2 ]] ||
+    file_fail "用法：aioms-file-read find ROOT NAME_PATTERN | read FILE | config-preview FILE FORMAT SELECTOR VALUE_JSON"
 
 case "$1" in
     find)
@@ -41,6 +42,8 @@ case "$1" in
     read)
         [[ $# -eq 2 ]] || file_fail "read 只接受一个绝对文件路径"
         file="$(canonical_existing_path "$2")"
+        (( ${#3} <= 16 && ${#4} <= 1024 && ${#5} <= 8192 )) ||
+            file_fail "结构化补丁参数过长"
         reject_sensitive_path "$file"
         policy_allows_read "$file" || file_fail "文件不在已授权读取范围：$file"
         validate_text_file "$file"
@@ -71,5 +74,16 @@ case "$1" in
             }
         ' "$file"
         ;;
-    *) file_fail "只允许 find 或 read" ;;
+    config-preview)
+        [[ $# -eq 5 ]] ||
+            file_fail "config-preview 需要 FILE FORMAT SELECTOR VALUE_JSON"
+        file="$(canonical_existing_path "$2")"
+        reject_sensitive_path "$file"
+        policy_allows_write "$file" || file_fail "文件未获得精确写入授权：$file"
+        validate_text_file "$file"
+        validate_config_patch_helper
+        "$CONFIG_PATCH_PYTHON" "$CONFIG_PATCH_HELPER" \
+            preview "$file" "$3" "$4" "$5"
+        ;;
+    *) file_fail "只允许 find、read 或 config-preview" ;;
 esac

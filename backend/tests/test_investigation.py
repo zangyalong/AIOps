@@ -133,6 +133,38 @@ class InvestigationFacadeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("来源：受控变更预览", result.message)
         preview.assert_awaited_once_with({"server_name": "web-01"})
 
+    async def test_change_area_routes_structured_config_preview(self) -> None:
+        preview = AsyncMock(return_value='{"preview_hash":"abc"}')
+        with patch.object(
+            investigation,
+            "preview_server_config_patch",
+            SimpleNamespace(ainvoke=preview),
+        ):
+            result = await investigation.investigate.ainvoke(
+                {
+                    "area": "change",
+                    "target": "web-01",
+                    "query": "config-patch-preview",
+                    "parameters": {
+                        "path": "/sub2api-deploy/.env",
+                        "config_format": "dotenv",
+                        "selector": "SERVER_PORT",
+                        "value": "8081",
+                    },
+                }
+            )
+
+        self.assertTrue(result.ok)
+        preview.assert_awaited_once_with(
+            {
+                "server_name": "web-01",
+                "path": "/sub2api-deploy/.env",
+                "config_format": "dotenv",
+                "selector": "SERVER_PORT",
+                "value": "8081",
+            }
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

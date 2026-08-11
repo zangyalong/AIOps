@@ -17,6 +17,14 @@ readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 install -d -o root -g root -m 0755 /usr/local/libexec/aioms /etc/aioms
 install -o root -g root -m 0644 "$SCRIPT_DIR/aioms-file-common" /usr/local/libexec/aioms/file-common
+readonly HOST_PYTHON="/usr/bin/python3.11"
+[[ -x "$HOST_PYTHON" ]] || fail "系统缺少 Python 3.11：请先安装 python3.11"
+"$HOST_PYTHON" -c \
+    'import ast, pathlib, sys; ast.parse(pathlib.Path(sys.argv[1]).read_text())' \
+    "$SCRIPT_DIR/config_patch.py" \
+    || fail "结构化配置补丁器无法由 Python 3.11 解析"
+install -o root -g root -m 0555 \
+    "$SCRIPT_DIR/config_patch.py" /usr/local/libexec/aioms/config-patch.py
 for gateway in aioms-file-read aioms-file-policy aioms-file-write; do
     install -o root -g root -m 0755 "$SCRIPT_DIR/$gateway" "/usr/local/sbin/$gateway"
 done
