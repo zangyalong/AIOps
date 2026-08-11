@@ -51,6 +51,7 @@ def _record(
 ) -> OperationRecord:
     return OperationRecord(
         id=uuid.uuid4(),
+        execution_id=uuid.uuid4(),
         chat_run_id=uuid.uuid4(),
         tool_call_id=prepared.call.id,
         operation_name=prepared.call.name,
@@ -72,12 +73,12 @@ def _record(
 def _prepared_read() -> PreparedOperation:
     return PreparedOperation(
         call=OperationCall(
-            id="root-read-1",
-            name="run_root_read_command",
-            args={"server_name": "web01", "command": "rg redis /host/etc"},
+            id="investigate-1",
+            name="investigate",
+            args={"area": "host", "target": "web01", "query": "python --version"},
         ),
         spec=OperationSpec(
-            name="run_root_read_command",
+            name="investigate",
             effect="read",
             risk_level="low",
             audit_execution=True,
@@ -134,6 +135,7 @@ class OperationCallBindingTest(unittest.TestCase):
             set(OperationRecord.__table__.columns.keys()),
             {
                 "id",
+                "execution_id",
                 "chat_run_id",
                 "tool_call_id",
                 "operation_name",
@@ -164,6 +166,8 @@ class OperationCallBindingTest(unittest.TestCase):
                 "created_at",
             },
         )
+        self.assertFalse(OperationRecord.__table__.c.execution_id.nullable)
+        self.assertTrue(OperationRecord.__table__.c.chat_run_id.nullable)
 
 
 class OperationRecordServiceTest(unittest.IsolatedAsyncioTestCase):
@@ -174,22 +178,31 @@ class OperationRecordServiceTest(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(
                 repository,
-                "get_by_run_and_tool_call",
+                "get_by_execution_and_tool_call",
                 AsyncMock(return_value=None),
             ),
             patch.object(repository, "create", create),
         ):
             result = await operation_record_service.begin_read_execution(
                 AsyncMock(),
-                chat_run_id=uuid.uuid4(),
+                execution_id=uuid.uuid4(),
+                chat_run_id=None,
                 prepared=prepared,
             )
 
         self.assertEqual(result.effect, "read")
         self.assertEqual(result.risk_level, "low")
         self.assertEqual(result.status, "executing")
+        self.assertIsNone(result.chat_run_id)
         self.assertEqual(result.approval_view, {})
-        self.assertEqual(result.normalized_args["command"], "rg redis /host/etc")
+        self.assertEqual(
+            result.normalized_args,
+            {
+                "area": "host",
+                "query": "python --version",
+                "target": "web01",
+            },
+        )
         self.assertIsNotNone(result.started_at)
         create.assert_awaited_once()
 
@@ -204,7 +217,8 @@ class OperationRecordServiceTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(operation_record_service.OperationRecordError):
             await operation_record_service.begin_read_execution(
                 AsyncMock(),
-                chat_run_id=uuid.uuid4(),
+                execution_id=uuid.uuid4(),
+                chat_run_id=None,
                 prepared=prepared,
             )
 
@@ -217,11 +231,12 @@ class OperationRecordServiceTest(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(
             repository,
-            "get_by_run_and_tool_call",
+            "get_by_execution_and_tool_call",
             AsyncMock(return_value=record),
         ):
             result = await operation_record_service.ensure_pending(
                 AsyncMock(),
+                execution_id=record.execution_id,
                 chat_run_id=record.chat_run_id,
                 prepared=prepared,
             )
@@ -230,6 +245,7 @@ class OperationRecordServiceTest(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(operation_record_service.OperationRequestMismatch):
                 await operation_record_service.ensure_pending(
                     AsyncMock(),
+                    execution_id=record.execution_id,
                     chat_run_id=record.chat_run_id,
                     prepared=_prepared(args={"server_name": "web02"}),
                 )
@@ -242,14 +258,14 @@ class OperationRecordServiceTest(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(
                 repository,
-                "get_by_run_and_tool_call",
+                "get_by_execution_and_tool_call",
                 AsyncMock(return_value=record),
             ),
             patch.object(repository, "save", save),
         ):
             result = await operation_record_service.authorize_execution(
                 AsyncMock(),
-                chat_run_id=record.chat_run_id,
+                execution_id=record.execution_id,
                 prepared=prepared,
                 approval=ApprovalDecision(
                     approved=True,
@@ -276,14 +292,14 @@ class OperationRecordServiceTest(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(
                 repository,
-                "get_by_run_and_tool_call",
+                "get_by_execution_and_tool_call",
                 AsyncMock(return_value=record),
             ),
             self.assertRaises(operation_record_service.OperationRequestMismatch),
         ):
             await operation_record_service.authorize_execution(
                 AsyncMock(),
-                chat_run_id=record.chat_run_id,
+                execution_id=record.execution_id,
                 prepared=prepared,
                 approval=ApprovalDecision(
                     approved=True,
@@ -300,14 +316,14 @@ class OperationRecordServiceTest(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(
                 repository,
-                "get_by_run_and_tool_call",
+                "get_by_execution_and_tool_call",
                 AsyncMock(return_value=denied_record),
             ),
             patch.object(repository, "save", save),
         ):
             result = await operation_record_service.authorize_execution(
                 AsyncMock(),
-                chat_run_id=denied_record.chat_run_id,
+                execution_id=denied_record.execution_id,
                 prepared=denied,
                 approval=ApprovalDecision(approved=True),
             )
@@ -319,7 +335,7 @@ class OperationRecordServiceTest(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(
                 repository,
-                "get_by_run_and_tool_call",
+                "get_by_execution_and_tool_call",
                 AsyncMock(return_value=expired),
             ),
             patch.object(repository, "save", save),
@@ -327,7 +343,7 @@ class OperationRecordServiceTest(unittest.IsolatedAsyncioTestCase):
         ):
             await operation_record_service.authorize_execution(
                 AsyncMock(),
-                chat_run_id=expired.chat_run_id,
+                execution_id=expired.execution_id,
                 prepared=_prepared(),
                 approval=ApprovalDecision(
                     approved=True,
@@ -344,14 +360,14 @@ class OperationRecordServiceTest(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(
                 repository,
-                "get_by_run_and_tool_call",
+                "get_by_execution_and_tool_call",
                 AsyncMock(return_value=completed),
             ),
             patch.object(repository, "save", save),
         ):
             result = await operation_record_service.finish_execution(
                 AsyncMock(),
-                chat_run_id=completed.chat_run_id,
+                execution_id=completed.execution_id,
                 tool_call_id=completed.tool_call_id,
                 result="已重启",
                 metadata={"exit_code": 0, "timed_out": False},

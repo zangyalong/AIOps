@@ -16,15 +16,15 @@ async def create(db: AsyncSession, record: OperationRecord) -> OperationRecord:
     return record
 
 
-async def get_by_run_and_tool_call(
+async def get_by_execution_and_tool_call(
     db: AsyncSession,
-    chat_run_id: uuid.UUID,
+    execution_id: uuid.UUID,
     tool_call_id: str,
     *,
     for_update: bool = False,
 ) -> OperationRecord | None:
     statement = select(OperationRecord).where(
-        OperationRecord.chat_run_id == chat_run_id,
+        OperationRecord.execution_id == execution_id,
         OperationRecord.tool_call_id == tool_call_id,
     )
     if for_update:
@@ -41,11 +41,14 @@ async def save(db: AsyncSession, record: OperationRecord) -> OperationRecord:
 async def list_records(
     db: AsyncSession,
     *,
+    execution_id: uuid.UUID | None = None,
     chat_run_id: uuid.UUID | None = None,
     status: str | None = None,
     limit: int = 100,
 ) -> list[OperationRecord]:
     statement = select(OperationRecord)
+    if execution_id is not None:
+        statement = statement.where(OperationRecord.execution_id == execution_id)
     if chat_run_id is not None:
         statement = statement.where(OperationRecord.chat_run_id == chat_run_id)
     if status is not None:

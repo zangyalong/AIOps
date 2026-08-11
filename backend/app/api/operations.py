@@ -16,6 +16,7 @@ router = APIRouter(prefix="/operations", tags=["operations"])
 @router.get("", response_model=list[OperationRecordRead])
 async def list_operations(
     db: DBSession,
+    execution_id: uuid.UUID | None = None,
     chat_run_id: uuid.UUID | None = None,
     status: Literal[
         "pending_approval",
@@ -31,6 +32,7 @@ async def list_operations(
     """按时间倒序查询 root 只读调查及写操作审批、执行审计。"""
     return await operation_record_service.list_operation_records(
         db,
+        execution_id=execution_id,
         chat_run_id=chat_run_id,
         status=status,
         limit=limit,

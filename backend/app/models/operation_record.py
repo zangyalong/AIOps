@@ -56,16 +56,17 @@ class OperationRecord(Base, UUIDMixin):
             name="ck_operation_records_approver_role",
         ),
         UniqueConstraint(
-            "chat_run_id",
+            "execution_id",
             "tool_call_id",
-            name="uq_operation_records_run_tool_call",
+            name="uq_operation_records_execution_tool_call",
         ),
         Index("ix_operation_records_created_at", "created_at"),
         Index("ix_operation_records_status_expires", "status", "expires_at"),
     )
 
-    chat_run_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("chat_runs.id", ondelete="CASCADE"), nullable=False
+    execution_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    chat_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("chat_runs.id", ondelete="CASCADE"), nullable=True
     )
     tool_call_id: Mapped[str] = mapped_column(String(100), nullable=False)
     operation_name: Mapped[str] = mapped_column(String(100), nullable=False)

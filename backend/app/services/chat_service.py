@@ -50,7 +50,7 @@ class PreparedChatTurn:
 
 
 def _business_tool_names(message_or_chunk: object) -> set[str]:
-    """提取模型消息/流式块里的业务工具名，排除 Supervisor 的结构化输出等内部 tool call。"""
+    """提取模型消息或流式块中已经登记、可向用户展示的工具名。"""
     calls = [
         *getattr(message_or_chunk, "tool_calls", []),
         *getattr(message_or_chunk, "tool_call_chunks", []),
@@ -150,7 +150,7 @@ async def _persist_run_messages(
 ) -> None:
     """幂等保存某一 Run 新产生的 assistant/tool 消息。
 
-    tool_call_id 是协议天然的幂等键；最终综合回答每个 Run 只有一条。审批恢复和终态快照都可再次
+    tool_call_id 是协议天然的幂等键；最终回答每个 Run 只有一条。审批恢复和终态快照都可再次
     调用本函数，不会复制已经落库的消息。
     """
     async with AsyncSessionLocal() as db:
@@ -276,7 +276,7 @@ async def _persist_node_output(
     run_id: uuid.UUID,
     output: object,
 ) -> None:
-    """保存专家、工具或综合节点真正写回图状态的新消息，顺序与图节点一致。"""
+    """保存 Ops Agent 或工具节点真正写回图状态的新消息，顺序与图节点一致。"""
     if not isinstance(output, dict):
         return
     messages = output.get("messages")
@@ -306,8 +306,8 @@ async def _drive_graph(
     这段不持有任何 db 连接（落库另开短事务），流式期间不占着连接。
     """
     config = {"configurable": {"thread_id": thread_id}}
-    # 专家最终内部报告和工具旁白都来自模型文本流，开始时无法区分。按模型 run_id 缓冲到响应
-    # 结束：有真实业务 tool_call 时压成一条 narration；没有 tool_call 的内部报告直接丢弃。
+    # 同一个 Ops Agent 既生成工具旁白，也生成最终回答。模型流开始时无法确定本次是否会带
+    # tool_call，因此按 run_id 暂存；结束后有工具调用就发送 narration，否则发送最终答案。
     pending_narration: dict[str, list[str]] = {}
     final_answer_chunks: list[str] = []
     try:
@@ -319,13 +319,9 @@ async def _drive_graph(
             event_name = event.get("name", "")
             node = event.get("metadata", {}).get("langgraph_node")
 
-            # 节点输出里的消息已经经过图内规范化：specialist 带 tool_calls，tools 带逐调用结果，
-            # synthesize 带最终回答。按节点结束顺序落库，比直接存底层模型原始输出更可靠。
-            if kind == "on_chain_end" and event_name in {
-                "specialist",
-                "tools",
-                "synthesize",
-            }:
+            # 节点输出里的消息已经经过图内规范化：ops_agent 产生工具调用或最终回答，tools
+            # 产生逐调用结果。按节点结束顺序落库，比直接存底层模型原始输出更可靠。
+            if kind == "on_chain_end" and event_name in {"ops_agent", "tools"}:
                 await _persist_node_output(
                     conversation_id,
                     run_id,
@@ -356,16 +352,10 @@ async def _drive_graph(
             elif kind == "on_chat_model_stream":
                 chunk = event["data"]["chunk"]
                 content = chunk.content if isinstance(chunk.content, str) else ""
-                if node == "synthesize":
-                    if content:
-                        final_answer_chunks.append(content)
-                        yield {"type": "token", "content": content}
-                    continue
-
                 model_run_id = event["run_id"]
                 if content:
                     pending_narration.setdefault(model_run_id, []).append(content)
-            elif kind == "on_chat_model_end" and node != "synthesize":
+            elif kind == "on_chat_model_end" and node == "ops_agent":
                 model_run_id = event["run_id"]
                 output = event.get("data", {}).get("output")
                 buffered = "".join(pending_narration.pop(model_run_id, []))
@@ -373,6 +363,15 @@ async def _drive_graph(
                     narration = _compact_narration(buffered)
                     if narration:
                         yield {"type": "narration", "content": narration}
+                else:
+                    final_content = buffered
+                    if not final_content and isinstance(output, AIMessage):
+                        final_content = (
+                            output.content if isinstance(output.content, str) else ""
+                        )
+                    if final_content:
+                        final_answer_chunks.append(final_content)
+                        yield {"type": "token", "content": final_content}
 
         # 图停下来了：先看是不是停在审批门。带了 checkpointer，挂起状态能被 aget_state 读出来；
         # snapshot.interrupts 非空即为挂起，其 value 就是 approval_node 里 interrupt(...) 的入参。
@@ -487,14 +486,11 @@ async def prepare_chat_turn(
         run_id=chat_run.id,
         graph_input={
             "messages": [*history_messages, HumanMessage(user_message)],
-            "work_messages": [],
-            "reports": {},
-            "specialist_instruction": "",
             "tool_iterations": 0,
-            "supervisor_rounds": 0,
             "allow_write_tools": True,
             "approval": None,
-            "operation_run_id": str(chat_run.id),
+            "operation_execution_id": str(chat_run.id),
+            "operation_chat_run_id": str(chat_run.id),
             "operation_context": {
                 "actor_id": settings.operation_actor_id,
                 "actor_role": settings.operation_actor_role,

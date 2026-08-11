@@ -20,7 +20,8 @@ class OperationRecordRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    chat_run_id: uuid.UUID
+    execution_id: uuid.UUID
+    chat_run_id: uuid.UUID | None
     tool_call_id: str
     operation_name: str
     effect: Literal["read", "write"]

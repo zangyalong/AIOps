@@ -16,34 +16,15 @@ from langchain_core.tools import BaseTool
 
 from app.agents.tools.actions import restart_service, start_service, stop_service
 from app.agents.tools.alert_rules import create_alert_rule
-from app.agents.tools.alerts import query_alerts
-from app.agents.tools.commands import run_diagnostic_command
-from app.agents.tools.correlate import correlate_incident
 from app.agents.tools.deployment import deploy_server_environment
-from app.agents.tools.grafana import grafana_explore_link
-from app.agents.tools.logs import list_log_services, search_logs
-from app.agents.tools.metrics import (
-    list_metric_instances,
-    query_metrics,
-    query_server_metrics,
-)
-from app.agents.tools.root_read import run_root_read_command
-from app.agents.tools.server_files import (
-    find_server_files,
-    preview_server_file_update,
-    read_server_file,
-    update_server_file,
-)
+from app.agents.tools.investigation import investigate
+from app.agents.tools.server_files import update_server_file
 from app.agents.tools.server_log_config import (
     apply_server_log_config,
-    preview_server_log_config,
 )
-from app.agents.tools.servers import query_servers
 from app.agents.tools.service_discovery import (
-    discover_server_services,
     register_server_services,
 )
-from app.agents.tools.service_topology import query_server_services
 from app.operations.broker import OperationBroker
 from app.operations.registry import OperationRegistry, RegisteredOperation
 from app.operations.schemas import (
@@ -193,25 +174,7 @@ def _update_server_file_action(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-READ_TOOLS: tuple[BaseTool, ...] = (
-    query_servers,
-    run_diagnostic_command,
-    run_root_read_command,
-    query_server_metrics,
-    query_metrics,
-    list_metric_instances,
-    search_logs,
-    list_log_services,
-    query_alerts,
-    grafana_explore_link,
-    correlate_incident,
-    query_server_services,
-    discover_server_services,
-    preview_server_log_config,
-    find_server_files,
-    read_server_file,
-    preview_server_file_update,
-)
+READ_TOOLS: tuple[BaseTool, ...] = (investigate,)
 
 _WRITE_SPECS = (
     WriteToolSpec(
@@ -294,7 +257,7 @@ def _registered_read_operation(tool: BaseTool) -> RegisteredOperation:
             name=tool.name,
             effect="read",
             risk_level="low",
-            audit_execution=tool.name == run_root_read_command.name,
+            audit_execution=True,
         ),
         executor=execute,
     )
@@ -337,7 +300,7 @@ OPERATION_SPECS: Mapping[str, OperationSpec] = OPERATION_REGISTRY.specs
 
 
 def build_scoped_operation_broker(tools: Iterable[BaseTool]) -> OperationBroker:
-    """为专家已获配的工具构造 Broker，安全元数据仍只取自中央注册表。"""
+    """为当前 Ops Agent 获配的工具构造 Broker，安全元数据仍只取自中央注册表。"""
     scoped: list[RegisteredOperation] = []
     for tool in tools:
         registered = OPERATION_REGISTRY.require(tool.name)

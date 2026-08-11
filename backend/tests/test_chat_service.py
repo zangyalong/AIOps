@@ -30,9 +30,9 @@ class _FakeGraph:
         self.events = [
             {
                 "event": "on_chat_model_stream",
-                "name": "specialist-model",
-                "run_id": "specialist-tool-call",
-                "metadata": {"langgraph_node": "metrics_agent"},
+                "name": "ops-model",
+                "run_id": "ops-tool-call",
+                "metadata": {"langgraph_node": "ops_agent"},
                 "data": {
                     "chunk": SimpleNamespace(
                         content="我先查询服务器的实时指标。",
@@ -43,16 +43,16 @@ class _FakeGraph:
             },
             {
                 "event": "on_chat_model_end",
-                "name": "specialist-model",
-                "run_id": "specialist-tool-call",
-                "metadata": {"langgraph_node": "metrics_agent"},
+                "name": "ops-model",
+                "run_id": "ops-tool-call",
+                "metadata": {"langgraph_node": "ops_agent"},
                 "data": {
                     "output": AIMessage(
                         "",
                         tool_calls=[
                             {
-                                "name": "query_metrics",
-                                "args": {"metric": "cpu"},
+                                "name": "investigate",
+                                "args": {"area": "metrics", "query": "cpu"},
                                 "id": "tool-run",
                                 "type": "tool_call",
                             }
@@ -62,34 +62,27 @@ class _FakeGraph:
             },
             {
                 "event": "on_tool_start",
-                "name": "query_metrics",
+                "name": "investigate",
                 "run_id": "tool-run",
             },
             {
                 "event": "on_tool_end",
-                "name": "query_metrics",
+                "name": "investigate",
                 "run_id": "tool-run",
             },
             {
                 "event": "on_chat_model_stream",
-                "name": "specialist-model",
-                "run_id": "specialist-1",
-                "metadata": {"langgraph_node": "metrics_agent"},
-                "data": {"chunk": AIMessage("不应展示的专家内部报告")},
+                "name": "ops-model",
+                "run_id": "ops-final",
+                "metadata": {"langgraph_node": "ops_agent"},
+                "data": {"chunk": AIMessage("一次生成的最终回答")},
             },
             {
                 "event": "on_chat_model_end",
-                "name": "specialist-model",
-                "run_id": "specialist-1",
-                "metadata": {"langgraph_node": "metrics_agent"},
-                "data": {"output": AIMessage("不应展示的专家内部报告")},
-            },
-            {
-                "event": "on_chat_model_stream",
-                "name": "synthesis-model",
-                "run_id": "synthesis-1",
-                "metadata": {"langgraph_node": "synthesize"},
-                "data": {"chunk": AIMessage("一次生成的最终回答")},
+                "name": "ops-model",
+                "run_id": "ops-final",
+                "metadata": {"langgraph_node": "ops_agent"},
+                "data": {"output": AIMessage("一次生成的最终回答")},
             },
         ]
         self.snapshot = SimpleNamespace(
@@ -144,8 +137,8 @@ class _ApprovalGraph:
 
 
 class ChatStreamTest(unittest.IsolatedAsyncioTestCase):
-    async def test_streams_tool_narration_and_hides_specialist_report(self) -> None:
-        """工具旁白、工具卡片和最终回答实时发送，专家内部报告仍不发送。"""
+    async def test_streams_tool_narration_and_single_agent_answer(self) -> None:
+        """单 Agent 的工具旁白、调查状态和最终回答按真实顺序发送。"""
         graph = _FakeGraph()
         conversation_id = uuid.uuid4()
         run_id = uuid.uuid4()
@@ -178,7 +171,6 @@ class ChatStreamTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(events[0]["content"], "我先查询服务器的实时指标。")
         self.assertEqual(events[3]["content"], "一次生成的最终回答")
-        self.assertNotIn("专家内部报告", str(events))
         persist_checkpoint.assert_awaited()
         self.assertEqual(
             [call.args[1] for call in set_status.await_args_list],

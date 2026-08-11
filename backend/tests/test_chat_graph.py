@@ -24,7 +24,12 @@ class _SessionContext:
         del args
 
 
-def _initial_state(*, allow_write_tools: bool) -> dict:
+def _initial_state(
+    *,
+    allow_write_tools: bool,
+    with_run_id: bool = False,
+) -> dict:
+    execution_id = str(uuid.uuid4()) if with_run_id else None
     operation_context = (
         {
             "actor_id": "test-admin",
@@ -44,49 +49,27 @@ def _initial_state(*, allow_write_tools: bool) -> dict:
     )
     return {
         "messages": [HumanMessage("检查测试服务器")],
-        "work_messages": [],
-        "reports": {},
-        "specialist_instruction": "",
         "tool_iterations": 0,
-        "supervisor_rounds": 0,
         "allow_write_tools": allow_write_tools,
         "approval": None,
+        "operation_execution_id": execution_id,
+        "operation_chat_run_id": (
+            execution_id if with_run_id and allow_write_tools else None
+        ),
         "operation_context": operation_context,
     }
 
 
-class _FakeBaseLLM:
-    """按预设路线模拟 Supervisor，并记录最终综合模型的调用次数。"""
-
-    def __init__(self, routes: list[str]) -> None:
-        self.routes = iter(routes)
-        self.synthesis_calls = 0
-
-    def with_structured_output(self, schema: type, method: str) -> RunnableLambda:
-        del method
-        if schema is not chat_graph.SupervisorDecision:
-            raise AssertionError(f"不应再调用额外的结构化质检模型：{schema}")
-
-        async def invoke(_: object) -> object:
-            route = next(self.routes)
-            return chat_graph.SupervisorDecision(
-                next_agent=route,
-                instruction="执行测试调查",
-            )
-
-        return RunnableLambda(invoke)
-
-    async def ainvoke(self, _: object) -> AIMessage:
-        self.synthesis_calls += 1
-        return AIMessage("最终综合回答")
-
-
-def _fake_specialist_factory(
+def _fake_ops_factory(
     responses: list[AIMessage],
-) -> Callable[[str, str, bool], RunnableLambda]:
+    calls: list[tuple[str, bool]] | None = None,
+) -> Callable[[str, bool], RunnableLambda]:
     items = iter(responses)
 
-    def factory(_: str, __: str, ___: bool) -> RunnableLambda:
+    def factory(mode: str, allow_write_tools: bool) -> RunnableLambda:
+        if calls is not None:
+            calls.append((mode, allow_write_tools))
+
         async def invoke(_: object) -> AIMessage:
             return next(items)
 
@@ -95,28 +78,37 @@ def _fake_specialist_factory(
     return factory
 
 
-@tool("query_server_metrics")
-async def _fake_query_server_metrics(server: str, metric: str) -> str:
-    """返回不访问 Prometheus 的测试指标。"""
-    return f"{server}: {metric}=12%"
-
-
-@tool("run_diagnostic_command")
-async def _fake_run_diagnostic_command(server_name: str, command: str) -> str:
-    """返回不访问 SSH 的只读诊断结果。"""
-    return f"{server_name}: {command}: ok"
-
-
-@tool("run_root_read_command")
-async def _fake_run_root_read_command(
-    server_name: str,
-    command: str,
+@tool("investigate")
+async def _fake_investigate(
+    area: str,
+    target: str = "",
+    query: str = "",
+    parameters: dict | None = None,
 ) -> OperationResult:
-    """返回带退出元数据、但不访问 SSH 的 root 只读结果。"""
+    """返回不访问外部数据源的统一调查证据。"""
+    del parameters
     return OperationResult.success(
-        f"{server_name}: {command}: root-read-ok",
-        metadata={"exit_code": 0, "timed_out": False},
+        f"{area}:{target}:{query}:ok",
+        metadata={
+            "exit_code": 0,
+            "timed_out": False,
+            "evidence_source": area,
+        },
     )
+
+
+@tool("investigate")
+async def _sometimes_failing_investigate(
+    area: str,
+    target: str = "",
+    query: str = "",
+    parameters: dict | None = None,
+) -> str:
+    """第一类请求抛错，其余请求成功，用于验证工具协议完整性。"""
+    del target, parameters
+    if query == "fail":
+        raise RuntimeError(f"{area} failed")
+    return f"{area}:{query}:ok"
 
 
 _write_calls: list[tuple[str, str]] = []
@@ -124,26 +116,29 @@ _catalog_write_calls: list[tuple[str, int, str]] = []
 
 
 @tool("restart_service")
-async def _fake_restart_service(server_name: str, service_name: str) -> str:
+async def _fake_restart_service(
+    server_name: str,
+    service_name: str,
+    runtime_type: str = "systemd",
+) -> str:
     """记录写工具是否真的越过审批门执行。"""
+    del runtime_type
     _write_calls.append((server_name, service_name))
     return f"已重启 {server_name} 上的 {service_name}"
 
 
 @tool("restart_service")
 async def _fake_failed_restart_service(
-    server_name: str, service_name: str
+    server_name: str,
+    service_name: str,
+    runtime_type: str = "systemd",
 ) -> OperationResult:
-    """返回结构化失败，验证图和审计不会把普通错误文本记成成功。"""
+    """返回结构化失败，验证审计不会误记成功。"""
+    del runtime_type
     return OperationResult.failure(
-        f"重启 {server_name} 上的 {service_name} 失败", code="gateway_failed"
+        f"重启 {server_name} 上的 {service_name} 失败",
+        code="gateway_failed",
     )
-
-
-@tool("discover_server_services")
-async def _fake_failing_discovery(server_name: str) -> str:
-    """模拟一个抛异常、但不能破坏同批其他工具协议的读 Tool。"""
-    raise RuntimeError(f"{server_name} discovery failed")
 
 
 @tool("register_server_services")
@@ -152,137 +147,634 @@ async def _fake_register_server_services(
     services: list[dict],
     environment: str = "prod",
 ) -> str:
-    """记录审批后的批量目录写入是否继续执行。"""
+    """记录审批后的服务目录写入。"""
     _catalog_write_calls.append((server_name, len(services), environment))
     return "目录注册完成"
 
 
-class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
+class OpsAgentGraphTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
-        self.original_base = chat_graph._base_llm
-        self.original_specialist = chat_graph._specialist_llm
-        self.original_metrics_tools = chat_graph.SPECIALIST_READ_TOOLS["metrics_agent"]
-        self.original_infra_read_tools = chat_graph.SPECIALIST_READ_TOOLS[
-            "infrastructure_agent"
-        ]
-        self.original_infra_write_tools = chat_graph.SPECIALIST_WRITE_TOOLS[
-            "infrastructure_agent"
-        ]
+        self.original_ops_llm = chat_graph._ops_llm
+        self.original_read_tools = chat_graph.OPS_READ_TOOLS
+        self.original_write_tools = chat_graph.OPS_WRITE_TOOLS
+        chat_graph.OPS_READ_TOOLS = (_fake_investigate,)
+        chat_graph.OPS_WRITE_TOOLS = (
+            _fake_restart_service,
+            _fake_register_server_services,
+        )
         _write_calls.clear()
         _catalog_write_calls.clear()
 
     def tearDown(self) -> None:
-        chat_graph._base_llm = self.original_base
-        chat_graph._specialist_llm = self.original_specialist
-        chat_graph.SPECIALIST_READ_TOOLS["metrics_agent"] = self.original_metrics_tools
-        chat_graph.SPECIALIST_READ_TOOLS["infrastructure_agent"] = (
-            self.original_infra_read_tools
-        )
-        chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"] = (
-            self.original_infra_write_tools
-        )
+        chat_graph._ops_llm = self.original_ops_llm
+        chat_graph.OPS_READ_TOOLS = self.original_read_tools
+        chat_graph.OPS_WRITE_TOOLS = self.original_write_tools
 
-    async def test_supervisor_delegates_to_specialist_and_synthesizes(self) -> None:
-        """父图 handoff 到指标子图，工具结果和报告都能正确合并回父图。"""
-        chat_graph.SPECIALIST_READ_TOOLS["metrics_agent"] = [_fake_query_server_metrics]
-        base = _FakeBaseLLM(["metrics_agent", "finish"])
-        chat_graph._base_llm = lambda: base
-        chat_graph._specialist_llm = _fake_specialist_factory(
+    async def test_single_agent_investigates_then_answers_without_handoff(self) -> None:
+        model_calls: list[tuple[str, bool]] = []
+        chat_graph._ops_llm = _fake_ops_factory(
             [
                 AIMessage(
-                    "",
+                    "我先核对 web-01 的真实 Python 版本。",
                     tool_calls=[
                         {
-                            "name": "query_server_metrics",
-                            "args": {"server": "demo", "metric": "cpu"},
-                            "id": "metrics-call",
+                            "name": "investigate",
+                            "args": {
+                                "area": "host",
+                                "target": "web-01",
+                                "query": "python --version",
+                            },
+                            "id": "investigate-python",
                             "type": "tool_call",
                         }
                     ],
                 ),
-                AIMessage("指标证据报告"),
-            ]
+                AIMessage("web-01 的 Python 版本已经核验。"),
+            ],
+            model_calls,
         )
 
         graph = chat_graph.build_chat_graph()
-        result = await graph.ainvoke(
-            _initial_state(allow_write_tools=False),
-            config={"configurable": {"thread_id": "metrics-test"}},
-        )
+        with (
+            patch.object(
+                chat_graph, "AsyncSessionLocal", return_value=_SessionContext()
+            ),
+            patch.object(
+                chat_graph.operation_record_service,
+                "begin_read_execution",
+                AsyncMock(return_value=SimpleNamespace(status="executing")),
+            ),
+            patch.object(
+                chat_graph.operation_record_service,
+                "finish_execution",
+                AsyncMock(),
+            ),
+        ):
+            result = await graph.ainvoke(
+                _initial_state(allow_write_tools=False, with_run_id=True),
+                config={"configurable": {"thread_id": "single-agent-read"}},
+            )
 
-        self.assertEqual(result["reports"]["metrics_agent"], "指标证据报告")
-        self.assertEqual(result["messages"][-1].content, "最终综合回答")
-        self.assertEqual(base.synthesis_calls, 1)
-        self.assertEqual(len(result["messages"]), 4)
-        self.assertEqual(len(result["work_messages"]), 4)
+        self.assertEqual(
+            result["messages"][-1].content, "web-01 的 Python 版本已经核验。"
+        )
+        self.assertEqual(model_calls, [("auto", False), ("auto", False)])
+        self.assertNotIn("reports", result)
+        self.assertNotIn("supervisor_rounds", result)
         self.assertTrue(
             any(
-                isinstance(message, ToolMessage) and "cpu=12%" in str(message.content)
+                isinstance(message, ToolMessage)
+                and "host:web-01:python --version:ok" in str(message.content)
                 for message in result["messages"]
             )
         )
 
-    async def test_write_tool_interrupts_and_rejection_does_not_execute(self) -> None:
-        """SSH 工具必须先挂起；拒绝恢复后只产生拒绝 ToolMessage，不触碰真实 SSH。"""
-        base = _FakeBaseLLM(["infrastructure_agent", "finish"])
-        chat_graph._base_llm = lambda: base
-        chat_graph._specialist_llm = _fake_specialist_factory(
+    async def test_investigation_never_interrupts_and_is_audited(self) -> None:
+        state = _initial_state(allow_write_tools=True, with_run_id=True)
+        state["messages"].append(
+            AIMessage(
+                "",
+                tool_calls=[
+                    {
+                        "name": "investigate",
+                        "args": {
+                            "area": "runtime",
+                            "target": "web-01",
+                            "query": "overview",
+                        },
+                        "id": "investigate-runtime",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+        )
+        begin = AsyncMock(return_value=SimpleNamespace(status="executing"))
+        finish = AsyncMock()
+        with (
+            patch.object(
+                chat_graph, "AsyncSessionLocal", return_value=_SessionContext()
+            ),
+            patch.object(
+                chat_graph.operation_record_service,
+                "begin_read_execution",
+                begin,
+            ),
+            patch.object(
+                chat_graph.operation_record_service,
+                "finish_execution",
+                finish,
+            ),
+        ):
+            result = await chat_graph.tools_node(state)
+
+        self.assertEqual(result["messages"][0].status, "success")
+        begin.assert_awaited_once()
+        finish.assert_awaited_once()
+        self.assertEqual(
+            begin.await_args.kwargs["execution_id"],
+            uuid.UUID(state["operation_execution_id"]),
+        )
+        self.assertEqual(
+            begin.await_args.kwargs["chat_run_id"],
+            uuid.UUID(state["operation_chat_run_id"]),
+        )
+        self.assertEqual(
+            finish.await_args.kwargs["metadata"],
+            {
+                "exit_code": 0,
+                "timed_out": False,
+                "evidence_source": "runtime",
+            },
+        )
+
+    async def test_write_interrupts_and_rejection_never_executes(self) -> None:
+        chat_graph._ops_llm = _fake_ops_factory(
             [
                 AIMessage(
-                    "",
+                    "准备按你的要求重启目标服务。",
                     tool_calls=[
                         {
                             "name": "restart_service",
-                            "args": {"server_name": "demo", "service_name": "nginx"},
-                            "id": "ssh-call",
+                            "args": {
+                                "server_name": "demo",
+                                "service_name": "nginx.service",
+                            },
+                            "id": "rejected-restart",
                             "type": "tool_call",
                         }
                     ],
                 ),
-                AIMessage("命令被用户拒绝，未执行"),
+                AIMessage("操作已拒绝，服务未重启。"),
             ]
         )
+        state = _initial_state(allow_write_tools=True, with_run_id=True)
+        record = SimpleNamespace(
+            id=uuid.uuid4(),
+            request_hash="a" * 64,
+            expires_at=datetime.now(UTC) + timedelta(minutes=15),
+            status="denied",
+        )
+        ensure_pending = AsyncMock(return_value=record)
+        authorize = AsyncMock(return_value=record)
 
         graph = chat_graph.build_chat_graph()
-        config = {"configurable": {"thread_id": "approval-test"}}
-        await graph.ainvoke(_initial_state(allow_write_tools=True), config=config)
-        snapshot = await graph.aget_state(config)
-        self.assertTrue(snapshot.interrupts)
-        self.assertEqual(_write_calls, [])
-
-        result = await graph.ainvoke(
-            Command(
-                resume={
-                    "decisions": {
-                        "ssh-call": {
-                            "approved": False,
-                            "reason": "测试拒绝",
-                            "approver_id": "approver-1",
-                            "approver_role": "admin",
+        config = {"configurable": {"thread_id": "rejected-write"}}
+        with (
+            patch.object(
+                chat_graph, "AsyncSessionLocal", return_value=_SessionContext()
+            ),
+            patch.object(
+                chat_graph.operation_record_service,
+                "ensure_pending",
+                ensure_pending,
+            ),
+            patch.object(
+                chat_graph.operation_record_service,
+                "authorize_execution",
+                authorize,
+            ),
+        ):
+            await graph.ainvoke(state, config=config)
+            snapshot = await graph.aget_state(config)
+            self.assertTrue(snapshot.interrupts)
+            result = await graph.ainvoke(
+                Command(
+                    resume={
+                        "decisions": {
+                            "rejected-restart": {
+                                "approved": False,
+                                "reason": "值班员拒绝",
+                                "approver_id": "approver-1",
+                                "approver_role": "admin",
+                            }
                         }
                     }
-                }
-            ),
-            config=config,
-        )
+                ),
+                config=config,
+            )
 
-        self.assertEqual(result["messages"][-1].content, "最终综合回答")
+        self.assertEqual(_write_calls, [])
+        self.assertEqual(result["messages"][-1].content, "操作已拒绝，服务未重启。")
         self.assertTrue(
             any(
-                isinstance(message, ToolMessage) and "拒绝" in str(message.content)
+                isinstance(message, ToolMessage)
+                and "值班员拒绝" in str(message.content)
                 for message in result["messages"]
             )
         )
-        self.assertEqual(_write_calls, [])
 
-    async def test_service_registration_interrupts_with_catalog_details(self) -> None:
-        """服务目录注册必须停在审批门，卡片要列出服务器、环境和运行时映射。"""
-        base = _FakeBaseLLM(["infrastructure_agent"])
-        chat_graph._base_llm = lambda: base
-        chat_graph._specialist_llm = _fake_specialist_factory(
+    async def test_approved_write_executes_once_and_finishes_audit(self) -> None:
+        chat_graph._ops_llm = _fake_ops_factory(
             [
                 AIMessage(
+                    "目标已核对，等待你确认重启。",
+                    tool_calls=[
+                        {
+                            "name": "restart_service",
+                            "args": {
+                                "server_name": "demo",
+                                "service_name": "nginx.service",
+                            },
+                            "id": "approved-restart",
+                            "type": "tool_call",
+                        }
+                    ],
+                ),
+                AIMessage("nginx.service 已重启。"),
+            ]
+        )
+        state = _initial_state(allow_write_tools=True, with_run_id=True)
+        record = SimpleNamespace(
+            id=uuid.uuid4(),
+            request_hash="b" * 64,
+            expires_at=datetime.now(UTC) + timedelta(minutes=15),
+            status="executing",
+        )
+        ensure_pending = AsyncMock(return_value=record)
+        authorize = AsyncMock(return_value=record)
+        finish = AsyncMock()
+
+        graph = chat_graph.build_chat_graph()
+        config = {"configurable": {"thread_id": "approved-write"}}
+        with (
+            patch.object(
+                chat_graph, "AsyncSessionLocal", return_value=_SessionContext()
+            ),
+            patch.object(
+                chat_graph.operation_record_service,
+                "ensure_pending",
+                ensure_pending,
+            ),
+            patch.object(
+                chat_graph.operation_record_service,
+                "authorize_execution",
+                authorize,
+            ),
+            patch.object(
+                chat_graph.operation_record_service,
+                "finish_execution",
+                finish,
+            ),
+        ):
+            await graph.ainvoke(state, config=config)
+            await graph.ainvoke(
+                Command(
+                    resume={
+                        "decisions": {
+                            "approved-restart": {
+                                "approved": True,
+                                "second_confirmation": True,
+                                "reason": "值班员确认",
+                                "approver_id": "approver-1",
+                                "approver_role": "admin",
+                            }
+                        }
+                    }
+                ),
+                config=config,
+            )
+
+        self.assertEqual(_write_calls, [("demo", "nginx.service")])
+        authorize.assert_awaited_once()
+        finish.assert_awaited_once()
+
+    async def test_unattended_mode_hard_rejects_write_tool(self) -> None:
+        state = _initial_state(allow_write_tools=False)
+        state["messages"].append(
+            AIMessage(
+                "",
+                tool_calls=[
+                    {
+                        "name": "restart_service",
+                        "args": {
+                            "server_name": "demo",
+                            "service_name": "nginx.service",
+                        },
+                        "id": "unattended-write",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+        )
+
+        result = await chat_graph.tools_node(state)
+
+        self.assertEqual(result["messages"][0].status, "error")
+        self.assertIn("无权调用", str(result["messages"][0].content))
+        self.assertEqual(_write_calls, [])
+
+    async def test_write_without_persisted_run_fails_closed(self) -> None:
+        state = _initial_state(allow_write_tools=True)
+        state["messages"].append(
+            AIMessage(
+                "",
+                tool_calls=[
+                    {
+                        "name": "restart_service",
+                        "args": {
+                            "server_name": "demo",
+                            "service_name": "nginx.service",
+                        },
+                        "id": "missing-run",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+        )
+        state["approval"] = {
+            "decisions": {
+                "missing-run": {
+                    "approved": True,
+                    "second_confirmation": True,
+                    "approver_id": "approver-1",
+                    "approver_role": "admin",
+                }
+            }
+        }
+
+        result = await chat_graph.tools_node(state)
+
+        self.assertIn("缺少持久化聊天运行标识", str(result["messages"][0].content))
+        self.assertEqual(_write_calls, [])
+
+    async def test_high_risk_write_requires_second_confirmation(self) -> None:
+        state = _initial_state(allow_write_tools=True, with_run_id=True)
+        state["messages"].append(
+            AIMessage(
+                "",
+                tool_calls=[
+                    {
+                        "name": "restart_service",
+                        "args": {
+                            "server_name": "demo",
+                            "service_name": "nginx.service",
+                        },
+                        "id": "missing-second-confirmation",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+        )
+        state["approval"] = {
+            "decisions": {
+                "missing-second-confirmation": {
+                    "approved": True,
+                    "approver_id": "approver-1",
+                    "approver_role": "admin",
+                }
+            }
+        }
+        authorize = AsyncMock(return_value=SimpleNamespace(status="denied"))
+        with (
+            patch.object(
+                chat_graph, "AsyncSessionLocal", return_value=_SessionContext()
+            ),
+            patch.object(chat_graph.operation_record_service, "ensure_pending"),
+            patch.object(
+                chat_graph.operation_record_service,
+                "authorize_execution",
+                authorize,
+            ),
+        ):
+            result = await chat_graph.tools_node(state)
+
+        self.assertIn("缺少详情弹窗二次确认", str(result["messages"][0].content))
+        self.assertEqual(_write_calls, [])
+
+    async def test_each_write_uses_its_own_approval_decision(self) -> None:
+        state = _initial_state(allow_write_tools=True, with_run_id=True)
+        state["messages"].append(
+            AIMessage(
+                "",
+                tool_calls=[
+                    {
+                        "name": "restart_service",
+                        "args": {
+                            "server_name": "demo",
+                            "service_name": "approved.service",
+                        },
+                        "id": "approved-write",
+                        "type": "tool_call",
+                    },
+                    {
+                        "name": "restart_service",
+                        "args": {
+                            "server_name": "demo",
+                            "service_name": "rejected.service",
+                        },
+                        "id": "rejected-write",
+                        "type": "tool_call",
+                    },
+                ],
+            )
+        )
+        state["approval"] = {
+            "decisions": {
+                "approved-write": {
+                    "approved": True,
+                    "second_confirmation": True,
+                    "approver_id": "approver-1",
+                    "approver_role": "admin",
+                },
+                "rejected-write": {
+                    "approved": False,
+                    "reason": "只批准第一项",
+                    "approver_id": "approver-1",
+                    "approver_role": "admin",
+                },
+            }
+        }
+
+        async def authorize(*_: object, **kwargs: object) -> SimpleNamespace:
+            prepared = kwargs["prepared"]
+            return SimpleNamespace(
+                status=(
+                    "executing" if prepared.decision.result == "allow" else "denied"
+                )
+            )
+
+        with (
+            patch.object(
+                chat_graph, "AsyncSessionLocal", return_value=_SessionContext()
+            ),
+            patch.object(chat_graph.operation_record_service, "ensure_pending"),
+            patch.object(
+                chat_graph.operation_record_service,
+                "authorize_execution",
+                side_effect=authorize,
+            ),
+            patch.object(chat_graph.operation_record_service, "finish_execution"),
+        ):
+            result = await chat_graph.tools_node(state)
+
+        self.assertEqual(_write_calls, [("demo", "approved.service")])
+        self.assertEqual(
+            [message.status for message in result["messages"]],
+            ["success", "error"],
+        )
+        self.assertIn("只批准第一项", str(result["messages"][1].content))
+
+    async def test_structured_executor_failure_marks_audit_failed(self) -> None:
+        chat_graph.OPS_WRITE_TOOLS = (_fake_failed_restart_service,)
+        state = _initial_state(allow_write_tools=True, with_run_id=True)
+        state["messages"].append(
+            AIMessage(
+                "",
+                tool_calls=[
+                    {
+                        "name": "restart_service",
+                        "args": {
+                            "server_name": "demo",
+                            "service_name": "nginx.service",
+                        },
+                        "id": "failed-restart",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+        )
+        state["approval"] = {
+            "decisions": {
+                "failed-restart": {
+                    "approved": True,
+                    "second_confirmation": True,
+                    "approver_id": "approver-1",
+                    "approver_role": "admin",
+                }
+            }
+        }
+        finish = AsyncMock()
+        with (
+            patch.object(
+                chat_graph, "AsyncSessionLocal", return_value=_SessionContext()
+            ),
+            patch.object(chat_graph.operation_record_service, "ensure_pending"),
+            patch.object(
+                chat_graph.operation_record_service,
+                "authorize_execution",
+                AsyncMock(return_value=SimpleNamespace(status="executing")),
+            ),
+            patch.object(
+                chat_graph.operation_record_service,
+                "finish_execution",
+                finish,
+            ),
+        ):
+            result = await chat_graph.tools_node(state)
+
+        self.assertEqual(result["messages"][0].status, "error")
+        self.assertEqual(
+            finish.await_args.kwargs["error"],
+            "重启 demo 上的 nginx.service 失败",
+        )
+        self.assertIsNone(finish.await_args.kwargs["result"])
+
+    async def test_tool_exception_completes_every_tool_call_id(self) -> None:
+        chat_graph.OPS_READ_TOOLS = (_sometimes_failing_investigate,)
+        state = _initial_state(allow_write_tools=False, with_run_id=True)
+        state["messages"].append(
+            AIMessage(
+                "",
+                tool_calls=[
+                    {
+                        "name": "investigate",
+                        "args": {"area": "host", "query": "fail"},
+                        "id": "failed-read",
+                        "type": "tool_call",
+                    },
+                    {
+                        "name": "investigate",
+                        "args": {"area": "metrics", "query": "up"},
+                        "id": "successful-read",
+                        "type": "tool_call",
+                    },
+                ],
+            )
+        )
+
+        with (
+            patch.object(
+                chat_graph, "AsyncSessionLocal", return_value=_SessionContext()
+            ),
+            patch.object(
+                chat_graph.operation_record_service,
+                "begin_read_execution",
+                AsyncMock(return_value=SimpleNamespace(status="executing")),
+            ) as begin,
+            patch.object(
+                chat_graph.operation_record_service,
+                "finish_execution",
+                AsyncMock(),
+            ),
+        ):
+            result = await chat_graph.tools_node(state)
+
+        self.assertEqual(
+            [message.tool_call_id for message in result["messages"]],
+            ["failed-read", "successful-read"],
+        )
+        self.assertEqual(
+            [message.status for message in result["messages"]],
+            ["error", "success"],
+        )
+        self.assertEqual(begin.await_count, 2)
+        self.assertTrue(
+            all(call.kwargs["chat_run_id"] is None for call in begin.await_args_list)
+        )
+
+    def test_duplicate_tool_call_ids_are_normalized(self) -> None:
+        message = AIMessage(
+            "",
+            tool_calls=[
+                {
+                    "name": "investigate",
+                    "args": {"area": "servers"},
+                    "id": "duplicate",
+                    "type": "tool_call",
+                },
+                {
+                    "name": "investigate",
+                    "args": {"area": "alerts"},
+                    "id": "duplicate",
+                    "type": "tool_call",
+                },
+            ],
+        )
+
+        normalized = chat_graph._normalize_tool_call_ids(message)
+
+        ids = [call["id"] for call in normalized.tool_calls]
+        self.assertEqual(ids[0], "duplicate")
+        self.assertNotEqual(ids[0], ids[1])
+        self.assertTrue(ids[1].startswith("call_aioms_"))
+
+    def test_missing_tail_tool_result_gets_failure_repair(self) -> None:
+        repairs = chat_graph._trailing_protocol_repairs(
+            [
+                HumanMessage("测试"),
+                AIMessage(
                     "",
+                    tool_calls=[
+                        {
+                            "name": "investigate",
+                            "args": {"area": "servers"},
+                            "id": "missing-result",
+                            "type": "tool_call",
+                        }
+                    ],
+                ),
+            ]
+        )
+
+        self.assertEqual(len(repairs), 1)
+        self.assertEqual(repairs[0].tool_call_id, "missing-result")
+        self.assertEqual(repairs[0].status, "error")
+
+    async def test_service_registration_card_keeps_frozen_details(self) -> None:
+        chat_graph._ops_llm = _fake_ops_factory(
+            [
+                AIMessage(
+                    "准备登记已经发现的运行对象。",
                     tool_calls=[
                         {
                             "name": "register_server_services",
@@ -304,779 +796,33 @@ class SupervisorGraphTest(unittest.IsolatedAsyncioTestCase):
                 )
             ]
         )
-
-        graph = chat_graph.build_chat_graph()
-        config = {"configurable": {"thread_id": "catalog-approval-test"}}
-        run_id = uuid.uuid4()
-        state = _initial_state(allow_write_tools=True)
-        state["operation_run_id"] = str(run_id)
-        operation_id = uuid.uuid4()
-        ensure_pending = AsyncMock(
-            return_value=SimpleNamespace(
-                id=operation_id,
-                request_hash="a" * 64,
-                expires_at=datetime.now(UTC) + timedelta(minutes=15),
-            )
+        state = _initial_state(allow_write_tools=True, with_run_id=True)
+        record = SimpleNamespace(
+            id=uuid.uuid4(),
+            request_hash="c" * 64,
+            expires_at=datetime.now(UTC) + timedelta(minutes=15),
         )
         with (
             patch.object(
-                chat_graph,
-                "AsyncSessionLocal",
-                return_value=_SessionContext(),
+                chat_graph, "AsyncSessionLocal", return_value=_SessionContext()
             ),
             patch.object(
                 chat_graph.operation_record_service,
                 "ensure_pending",
-                ensure_pending,
-            ),
-        ):
-            await graph.ainvoke(state, config=config)
-        snapshot = await graph.aget_state(config)
-
-        self.assertTrue(snapshot.interrupts)
-        action = snapshot.interrupts[0].value["actions"][0]
-        self.assertEqual(action["kind"], "service_catalog_registration")
-        self.assertEqual(action["server_name"], "web01")
-        self.assertEqual(action["environment"], "prod")
-        self.assertIn("uvicorn ← process/uvicorn:tcp-8010", action["command"])
-        self.assertEqual(action["operation_id"], str(operation_id))
-        self.assertEqual(action["request_hash"], "a" * 64)
-        ensure_pending.assert_awaited_once()
-
-    async def test_unattended_worker_cannot_reach_write_approval(self) -> None:
-        """即使假模型越权提出 SSH，allow_write_tools=False 也会在工具层硬拒绝且不挂起。"""
-        base = _FakeBaseLLM(["infrastructure_agent", "finish"])
-        chat_graph._base_llm = lambda: base
-        chat_graph._specialist_llm = _fake_specialist_factory(
-            [
-                AIMessage(
-                    "",
-                    tool_calls=[
-                        {
-                            "name": "restart_service",
-                            "args": {"server_name": "demo", "service_name": "nginx"},
-                            "id": "blocked-ssh-call",
-                            "type": "tool_call",
-                        }
-                    ],
-                ),
-                AIMessage("无人值守写工具被安全策略拒绝"),
-            ]
-        )
-
-        graph = chat_graph.build_chat_graph()
-        config = {"configurable": {"thread_id": "unattended-test"}}
-        result = await graph.ainvoke(
-            _initial_state(allow_write_tools=False), config=config
-        )
-        snapshot = await graph.aget_state(config)
-
-        self.assertFalse(snapshot.interrupts)
-        self.assertTrue(
-            any(
-                isinstance(message, ToolMessage)
-                and "无人值守任务禁止" in str(message.content)
-                for message in result["messages"]
-            )
-        )
-        self.assertEqual(_write_calls, [])
-
-    async def test_read_diagnostic_tool_does_not_interrupt(self) -> None:
-        """只读 SSH 诊断直接执行，不应误入写操作审批门。"""
-        chat_graph.SPECIALIST_READ_TOOLS["infrastructure_agent"] = [
-            _fake_run_diagnostic_command
-        ]
-        base = _FakeBaseLLM(["infrastructure_agent", "finish"])
-        chat_graph._base_llm = lambda: base
-        chat_graph._specialist_llm = _fake_specialist_factory(
-            [
-                AIMessage(
-                    "",
-                    tool_calls=[
-                        {
-                            "name": "run_diagnostic_command",
-                            "args": {"server_name": "demo", "command": "uptime"},
-                            "id": "diagnostic-call",
-                            "type": "tool_call",
-                        }
-                    ],
-                ),
-                AIMessage("只读诊断完成"),
-            ]
-        )
-
-        graph = chat_graph.build_chat_graph()
-        config = {"configurable": {"thread_id": "read-tool-test"}}
-        result = await graph.ainvoke(
-            _initial_state(allow_write_tools=True), config=config
-        )
-        snapshot = await graph.aget_state(config)
-
-        self.assertFalse(snapshot.interrupts)
-        self.assertTrue(
-            any(
-                isinstance(message, ToolMessage)
-                and "uptime: ok" in str(message.content)
-                for message in result["messages"]
-            )
-        )
-
-    async def test_root_read_does_not_interrupt_but_is_audited(self) -> None:
-        """root-read 无需审批，但必须先落审计，完成后写入退出元数据。"""
-        chat_graph.SPECIALIST_READ_TOOLS["infrastructure_agent"] = [
-            _fake_run_root_read_command
-        ]
-        base = _FakeBaseLLM(["infrastructure_agent", "finish"])
-        chat_graph._base_llm = lambda: base
-        chat_graph._specialist_llm = _fake_specialist_factory(
-            [
-                AIMessage(
-                    "",
-                    tool_calls=[
-                        {
-                            "name": "run_root_read_command",
-                            "args": {
-                                "server_name": "demo",
-                                "command": "rg redis /host/etc",
-                            },
-                            "id": "root-read-call",
-                            "type": "tool_call",
-                        }
-                    ],
-                ),
-                AIMessage("root 只读证据已获取"),
-            ]
-        )
-
-        state = _initial_state(allow_write_tools=True)
-        state["operation_run_id"] = str(uuid.uuid4())
-        begin = AsyncMock(return_value=SimpleNamespace(status="executing"))
-        finish = AsyncMock()
-        with (
-            patch.object(
-                chat_graph,
-                "AsyncSessionLocal",
-                return_value=_SessionContext(),
-            ),
-            patch.object(
-                chat_graph.operation_record_service,
-                "begin_read_execution",
-                begin,
-            ),
-            patch.object(
-                chat_graph.operation_record_service,
-                "finish_execution",
-                finish,
+                AsyncMock(return_value=record),
             ),
         ):
             graph = chat_graph.build_chat_graph()
-            result = await graph.ainvoke(
-                state,
-                config={"configurable": {"thread_id": "root-read-test"}},
-            )
+            config = {"configurable": {"thread_id": "catalog-card"}}
+            await graph.ainvoke(state, config=config)
+            snapshot = await graph.aget_state(config)
 
-        self.assertFalse(
-            (
-                await graph.aget_state(
-                    {"configurable": {"thread_id": "root-read-test"}}
-                )
-            ).interrupts
-        )
-        self.assertTrue(
-            any(
-                isinstance(message, ToolMessage)
-                and "root-read-ok" in str(message.content)
-                for message in result["messages"]
-            )
-        )
-        begin.assert_awaited_once()
-        finish.assert_awaited_once()
-        self.assertEqual(
-            finish.await_args.kwargs["metadata"],
-            {"exit_code": 0, "timed_out": False},
-        )
+        action = snapshot.interrupts[0].value["actions"][0]
+        self.assertEqual(action["kind"], "service_catalog_registration")
+        self.assertEqual(action["server_name"], "web01")
+        self.assertIn("uvicorn ← process/uvicorn:tcp-8010", action["command"])
+        self.assertEqual(action["operation_id"], str(record.id))
 
-    async def test_approved_write_tool_executes_once(self) -> None:
-        """写工具在批准前不执行，批准恢复后只执行一次。"""
-        chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"] = [
-            _fake_restart_service
-        ]
-        base = _FakeBaseLLM(["infrastructure_agent", "finish"])
-        chat_graph._base_llm = lambda: base
-        chat_graph._specialist_llm = _fake_specialist_factory(
-            [
-                AIMessage(
-                    "",
-                    tool_calls=[
-                        {
-                            "name": "restart_service",
-                            "args": {"server_name": "demo", "service_name": "nginx"},
-                            "id": "approved-restart",
-                            "type": "tool_call",
-                        }
-                    ],
-                ),
-                AIMessage("服务重启完成"),
-            ]
-        )
 
-        graph = chat_graph.build_chat_graph()
-        config = {"configurable": {"thread_id": "approved-write-test"}}
-        await graph.ainvoke(_initial_state(allow_write_tools=True), config=config)
-        self.assertEqual(_write_calls, [])
-
-        await graph.ainvoke(
-            Command(
-                resume={
-                    "decisions": {
-                        "approved-restart": {
-                            "approved": True,
-                            "second_confirmation": True,
-                            "reason": "测试批准",
-                            "approver_id": "approver-1",
-                            "approver_role": "admin",
-                        }
-                    }
-                }
-            ),
-            config=config,
-        )
-        self.assertEqual(_write_calls, [("demo", "nginx")])
-
-    async def test_persisted_write_is_authorized_before_executor_and_finished(
-        self,
-    ) -> None:
-        chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"] = [
-            _fake_restart_service
-        ]
-        run_id = uuid.uuid4()
-        ensure_pending = AsyncMock()
-        authorize = AsyncMock(return_value=SimpleNamespace(status="executing"))
-        finish = AsyncMock()
-        state = _initial_state(allow_write_tools=True)
-        state.update(
-            {
-                "work_messages": [
-                    AIMessage(
-                        "",
-                        tool_calls=[
-                            {
-                                "name": "restart_service",
-                                "args": {
-                                    "server_name": "demo",
-                                    "service_name": "nginx",
-                                },
-                                "id": "persisted-restart",
-                                "type": "tool_call",
-                            }
-                        ],
-                    )
-                ],
-                "approval": {
-                    "decisions": {
-                        "persisted-restart": {
-                            "approved": True,
-                            "second_confirmation": True,
-                            "reason": "值班员确认",
-                            "approver_id": "approver-1",
-                            "approver_role": "admin",
-                        }
-                    }
-                },
-                "operation_run_id": str(run_id),
-            }
-        )
-
-        with (
-            patch.object(
-                chat_graph,
-                "AsyncSessionLocal",
-                return_value=_SessionContext(),
-            ),
-            patch.object(
-                chat_graph.operation_record_service,
-                "ensure_pending",
-                ensure_pending,
-            ),
-            patch.object(
-                chat_graph.operation_record_service,
-                "authorize_execution",
-                authorize,
-            ),
-            patch.object(
-                chat_graph.operation_record_service,
-                "finish_execution",
-                finish,
-            ),
-        ):
-            result = await chat_graph.specialist_tools_node(
-                "infrastructure_agent",
-                state,
-            )
-
-        self.assertEqual(_write_calls, [("demo", "nginx")])
-        ensure_pending.assert_awaited_once()
-        authorize.assert_awaited_once()
-        finish.assert_awaited_once()
-        self.assertEqual(result["messages"][0].status, "success")
-
-    async def test_auto_approved_non_production_write_keeps_audit_flow(self) -> None:
-        """自动放行只跳过人工中断，仍要冻结请求、授权并完成审计。"""
-        chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"] = [
-            _fake_register_server_services
-        ]
-        run_id = uuid.uuid4()
-        state = _initial_state(allow_write_tools=True)
-        state["operation_context"]["auto_approve_non_production_medium"] = True
-        state.update(
-            {
-                "work_messages": [
-                    AIMessage(
-                        "",
-                        tool_calls=[
-                            {
-                                "name": "register_server_services",
-                                "args": {
-                                    "server_name": "demo",
-                                    "services": [],
-                                    "environment": "dev",
-                                },
-                                "id": "auto-approved-register",
-                                "type": "tool_call",
-                            }
-                        ],
-                    )
-                ],
-                "operation_run_id": str(run_id),
-            }
-        )
-        authorize = AsyncMock(return_value=SimpleNamespace(status="executing"))
-        finish = AsyncMock()
-
-        async def ensure_pending(*_args: object, **kwargs: object) -> None:
-            prepared = kwargs["prepared"]
-            self.assertEqual(prepared.decision.result, "allow")
-            self.assertIsNotNone(prepared.approval_view)
-
-        self.assertEqual(chat_graph.route_after_specialist(state), "tools")
-        with (
-            patch.object(
-                chat_graph,
-                "AsyncSessionLocal",
-                return_value=_SessionContext(),
-            ),
-            patch.object(
-                chat_graph.operation_record_service,
-                "ensure_pending",
-                side_effect=ensure_pending,
-            ) as pending,
-            patch.object(
-                chat_graph.operation_record_service,
-                "authorize_execution",
-                authorize,
-            ),
-            patch.object(
-                chat_graph.operation_record_service,
-                "finish_execution",
-                finish,
-            ),
-        ):
-            result = await chat_graph.specialist_tools_node(
-                "infrastructure_agent",
-                state,
-            )
-
-        self.assertEqual(result["messages"][0].status, "success")
-        self.assertEqual(_catalog_write_calls, [("demo", 0, "dev")])
-        pending.assert_awaited_once()
-        authorize.assert_awaited_once()
-        finish.assert_awaited_once()
-
-    async def test_structured_executor_failure_marks_tool_and_audit_failed(
-        self,
-    ) -> None:
-        chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"] = [
-            _fake_failed_restart_service
-        ]
-        run_id = uuid.uuid4()
-        state = _initial_state(allow_write_tools=True)
-        state.update(
-            {
-                "work_messages": [
-                    AIMessage(
-                        "",
-                        tool_calls=[
-                            {
-                                "name": "restart_service",
-                                "args": {
-                                    "server_name": "demo",
-                                    "service_name": "nginx.service",
-                                },
-                                "id": "failed-restart",
-                                "type": "tool_call",
-                            }
-                        ],
-                    )
-                ],
-                "approval": {
-                    "decisions": {
-                        "failed-restart": {
-                            "approved": True,
-                            "second_confirmation": True,
-                            "approver_id": "approver-1",
-                            "approver_role": "admin",
-                        }
-                    }
-                },
-                "operation_run_id": str(run_id),
-            }
-        )
-        finish = AsyncMock()
-        with (
-            patch.object(
-                chat_graph,
-                "AsyncSessionLocal",
-                return_value=_SessionContext(),
-            ),
-            patch.object(chat_graph.operation_record_service, "ensure_pending"),
-            patch.object(
-                chat_graph.operation_record_service,
-                "authorize_execution",
-                AsyncMock(return_value=SimpleNamespace(status="executing")),
-            ),
-            patch.object(
-                chat_graph.operation_record_service,
-                "finish_execution",
-                finish,
-            ),
-        ):
-            result = await chat_graph.specialist_tools_node(
-                "infrastructure_agent",
-                state,
-            )
-
-        self.assertEqual(result["messages"][0].status, "error")
-        self.assertIn("重启 demo", str(result["messages"][0].content))
-        self.assertEqual(
-            finish.await_args.kwargs["error"], "重启 demo 上的 nginx.service 失败"
-        )
-        self.assertIsNone(finish.await_args.kwargs["result"])
-
-    async def test_high_risk_write_rejects_missing_second_confirmation(self) -> None:
-        """即使第一次批准，高风险写工具没有详情弹窗二次确认也不能执行。"""
-        chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"] = [
-            _fake_restart_service
-        ]
-        result = await chat_graph.specialist_tools_node(
-            "infrastructure_agent",
-            {
-                "messages": [],
-                "work_messages": [
-                    AIMessage(
-                        "",
-                        tool_calls=[
-                            {
-                                "name": "restart_service",
-                                "args": {
-                                    "server_name": "demo",
-                                    "service_name": "nginx.service",
-                                },
-                                "id": "missing-second-confirmation",
-                                "type": "tool_call",
-                            }
-                        ],
-                    )
-                ],
-                "reports": {},
-                "specialist_instruction": "",
-                "tool_iterations": 0,
-                "allow_write_tools": True,
-                "operation_context": _initial_state(allow_write_tools=True)[
-                    "operation_context"
-                ],
-                "approval": {
-                    "decisions": {
-                        "missing-second-confirmation": {
-                            "approved": True,
-                            "reason": "只做了第一次确认",
-                            "approver_id": "approver-1",
-                            "approver_role": "admin",
-                        }
-                    }
-                },
-            },
-        )
-
-        self.assertIn("缺少详情弹窗二次确认", str(result["messages"][0].content))
-        self.assertEqual(_write_calls, [])
-
-    async def test_batch_write_calls_use_their_own_approval_decisions(self) -> None:
-        """同批多个写操作可以混合批准/拒绝，批准一项不能放行另一项。"""
-        chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"] = [
-            _fake_restart_service
-        ]
-        result = await chat_graph.specialist_tools_node(
-            "infrastructure_agent",
-            {
-                "messages": [],
-                "work_messages": [
-                    AIMessage(
-                        "",
-                        tool_calls=[
-                            {
-                                "name": "restart_service",
-                                "args": {
-                                    "server_name": "demo",
-                                    "service_name": "approved.service",
-                                },
-                                "id": "approved-write",
-                                "type": "tool_call",
-                            },
-                            {
-                                "name": "restart_service",
-                                "args": {
-                                    "server_name": "demo",
-                                    "service_name": "rejected.service",
-                                },
-                                "id": "rejected-write",
-                                "type": "tool_call",
-                            },
-                        ],
-                    )
-                ],
-                "reports": {},
-                "specialist_instruction": "",
-                "tool_iterations": 0,
-                "allow_write_tools": True,
-                "operation_context": _initial_state(allow_write_tools=True)[
-                    "operation_context"
-                ],
-                "approval": {
-                    "decisions": {
-                        "approved-write": {
-                            "approved": True,
-                            "second_confirmation": True,
-                            "approver_id": "approver-1",
-                            "approver_role": "admin",
-                        },
-                        "rejected-write": {
-                            "approved": False,
-                            "reason": "只批准第一项",
-                            "approver_id": "approver-1",
-                            "approver_role": "admin",
-                        },
-                    }
-                },
-            },
-        )
-
-        self.assertEqual(_write_calls, [("demo", "approved.service")])
-        self.assertEqual(result["messages"][0].status, "success")
-        self.assertEqual(result["messages"][1].status, "error")
-        self.assertIn("只批准第一项", str(result["messages"][1].content))
-
-    async def test_write_tool_node_rejects_missing_approval_decision(self) -> None:
-        """即使绕过图路由直达执行节点，没有审批决议也必须硬拒绝。"""
-        chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"] = [
-            _fake_restart_service
-        ]
-        result = await chat_graph.specialist_tools_node(
-            "infrastructure_agent",
-            {
-                "messages": [],
-                "work_messages": [
-                    AIMessage(
-                        "",
-                        tool_calls=[
-                            {
-                                "name": "restart_service",
-                                "args": {
-                                    "server_name": "demo",
-                                    "service_name": "nginx",
-                                },
-                                "id": "missing-approval",
-                                "type": "tool_call",
-                            }
-                        ],
-                    )
-                ],
-                "reports": {},
-                "specialist_instruction": "",
-                "tool_iterations": 0,
-                "allow_write_tools": True,
-                "approval": None,
-            },
-        )
-
-        self.assertIn("无人值守", str(result["messages"][0].content))
-        self.assertEqual(_write_calls, [])
-
-    async def test_flat_legacy_approval_cannot_bypass_per_operation_binding(
-        self,
-    ) -> None:
-        chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"] = [
-            _fake_restart_service
-        ]
-        state = _initial_state(allow_write_tools=True)
-        state.update(
-            {
-                "work_messages": [
-                    AIMessage(
-                        "",
-                        tool_calls=[
-                            {
-                                "name": "restart_service",
-                                "args": {
-                                    "server_name": "demo",
-                                    "service_name": "nginx.service",
-                                },
-                                "id": "legacy-flat-approval",
-                                "type": "tool_call",
-                            }
-                        ],
-                    )
-                ],
-                "approval": {
-                    "approved": True,
-                    "second_confirmation": True,
-                    "approver_id": "approver-1",
-                    "approver_role": "admin",
-                },
-            }
-        )
-
-        result = await chat_graph.specialist_tools_node(
-            "infrastructure_agent",
-            state,
-        )
-
-        self.assertEqual(result["messages"][0].status, "error")
-        self.assertIn("缺少人工审批决议", str(result["messages"][0].content))
-        self.assertEqual(_write_calls, [])
-
-    async def test_tool_exception_still_completes_every_tool_call_id(self) -> None:
-        """同批某个 Tool 抛错时也要逐一回消息，不能留下 DeepSeek 无法接受的残缺协议。"""
-        chat_graph.SPECIALIST_READ_TOOLS["infrastructure_agent"] = [
-            _fake_failing_discovery
-        ]
-        chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"] = [
-            _fake_register_server_services
-        ]
-        result = await chat_graph.specialist_tools_node(
-            "infrastructure_agent",
-            {
-                "messages": [],
-                "work_messages": [
-                    AIMessage(
-                        "",
-                        tool_calls=[
-                            {
-                                "name": "discover_server_services",
-                                "args": {"server_name": "web01"},
-                                "id": "read-call",
-                                "type": "tool_call",
-                            },
-                            {
-                                "name": "register_server_services",
-                                "args": {
-                                    "server_name": "web01",
-                                    "environment": "prod",
-                                    "services": [
-                                        {
-                                            "service_name": "uvicorn",
-                                            "runtime_type": "process",
-                                            "runtime_name": "uvicorn:tcp-8010",
-                                        }
-                                    ],
-                                },
-                                "id": "write-call",
-                                "type": "tool_call",
-                            },
-                        ],
-                    )
-                ],
-                "reports": {},
-                "specialist_instruction": "",
-                "tool_iterations": 0,
-                "allow_write_tools": True,
-                "operation_context": _initial_state(allow_write_tools=True)[
-                    "operation_context"
-                ],
-                "approval": {
-                    "decisions": {
-                        "write-call": {
-                            "approved": True,
-                            "approver_id": "approver-1",
-                            "approver_role": "admin",
-                        }
-                    }
-                },
-            },
-        )
-
-        messages = result["messages"]
-        self.assertEqual(
-            [message.tool_call_id for message in messages],
-            ["read-call", "write-call"],
-        )
-        self.assertEqual([message.status for message in messages], ["error", "success"])
-        self.assertIn("RuntimeError", str(messages[0].content))
-        self.assertEqual(_catalog_write_calls, [("web01", 1, "prod")])
-
-    def test_duplicate_tool_call_ids_are_normalized(self) -> None:
-        message = AIMessage(
-            "",
-            tool_calls=[
-                {
-                    "name": "query_servers",
-                    "args": {},
-                    "id": "duplicate",
-                    "type": "tool_call",
-                },
-                {
-                    "name": "discover_server_services",
-                    "args": {"server_name": "web01"},
-                    "id": "duplicate",
-                    "type": "tool_call",
-                },
-            ],
-        )
-
-        normalized = chat_graph._normalize_tool_call_ids(message)
-
-        ids = [call["id"] for call in normalized.tool_calls]
-        self.assertEqual(ids[0], "duplicate")
-        self.assertNotEqual(ids[0], ids[1])
-
-    def test_missing_tail_tool_result_gets_failure_repair(self) -> None:
-        messages = [
-            AIMessage(
-                "",
-                tool_calls=[
-                    {
-                        "name": "query_servers",
-                        "args": {},
-                        "id": "complete-call",
-                        "type": "tool_call",
-                    },
-                    {
-                        "name": "register_server_services",
-                        "args": {},
-                        "id": "missing-call",
-                        "type": "tool_call",
-                    },
-                ],
-            ),
-            ToolMessage(
-                "查询完成",
-                tool_call_id="complete-call",
-                name="query_servers",
-            ),
-        ]
-
-        repairs = chat_graph._trailing_protocol_repairs(messages)
-
-        self.assertEqual(len(repairs), 1)
-        self.assertEqual(repairs[0].tool_call_id, "missing-call")
-        self.assertEqual(repairs[0].status, "error")
-        self.assertIn("不要假定操作成功", str(repairs[0].content))
+if __name__ == "__main__":
+    unittest.main()

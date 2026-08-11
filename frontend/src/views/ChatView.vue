@@ -67,6 +67,8 @@ function uid(): string {
 }
 
 const TOOL_LABELS: Record<string, string> = {
+  investigate: '调查运维证据',
+  // 以下旧名称只用于兼容已经落库的历史对话，新 Agent 不再直接调用。
   query_servers: '查询服务器列表',
   query_server_metrics: '查询服务器指标',
   query_metrics: '查询 Prometheus 指标',
@@ -203,7 +205,7 @@ watch(
   { deep: true },
 )
 
-// 当前是否有一个"打开的"助手气泡可以继续追加 token。最终综合只执行一次，输出 token 持续
+// 当前是否有一个"打开的"助手气泡可以继续追加 token。最终回答只执行一次，输出 token 持续
 // 追加到同一个气泡；工具卡片仍与最终回答分开显示。
 let assistantOpen = false
 
@@ -216,7 +218,7 @@ function appendToken(content: string) {
   if (last.kind === 'message') last.content += content
 }
 
-// 最终综合开始输出前显示等待状态。工具正在执行时已有动态工具行，不重复显示。
+// 最终回答开始输出前显示等待状态。工具正在执行时已有动态工具行，不重复显示。
 const showThinking = computed(() => {
   if (!sending.value || pendingApproval.value) return false
   const last = timeline.value[timeline.value.length - 1]

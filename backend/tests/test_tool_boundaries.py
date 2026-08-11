@@ -55,24 +55,18 @@ class _ConnectionContext:
 
 
 class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
-    def test_prompts_preserve_the_root_read_execution_scope(self) -> None:
-        prompt = chat_graph.SPECIALIST_PROMPTS["infrastructure_agent"]
-        self.assertIn("Shell、PATH、程序", prompt)
-        self.assertIn("所有宿主机绝对路径必须写成 /host/", prompt)
-        self.assertIn("不能改用 root-read 容器冒充宿主机", prompt)
-        self.assertIn("AIOMS_PATH_MASKED", prompt)
-        self.assertIn("未加 /host 的路径属于诊断容器", chat_graph.SYNTHESIZER_PROMPT)
+    def test_prompt_exposes_investigation_not_internal_executors(self) -> None:
+        prompt = chat_graph.OPS_AGENT_PROMPT
+        self.assertIn("调查与变更", prompt)
+        self.assertIn("目标服务器真实的 `/`、PATH 和程序", prompt)
+        self.assertNotIn("run_diagnostic_command", prompt)
+        self.assertNotIn("run_root_read_command", prompt)
+        self.assertNotIn("/host", prompt)
+        self.assertNotIn("Supervisor", prompt)
 
     def test_catalog_has_disjoint_read_and_write_tools(self) -> None:
-        """目录必须把发现归为读、目录注册/服务重启归为写，且写工具带审批元数据。"""
-        self.assertIn("run_diagnostic_command", catalog.READ_TOOLS_BY_NAME)
-        self.assertIn("run_root_read_command", catalog.READ_TOOLS_BY_NAME)
-        self.assertIn("discover_server_services", catalog.READ_TOOLS_BY_NAME)
-        self.assertIn("preview_server_log_config", catalog.READ_TOOLS_BY_NAME)
-        self.assertIn("find_server_files", catalog.READ_TOOLS_BY_NAME)
-        self.assertIn("read_server_file", catalog.READ_TOOLS_BY_NAME)
-        self.assertIn("preview_server_file_update", catalog.READ_TOOLS_BY_NAME)
-        self.assertIn("query_server_services", catalog.READ_TOOLS_BY_NAME)
+        """模型只看到统一调查入口；结构化变更仍逐项登记审批元数据。"""
+        self.assertEqual(set(catalog.READ_TOOLS_BY_NAME), {"investigate"})
         self.assertNotIn("run_diagnostic_command", catalog.WRITE_TOOLS_BY_NAME)
         self.assertNotIn("run_root_read_command", catalog.WRITE_TOOLS_BY_NAME)
         self.assertIn("restart_service", catalog.WRITE_TOOLS_BY_NAME)
@@ -86,71 +80,21 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(
             set(catalog.READ_TOOLS_BY_NAME) & set(catalog.WRITE_TOOLS_BY_NAME)
         )
-        read_spec = catalog.get_operation_spec("run_diagnostic_command")
+        read_spec = catalog.get_operation_spec("investigate")
         self.assertIsNotNone(read_spec)
         self.assertEqual(read_spec.effect, "read")
         self.assertEqual(read_spec.risk_level, "low")
-        root_read_spec = catalog.get_operation_spec("run_root_read_command")
-        self.assertIsNotNone(root_read_spec)
-        self.assertEqual(root_read_spec.effect, "read")
-        self.assertEqual(root_read_spec.risk_level, "low")
-        self.assertTrue(root_read_spec.audit_execution)
+        self.assertTrue(read_spec.audit_execution)
         restart_spec = catalog.get_operation_spec("restart_service")
         self.assertIsNotNone(restart_spec)
         self.assertEqual(restart_spec.effect, "write")
         self.assertEqual(restart_spec.risk_level, "high")
-        self.assertIn(
-            "query_server_services",
-            {
-                tool.name
-                for tool in chat_graph.SPECIALIST_READ_TOOLS["infrastructure_agent"]
-            },
+        self.assertEqual(
+            {tool.name for tool in chat_graph.OPS_READ_TOOLS}, {"investigate"}
         )
-        self.assertIn(
-            "discover_server_services",
-            {
-                tool.name
-                for tool in chat_graph.SPECIALIST_READ_TOOLS["infrastructure_agent"]
-            },
-        )
-        self.assertIn(
-            "run_root_read_command",
-            {
-                tool.name
-                for tool in chat_graph.SPECIALIST_READ_TOOLS["infrastructure_agent"]
-            },
-        )
-        self.assertIn(
-            "register_server_services",
-            {
-                tool.name
-                for tool in chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"]
-            },
-        )
-        self.assertIn(
-            "apply_server_log_config",
-            {
-                tool.name
-                for tool in chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"]
-            },
-        )
-        self.assertIn(
-            "deploy_server_environment",
-            {
-                tool.name
-                for tool in chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"]
-            },
-        )
-        self.assertIn(
-            "create_alert_rule",
-            {tool.name for tool in chat_graph.SPECIALIST_WRITE_TOOLS["incident_agent"]},
-        )
-        self.assertIn(
-            "update_server_file",
-            {
-                tool.name
-                for tool in chat_graph.SPECIALIST_WRITE_TOOLS["infrastructure_agent"]
-            },
+        self.assertEqual(
+            {tool.name for tool in chat_graph.OPS_WRITE_TOOLS},
+            set(catalog.WRITE_TOOLS_BY_NAME),
         )
         self.assertIn("必须使用简体中文", chat_graph.SIMPLIFIED_CHINESE_REQUIREMENT)
 

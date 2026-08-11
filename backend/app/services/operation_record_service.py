@@ -43,13 +43,14 @@ def _validate_binding(record: OperationRecord, prepared: PreparedOperation) -> N
 async def ensure_pending(
     db: AsyncSession,
     *,
+    execution_id: uuid.UUID,
     chat_run_id: uuid.UUID,
     prepared: PreparedOperation,
 ) -> OperationRecord:
     """幂等创建待审批记录；同一 tool_call_id 不允许换参数。"""
-    existing = await operation_record_repository.get_by_run_and_tool_call(
+    existing = await operation_record_repository.get_by_execution_and_tool_call(
         db,
-        chat_run_id,
+        execution_id,
         prepared.call.id,
     )
     if existing is not None:
@@ -62,6 +63,7 @@ async def ensure_pending(
     return await operation_record_repository.create(
         db,
         OperationRecord(
+            execution_id=execution_id,
             chat_run_id=chat_run_id,
             tool_call_id=prepared.call.id,
             operation_name=prepared.call.name,
@@ -84,7 +86,8 @@ async def ensure_pending(
 async def begin_read_execution(
     db: AsyncSession,
     *,
-    chat_run_id: uuid.UUID,
+    execution_id: uuid.UUID,
+    chat_run_id: uuid.UUID | None,
     prepared: PreparedOperation,
 ) -> OperationRecord:
     """在真实执行前落下低风险只读审计；审计不可用时调用方必须停止执行。"""
@@ -93,9 +96,9 @@ async def begin_read_execution(
     if prepared.decision.result != "allow":
         raise OperationRecordError("只有策略允许的只读操作才能开始执行")
 
-    existing = await operation_record_repository.get_by_run_and_tool_call(
+    existing = await operation_record_repository.get_by_execution_and_tool_call(
         db,
-        chat_run_id,
+        execution_id,
         prepared.call.id,
     )
     if existing is not None:
@@ -110,6 +113,7 @@ async def begin_read_execution(
     return await operation_record_repository.create(
         db,
         OperationRecord(
+            execution_id=execution_id,
             chat_run_id=chat_run_id,
             tool_call_id=prepared.call.id,
             operation_name=prepared.call.name,
@@ -134,14 +138,14 @@ async def begin_read_execution(
 async def authorize_execution(
     db: AsyncSession,
     *,
-    chat_run_id: uuid.UUID,
+    execution_id: uuid.UUID,
     prepared: PreparedOperation,
     approval: ApprovalDecision | None,
 ) -> OperationRecord:
     """校验审批绑定并原子推进为 executing；非 allow 决议落为 denied。"""
-    record = await operation_record_repository.get_by_run_and_tool_call(
+    record = await operation_record_repository.get_by_execution_and_tool_call(
         db,
-        chat_run_id,
+        execution_id,
         prepared.call.id,
         for_update=True,
     )
@@ -187,15 +191,15 @@ async def authorize_execution(
 async def finish_execution(
     db: AsyncSession,
     *,
-    chat_run_id: uuid.UUID,
+    execution_id: uuid.UUID,
     tool_call_id: str,
     result: object | None = None,
     error: str | None = None,
     metadata: dict[str, object] | None = None,
 ) -> OperationRecord:
-    record = await operation_record_repository.get_by_run_and_tool_call(
+    record = await operation_record_repository.get_by_execution_and_tool_call(
         db,
-        chat_run_id,
+        execution_id,
         tool_call_id,
     )
     if record is None:
@@ -222,12 +226,14 @@ async def finish_execution(
 async def list_operation_records(
     db: AsyncSession,
     *,
+    execution_id: uuid.UUID | None = None,
     chat_run_id: uuid.UUID | None = None,
     status: str | None = None,
     limit: int = 100,
 ) -> list[OperationRecord]:
     return await operation_record_repository.list_records(
         db,
+        execution_id=execution_id,
         chat_run_id=chat_run_id,
         status=status,
         limit=limit,

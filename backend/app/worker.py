@@ -3,8 +3,8 @@
 跟后端 FastAPI 是**两个独立进程**：后端只负责往 Redis 队列里塞作业，这个 worker 从队列取作业来跑
 （告警自动诊断、以后的定时值班报告等重活都在这里，不占后端请求线程）。
 
-triage_incident 复用聊天用的 Supervisor 图，由事件、指标、日志专家协作调查；worker 是无人值守场景，
-会显式关闭 SSH 写工具，不能绕过聊天里的人工审批门。诊断回填到「事件（incident）」级，不是单条告警。
+triage_incident 复用聊天用的统一 Ops Agent 图；worker 是无人值守场景，会在模型绑定和工具执行
+两层显式关闭写工具，不能绕过聊天里的人工审批门。诊断回填到「事件（incident）」级，不是单条告警。
 
 启动（从 backend/ 目录，跟后端分开的另一个终端）：
     uv run arq app.worker.WorkerSettings
@@ -13,6 +13,7 @@ triage_incident 复用聊天用的 Supervisor 图，由事件、指标、日志�
 from __future__ import annotations
 
 import uuid
+from typing import ClassVar
 
 from arq.connections import RedisSettings
 from langchain_core.messages import HumanMessage
@@ -64,14 +65,11 @@ async def triage_incident(ctx: dict, incident_id: str) -> dict:
         state = await graph.ainvoke(
             {
                 "messages": [HumanMessage(prompt)],
-                "work_messages": [],
-                "reports": {},
-                "specialist_instruction": "",
                 "tool_iterations": 0,
-                "supervisor_rounds": 0,
                 "allow_write_tools": False,
                 "approval": None,
-                "operation_run_id": None,
+                "operation_execution_id": str(uuid.uuid4()),
+                "operation_chat_run_id": None,
                 "operation_context": {
                     "actor_id": "arq-worker",
                     "actor_role": "system",
@@ -110,8 +108,10 @@ def _build_prompt(
         else (f"实例 {incident.instance}" if incident.instance else "未知对象")
     )
     lines = [
-        "这是一个运维事件的自动诊断任务。下面这个事件刚刚触发，请你调用工具调查根因，"
-        "给出简短诊断（3-5 句，说清可能原因 + 处理建议）：",
+        (
+            "这是一个运维事件的自动诊断任务。下面这个事件刚刚触发，请你调用工具调查根因，"
+            "给出简短诊断（3-5 句，说清可能原因 + 处理建议）："
+        ),
         f"- 事件（告警名）：{incident.alertname}",
         f"- 级别：{incident.severity}",
         f"- 对象：{who}"
@@ -122,18 +122,19 @@ def _build_prompt(
         lines.append(f"- 关联服务：{service.name}/{service.environment}")
     if srv:
         service_args = (
-            f"，service={service.name}，environment={service.environment}"
+            f"service={service.name}，environment={service.environment}"
             if service
-            else ""
+            else "无"
         )
         lines.append(
-            f"提示：优先用 correlate_incident 关联 {srv.name} 在 "
+            f"提示：优先调用 investigate(area=incident, target={srv.name})，关联 "
             f"{incident.created_at.isoformat()} 前后的指标、日志和告警来判断"
-            f"{service_args}。"
+            f"；补充参数：{service_args}。"
         )
     elif incident.instance:
         lines.append(
-            f"提示：用 query_metrics（instance={incident.instance}）、search_logs 等工具围绕该实例调查。"
+            f"提示：使用 investigate 的 metrics/logs/alerts 领域围绕实例 "
+            f"{incident.instance} 调查。"
         )
     return "\n".join(lines)
 
@@ -141,13 +142,13 @@ def _build_prompt(
 async def on_startup(ctx: dict) -> None:
     # 编译一次 agent 图，整个 worker 生命周期复用（每个事件都重新编译太浪费）。
     ctx["chat_graph"] = build_chat_graph()
-    print("[worker] Supervisor 图已就绪")
+    print("[worker] 统一 Ops Agent 图已就绪")
 
 
 class WorkerSettings:
     """arq 约定：worker 从这个类读配置。functions 列出可执行任务，redis_settings 指 broker。"""
 
-    functions = [triage_incident]
-    redis_settings = RedisSettings.from_dsn(settings.redis_url)
-    on_startup = on_startup
-    job_timeout = 180  # agent 调查可能包含多轮工具调用，给足超时
+    functions: ClassVar = [triage_incident]
+    redis_settings: ClassVar = RedisSettings.from_dsn(settings.redis_url)
+    on_startup: ClassVar = on_startup
+    job_timeout: ClassVar[int] = 180  # agent 调查可能包含多轮工具调用，给足超时
