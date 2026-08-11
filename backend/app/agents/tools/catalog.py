@@ -17,6 +17,7 @@ from langchain_core.tools import BaseTool
 from app.agents.tools.actions import restart_service, start_service, stop_service
 from app.agents.tools.alert_rules import create_alert_rule
 from app.agents.tools.deployment import deploy_server_environment
+from app.agents.tools.file_access import grant_server_file_write_access
 from app.agents.tools.investigation import investigate
 from app.agents.tools.server_files import (
     patch_server_config,
@@ -193,6 +194,28 @@ def _patch_server_config_action(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _grant_server_file_write_access_action(args: dict[str, Any]) -> dict[str, Any]:
+    server = str(args.get("server_name") or "?")
+    service = str(args.get("service_name") or "?")
+    environment = str(args.get("environment") or "?")
+    instance = str(args.get("instance_name") or "?")
+    path = str(args.get("path") or "?")
+    return {
+        "kind": "server_file_write_access_grant",
+        "title": f"授权 {server} 上的 {service} 精确写入文件 {path}",
+        "server_name": server,
+        "service_name": service,
+        "environment": environment,
+        "instance_name": instance,
+        "path": path,
+        "command": (
+            "持久加入精确文件写白名单；后续每次文件修改仍需独立审批："
+            "sudo -n -- /usr/local/sbin/aioms-file-policy add write "
+            f"{shlex.quote(path)}"
+        ),
+    }
+
+
 READ_TOOLS: tuple[BaseTool, ...] = (investigate,)
 
 _WRITE_SPECS = (
@@ -230,6 +253,11 @@ _WRITE_SPECS = (
         tool=deploy_server_environment,
         risk_level="high",
         build_action_details=_deploy_server_environment_action,
+    ),
+    WriteToolSpec(
+        tool=grant_server_file_write_access,
+        risk_level="medium",
+        build_action_details=_grant_server_file_write_access_action,
     ),
     WriteToolSpec(
         tool=update_server_file,

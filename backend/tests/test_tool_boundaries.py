@@ -63,6 +63,8 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("不能据此推断", prompt)
         self.assertIn("本调查也始终不可写", prompt)
         self.assertIn("config-patch-preview", prompt)
+        self.assertIn("grant_server_file_write_access", prompt)
+        self.assertIn("不得授权目录", prompt)
         self.assertIn("文件工具只修改文件", prompt)
         self.assertIn("单独进入审批", prompt)
         self.assertNotIn("apply_nginx_config", prompt)
@@ -85,6 +87,7 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("register_server_services", catalog.WRITE_TOOLS_BY_NAME)
         self.assertIn("apply_server_log_config", catalog.WRITE_TOOLS_BY_NAME)
         self.assertIn("deploy_server_environment", catalog.WRITE_TOOLS_BY_NAME)
+        self.assertIn("grant_server_file_write_access", catalog.WRITE_TOOLS_BY_NAME)
         self.assertIn("update_server_file", catalog.WRITE_TOOLS_BY_NAME)
         self.assertIn("patch_server_config", catalog.WRITE_TOOLS_BY_NAME)
         self.assertNotIn("apply_nginx_config", catalog.WRITE_TOOLS_BY_NAME)
@@ -103,6 +106,10 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         patch_spec = catalog.get_operation_spec("patch_server_config")
         self.assertIsNotNone(patch_spec)
         self.assertEqual(patch_spec.risk_level, "medium")
+        grant_spec = catalog.get_operation_spec("grant_server_file_write_access")
+        self.assertIsNotNone(grant_spec)
+        self.assertEqual(grant_spec.effect, "write")
+        self.assertEqual(grant_spec.risk_level, "medium")
         self.assertEqual(
             {tool.name for tool in chat_graph.OPS_READ_TOOLS}, {"investigate"}
         )
@@ -126,6 +133,23 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
             "aioms-service-control restart systemd nginx.service",
             action["command"],
         )
+
+        grant_action = catalog.describe_write_action(
+            {
+                "id": "grant-file-1",
+                "name": "grant_server_file_write_access",
+                "args": {
+                    "server_name": "web-01",
+                    "service_name": "sub2api",
+                    "environment": "prod",
+                    "instance_name": "sub2api",
+                    "path": "/home/OnlineAPI/deploy/docker-compose.yml",
+                },
+            }
+        )
+        self.assertEqual(grant_action["risk_level"], "medium")
+        self.assertEqual(grant_action["kind"], "server_file_write_access_grant")
+        self.assertIn("精确文件写白名单", grant_action["command"])
 
         start_action = catalog.describe_write_action(
             {

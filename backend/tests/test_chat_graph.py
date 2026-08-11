@@ -112,6 +112,7 @@ async def _sometimes_failing_investigate(
 
 _write_calls: list[tuple[str, str]] = []
 _catalog_write_calls: list[tuple[str, int, str]] = []
+_file_access_grants: list[tuple[str, str, str]] = []
 
 
 @tool("restart_service")
@@ -151,6 +152,20 @@ async def _fake_register_server_services(
     return "目录注册完成"
 
 
+@tool("grant_server_file_write_access")
+async def _fake_grant_server_file_write_access(
+    server_name: str,
+    service_name: str,
+    path: str,
+    environment: str = "",
+    instance_name: str = "",
+) -> str:
+    """记录批准后的精确文件写授权。"""
+    del environment, instance_name
+    _file_access_grants.append((server_name, service_name, path))
+    return f"已授权精确写入 {path}"
+
+
 class OpsAgentGraphTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.original_ops_llm = chat_graph._ops_llm
@@ -160,9 +175,11 @@ class OpsAgentGraphTest(unittest.IsolatedAsyncioTestCase):
         chat_graph.OPS_WRITE_TOOLS = (
             _fake_restart_service,
             _fake_register_server_services,
+            _fake_grant_server_file_write_access,
         )
         _write_calls.clear()
         _catalog_write_calls.clear()
+        _file_access_grants.clear()
 
     def tearDown(self) -> None:
         chat_graph._ops_llm = self.original_ops_llm
@@ -489,6 +506,114 @@ class OpsAgentGraphTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(_write_calls, [("demo", "nginx.service")])
         authorize.assert_awaited_once()
         finish.assert_awaited_once()
+
+    async def test_approved_file_grant_returns_to_preview_and_finishes(self) -> None:
+        path = "/home/OnlineAPI/deploy/docker-compose.yml"
+        chat_graph._ops_llm = _fake_ops_factory(
+            [
+                AIMessage(
+                    "该文件尚未授权，我先提交精确写授权审批。",
+                    tool_calls=[
+                        {
+                            "name": "grant_server_file_write_access",
+                            "args": {
+                                "server_name": "web-01",
+                                "service_name": "sub2api",
+                                "environment": "prod",
+                                "instance_name": "sub2api",
+                                "path": path,
+                            },
+                            "id": "grant-sub2api-compose",
+                            "type": "tool_call",
+                        }
+                    ],
+                ),
+                AIMessage(
+                    "授权已生效，我重新生成文件修改预览。",
+                    tool_calls=[
+                        {
+                            "name": "investigate",
+                            "args": {
+                                "area": "change",
+                                "target": "web-01",
+                                "query": "file-update-preview",
+                                "parameters": {
+                                    "path": path,
+                                    "new_content": "services: {}\n",
+                                },
+                            },
+                            "id": "preview-sub2api-compose",
+                            "type": "tool_call",
+                        }
+                    ],
+                ),
+                AIMessage("写授权已生效，文件修改预览已经生成。"),
+            ]
+        )
+        state = _initial_state(allow_write_tools=True, with_run_id=True)
+        record = SimpleNamespace(
+            id=uuid.uuid4(),
+            request_hash="d" * 64,
+            expires_at=datetime.now(UTC) + timedelta(minutes=15),
+            status="executing",
+        )
+        graph = chat_graph.build_chat_graph()
+        config = chat_graph.graph_run_config("grant-then-preview")
+        with (
+            patch.object(
+                chat_graph, "AsyncSessionLocal", return_value=_SessionContext()
+            ),
+            patch.object(
+                chat_graph.operation_record_service,
+                "ensure_pending",
+                AsyncMock(return_value=record),
+            ),
+            patch.object(
+                chat_graph.operation_record_service,
+                "authorize_execution",
+                AsyncMock(return_value=record),
+            ),
+            patch.object(
+                chat_graph.operation_record_service,
+                "begin_read_execution",
+                AsyncMock(return_value=record),
+            ),
+            patch.object(
+                chat_graph.operation_record_service,
+                "finish_execution",
+                AsyncMock(),
+            ),
+        ):
+            await graph.ainvoke(state, config=config)
+            snapshot = await graph.aget_state(config)
+            self.assertTrue(snapshot.interrupts)
+            result = await graph.ainvoke(
+                Command(
+                    resume={
+                        "decisions": {
+                            "grant-sub2api-compose": {
+                                "approved": True,
+                                "approver_id": "approver-1",
+                                "approver_role": "admin",
+                            }
+                        }
+                    }
+                ),
+                config=config,
+            )
+
+        self.assertEqual(_file_access_grants, [("web-01", "sub2api", path)])
+        self.assertEqual(
+            result["messages"][-1].content,
+            "写授权已生效，文件修改预览已经生成。",
+        )
+        self.assertTrue(
+            any(
+                isinstance(message, ToolMessage)
+                and message.tool_call_id == "preview-sub2api-compose"
+                for message in result["messages"]
+            )
+        )
 
     async def test_unattended_mode_hard_rejects_write_tool(self) -> None:
         state = _initial_state(allow_write_tools=False)
