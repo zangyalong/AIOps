@@ -64,6 +64,8 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("本调查也始终不可写", prompt)
         self.assertIn("config-patch-preview", prompt)
         self.assertIn("apply_nginx_config", prompt)
+        self.assertIn("Docker Compose", prompt)
+        self.assertIn("普通 docker start/restart 不会应用新变量", prompt)
         self.assertNotIn("run_diagnostic_command", prompt)
         self.assertNotIn("run_root_read_command", prompt)
         self.assertNotIn("/host", prompt)

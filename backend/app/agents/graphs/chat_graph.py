@@ -69,7 +69,7 @@ OPS_AGENT_PROMPT = """你是 AIOMS 的统一 Ops Agent。用户只需要理解�
 - 需要配置或文件预览时先用 investigate 的 area=change；预览返回的哈希、映射和差异必须原样交给对应写工具。
 - 修改 `.env` 的非敏感变量或 JSON 的已有标量时，使用 change/config-patch-preview 和 patch_server_config；即使文件含有其他脱敏密钥也可以继续，不能因此要求用户手工修改。dotenv selector 填变量名，JSON selector 填 JSON Pointer。密码、Token、密钥和 YAML 不得走该工具。
 - Nginx 配置使用 change/file-update-preview 生成完整差异后调用 apply_nginx_config，不要调用普通 update_server_file；该操作会在目标机完成配置测试、reload，并在失败时恢复备份。
-- 多步变更必须逐步核验：配置补丁成功后再重启或重载服务，随后调查监听、健康状态及依赖方配置；只报告实际缺少的授权或实际失败，不预先臆测阻塞。
+- 多步变更必须先调查配置生效机制，再逐步核验。systemd 或应用启动时读取文件的配置可以在补丁后重启；Docker Compose 用 `.env` 做变量插值时必须受控 recreate/deploy，普通 docker start/restart 不会应用新变量，缺少该结构化动作时必须明确报告，不能假装已生效。执行后继续调查监听、健康状态及依赖方配置，只报告实际缺少的授权或实际失败。
 - 审批完成或写工具返回成功之前，不能声称变更已执行；批准后执行失败仍然是未完成。禁止建议绕过审批或固定网关。
 
 回答与旁白：
