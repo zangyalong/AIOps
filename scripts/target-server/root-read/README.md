@@ -2,11 +2,13 @@
 
 这个入口解决的是“诊断搜索被命令白名单卡住”的问题。AIOMS 仍以普通 `aioms` 用户 SSH
 登录，只能无参数调用 root 持有的 `/usr/local/sbin/aioms-root-read`；命令通过 stdin JSON
-进入一次性 Docker 容器，不会在宿主机 Shell 中被 `eval`。
+进入一次性 Docker 容器，不会在宿主机 Shell 中被 `eval`。后端可选择宿主机语境或工具箱语境，
+这个选择属于内部实现，不交给 Agent 或用户判断。
 
 ## 边界
 
-- Shell、PATH、程序版本以及未加 `/host` 前缀的绝对路径都属于 Debian 诊断容器，不代表目标服务器；宿主机文件根固定为 `/host`。例如宿主机系统发行版要读 `/host/etc/os-release`，不能读容器的 `/etc/os-release`。
+- 宿主机语境先进入只读挂载的宿主根，再立即收回临时 `SYS_CHROOT` capability；此时 `/`、PATH 和可执行程序都属于目标服务器，可用于核验真实 OS、软件版本和文件。
+- 工具箱语境用于内部调用 Debian 镜像里的 `rg/find/jq` 等诊断工具，宿主机文件根为 `/host`。该语境不会作为 Agent 可见的“模式”暴露。
 - 宿主机根文件系统以“只读且不递归”方式挂到 `/host`；root 持有的解析器再枚举安全子挂载并逐个只读挂入。这样不会在旧内核上把子挂载意外暴露为可写，也仍能读取独立业务数据盘。容器根目录同样只读，只有容器自己的 `/tmp` 是受限临时盘。
 - 容器没有网络、Docker socket、宿主机 `/run`、`/tmp`、`/proc`、`/sys` 或 `/dev`，不能控制
   systemd、Docker 或宿主进程。
@@ -17,15 +19,14 @@
 - 输出会做常见密码、Token、Authorization、URL 凭据和 PEM 私钥脱敏。但任意 root 读取能力
   无法从数学上保证识别所有业务秘密，新增凭据目录时必须同步加入遮蔽清单。
 
-这个沙箱不替代现有结构化诊断：`systemctl`、Docker 容器状态和 socket/PID 发现仍走原来的
-只读网关。宿主机程序版本、PATH、别名等必须执行宿主机程序才能成立的事实也不以这个容器的
-运行结果为准；结构化诊断未覆盖时应明确报告无法核验。真正写操作仍只能调用已登记写工具，
-经过人工审批后进入固定写网关。
+这个沙箱不替代现有结构化运行时探针：`systemctl`、Docker 容器状态和 socket/PID 发现仍走
+固定只读网关；普通宿主机文件、OS 和程序版本则可直接在宿主机只读语境中核验。真正写操作
+仍只能调用已登记写工具，经过人工审批后进入固定写网关。
 
 ## 协议
 
 ```json
-{"command":"rg -n redis /host/etc /host/www","timeout":20}
+{"command":"python --version","timeout":20,"scope":"host"}
 ```
 
 返回：
@@ -59,18 +60,18 @@ Docker daemon 的全局镜像源。镜像内部较大的 Debian 主仓库索引�
 
 ```bash
 # 应成功
-printf '%s' '{"command":"cat /host/etc/hosts","timeout":10}' \
+printf '%s' '{"command":"cat /etc/hosts; python --version","timeout":10,"scope":"host"}' \
   | sudo -u aioms sudo -n -- /usr/local/sbin/aioms-root-read
 
-printf '%s' '{"command":"rg -n redis /host/etc /host/www 2>/dev/null","timeout":20}' \
+printf '%s' '{"command":"rg -n redis /host/etc /host/www 2>/dev/null","timeout":20,"scope":"toolbox"}' \
   | sudo -u aioms sudo -n -- /usr/local/sbin/aioms-root-read
 
 # 宿主机写入应失败
-printf '%s' '{"command":"touch /host/etc/aioms-test","timeout":10}' \
+printf '%s' '{"command":"touch /etc/aioms-test","timeout":10,"scope":"host"}' \
   | sudo -u aioms sudo -n -- /usr/local/sbin/aioms-root-read
 
 # 网络与控制面应失败
-printf '%s' '{"command":"systemctl restart nginx; python3 -c '\''import socket; socket.create_connection((\"example.com\", 443))'\''","timeout":10}' \
+printf '%s' '{"command":"systemctl restart nginx; python3 -c '\''import socket; socket.create_connection((\"example.com\", 443))'\''","timeout":10,"scope":"host"}' \
   | sudo -u aioms sudo -n -- /usr/local/sbin/aioms-root-read
 ```
 

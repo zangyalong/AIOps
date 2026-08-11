@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import re
@@ -17,6 +18,9 @@ MAX_REQUEST_BYTES = 16_384
 MAX_COMMAND_CHARS = 8_192
 MAX_OUTPUT_BYTES = 65_536
 MAX_TIMEOUT_SECONDS = 20
+
+_PR_CAP_AMBIENT = 47
+_PR_CAP_AMBIENT_CLEAR_ALL = 4
 
 _CONTROL_CHARACTER = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 _SECRET_ASSIGNMENT = re.compile(
@@ -66,7 +70,7 @@ def _redact(value: str) -> str:
     return _SECRET_ASSIGNMENT.sub(r"\1[已脱敏]", value)
 
 
-def _load_request() -> tuple[str, int]:
+def _load_request() -> tuple[str, int, str]:
     raw = sys.stdin.buffer.read(MAX_REQUEST_BYTES + 1)
     if len(raw) > MAX_REQUEST_BYTES:
         _fail(f"请求不能超过 {MAX_REQUEST_BYTES} 字节")
@@ -80,7 +84,7 @@ def _load_request() -> tuple[str, int]:
 
     if not isinstance(request, dict):
         _fail("请求必须是 JSON 对象")
-    if set(request) - {"command", "timeout"}:
+    if set(request) - {"command", "timeout", "scope"}:
         _fail("请求包含不支持的字段")
 
     command = request.get("command")
@@ -97,7 +101,80 @@ def _load_request() -> tuple[str, int]:
     if not 1 <= timeout <= MAX_TIMEOUT_SECONDS:
         _fail(f"timeout 必须在 1 到 {MAX_TIMEOUT_SECONDS} 秒之间")
 
-    return command, timeout
+    scope = request.get("scope", "toolbox")
+    if scope not in {"host", "toolbox"}:
+        _fail("scope 只能是 host 或 toolbox")
+
+    return command, timeout, scope
+
+
+def _load_libcap() -> ctypes.CDLL | None:
+    """在进入宿主机根目录前加载镜像自带的 libcap。"""
+    # 单元测试会直接在 macOS 执行工具箱路径；真实入口只会运行在固定 Linux 镜像中。
+    if sys.platform != "linux":
+        return None
+    try:
+        libcap = ctypes.CDLL("libcap.so.2", use_errno=True)
+    except OSError as exc:
+        _fail(f"无法加载 libcap2：{exc}")
+    libcap.cap_from_text.argtypes = [ctypes.c_char_p]
+    libcap.cap_from_text.restype = ctypes.c_void_p
+    libcap.cap_set_proc.argtypes = [ctypes.c_void_p]
+    libcap.cap_set_proc.restype = ctypes.c_int
+    libcap.cap_free.argtypes = [ctypes.c_void_p]
+    libcap.cap_free.restype = ctypes.c_int
+    return libcap
+
+
+def _retain_read_capability_only(libcap: ctypes.CDLL | None) -> None:
+    """移除进入宿主根所需的临时能力，只保留只读穿透权限。
+
+    容器同时启用了 no_new_privileges，子进程无法通过 setuid 或文件 capability 把已经移除的
+    SYS_CHROOT 重新取回。任意调查命令开始执行前都必须先完成此步骤。
+    """
+    if libcap is None:
+        return
+
+    capabilities = libcap.cap_from_text(b"cap_dac_read_search=ep")
+    if not capabilities:
+        errno = ctypes.get_errno()
+        _fail(f"无法构造只读 capability 集合：errno={errno}")
+    try:
+        if libcap.cap_set_proc(capabilities) != 0:
+            errno = ctypes.get_errno()
+            _fail(f"无法收回临时 Linux capability：errno={errno}")
+    finally:
+        libcap.cap_free(capabilities)
+
+    # Docker 默认不会设置 ambient capability；显式清空可防止运行环境变化后产生继承。
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(_PR_CAP_AMBIENT, _PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0) != 0:
+        errno = ctypes.get_errno()
+        _fail(f"无法清空 ambient capability：errno={errno}")
+
+
+def _enter_execution_scope(scope: str) -> tuple[str, str]:
+    # host scope chroot 后只能看到宿主文件，因此镜像依赖必须在这里提前装载。
+    libcap = _load_libcap()
+    if scope == "host":
+        # chroot 本身不是安全边界；真正的边界来自外层容器 namespace、只读挂载、无网络、
+        # 敏感路径遮蔽和 capability 收回。这里仅用于让绝对路径和动态链接器指向宿主机。
+        try:
+            os.chroot("/host")
+            os.chdir("/")
+        except OSError as exc:
+            _fail(f"无法进入宿主机只读文件树：{exc}")
+        _retain_read_capability_only(libcap)
+        if os.path.exists("/bin/bash"):
+            shell = "/bin/bash"
+        elif os.path.exists("/bin/sh"):
+            shell = "/bin/sh"
+        else:
+            _fail("目标服务器缺少 /bin/bash 和 /bin/sh")
+        return shell, "/"
+
+    _retain_read_capability_only(libcap)
+    return "/bin/bash", "/tmp"
 
 
 def _terminate(process: subprocess.Popen[bytes]) -> None:
@@ -114,7 +191,13 @@ def _terminate(process: subprocess.Popen[bytes]) -> None:
         process.wait()
 
 
-def _run(command: str, timeout: int) -> tuple[int, str, bool, bool]:
+def _run(
+    command: str,
+    timeout: int,
+    *,
+    shell: str,
+    cwd: str,
+) -> tuple[int, str, bool, bool]:
     environment = {
         "HOME": "/tmp",
         "LANG": "C.UTF-8",
@@ -123,15 +206,22 @@ def _run(command: str, timeout: int) -> tuple[int, str, bool, bool]:
         "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         "SYSTEMD_PAGER": "cat",
     }
+    shell_args = [shell]
+    if shell.endswith("bash"):
+        shell_args.extend(["--noprofile", "--norc", "-o", "pipefail"])
+    shell_args.extend(["-c", command])
     process = subprocess.Popen(
-        ["/bin/bash", "--noprofile", "--norc", "-o", "pipefail", "-c", command],
-        cwd="/tmp",
+        shell_args,
+        cwd=cwd,
         env=environment,
-        stdin=subprocess.DEVNULL,
+        # host scope 会遮蔽 /dev，使用匿名管道提供 EOF，不能依赖 /dev/null。
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         start_new_session=True,
     )
+    assert process.stdin is not None
+    process.stdin.close()
     assert process.stdout is not None
 
     selector = selectors.DefaultSelector()
@@ -189,8 +279,17 @@ def _run(command: str, timeout: int) -> tuple[int, str, bool, bool]:
 
 
 def main() -> None:
-    command, timeout = _load_request()
-    exit_code, output, timed_out, truncated = _run(command, timeout)
+    command, timeout, scope = _load_request()
+    shell, cwd = _enter_execution_scope(scope)
+    try:
+        exit_code, output, timed_out, truncated = _run(
+            command,
+            timeout,
+            shell=shell,
+            cwd=cwd,
+        )
+    except OSError as exc:
+        _fail(f"无法启动调查命令：{exc}")
     _emit(
         exit_code=exit_code,
         output=output,

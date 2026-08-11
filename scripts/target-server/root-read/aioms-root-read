@@ -208,6 +208,7 @@ timeout \
         --read-only \
         --cap-drop ALL \
         --cap-add DAC_READ_SEARCH \
+        --cap-add SYS_CHROOT \
         --security-opt no-new-privileges:true \
         --security-opt seccomp=builtin \
         --pids-limit 128 \

@@ -23,12 +23,13 @@ RUN sed -Ei \
         findutils \
         grep \
         jq \
+        libcap2 \
         procps \
         python3 \
         ripgrep \
         systemd \
     && /usr/bin/python3 -c \
-        'import json, os, re, selectors, signal, subprocess, sys, time; from typing import NoReturn' \
+        'import ctypes, json, os, re, selectors, signal, subprocess, sys, time; ctypes.CDLL("libcap.so.2"); from typing import NoReturn' \
     && rm -rf /var/lib/apt/lists/* \
     && rm -f /etc/apt/apt.conf.d/99aioms-build
 

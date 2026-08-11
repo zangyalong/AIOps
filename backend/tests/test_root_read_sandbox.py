@@ -32,6 +32,7 @@ class RootReadSandboxContractTest(unittest.TestCase):
             "--read-only",
             "--cap-drop ALL",
             "--cap-add DAC_READ_SEARCH",
+            "--cap-add SYS_CHROOT",
             "--security-opt no-new-privileges:true",
             "--security-opt seccomp=builtin",
             "--pids-limit 128",
@@ -82,9 +83,20 @@ class RootReadSandboxContractTest(unittest.TestCase):
     def test_dockerfile_installs_the_full_python_standard_library(self) -> None:
         dockerfile = (ROOT_READ_DIR / "Dockerfile").read_text()
         self.assertIn("        python3 \\", dockerfile)
+        self.assertIn("        libcap2 \\", dockerfile)
         self.assertNotIn("python3-minimal", dockerfile)
-        self.assertIn("import json, os, re, selectors", dockerfile)
+        self.assertIn("import ctypes, json, os, re, selectors", dockerfile)
+        self.assertIn('ctypes.CDLL("libcap.so.2")', dockerfile)
         self.assertIn("from typing import NoReturn", dockerfile)
+
+    def test_host_scope_preloads_libcap_and_does_not_require_dev_null(self) -> None:
+        entrypoint = ENTRYPOINT.read_text()
+        self.assertLess(
+            entrypoint.index("libcap = _load_libcap()"),
+            entrypoint.index('os.chroot("/host")'),
+        )
+        self.assertIn("stdin=subprocess.PIPE", entrypoint)
+        self.assertNotIn("stdin=subprocess.DEVNULL", entrypoint)
 
     def test_launcher_masks_control_and_secret_paths(self) -> None:
         launcher = (ROOT_READ_DIR / "aioms-root-read").read_text()

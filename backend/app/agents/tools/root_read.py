@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import Any, Literal
 
 import asyncssh
 from langchain_core.tools import tool
@@ -25,11 +25,17 @@ ROOT_READ_TIMEOUT_SECONDS = 20
 SSH_TIMEOUT_SECONDS = 35
 MAX_COMMAND_CHARS = 8_192
 MAX_OUTPUT_CHARS = 12_000
-ROOT_READ_SCOPE_NOTICE = (
+ROOT_READ_TOOLBOX_NOTICE = (
     "[执行语境] Shell、PATH、程序版本及未加 /host 前缀的路径都属于 AIOMS "
     "诊断容器，不属于目标服务器；宿主机文件根是 /host。看到 AIOMS_PATH_MASKED "
     "表示路径已被安全遮蔽，不能判断为空或不存在。"
 )
+ROOT_READ_HOST_NOTICE = (
+    "[证据范围] 命令的 /、PATH 和可执行程序均来自目标服务器；宿主文件系统只读，"
+    "敏感路径和运行时控制面已遮蔽。看到 AIOMS_PATH_MASKED 表示无法读取该路径。"
+)
+
+RootReadScope = Literal["host", "toolbox"]
 
 _CONTROL_CHARACTER = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 _SECRET_ASSIGNMENT = re.compile(
@@ -91,22 +97,23 @@ def _failure(
     )
 
 
-@tool(args_schema=RootReadInput)
-async def run_root_read_command(server_name: str, command: str) -> OperationResult:
-    """在服务器的一次性 root 只读文件沙箱中执行通用调查命令。
+async def execute_root_read(
+    server_name: str,
+    command: str,
+    *,
+    scope: RootReadScope,
+) -> OperationResult:
+    """调用固定 root-read 网关；执行语境只由后端选择，不接受模型透传。"""
+    try:
+        parsed = RootReadInput(server_name=server_name, command=command)
+    except ValueError as exc:
+        return _failure(str(exc), code="invalid_request")
 
-    重要：Shell、PATH、可执行程序和容器根目录属于 AIOMS Debian 诊断容器，并非目标服务器；
-    只有 /host/... 才表示宿主机文件。不得用这里的 python/java/node --version、command -v、
-    /etc/os-release、/usr 或 /tmp 推断宿主机环境。可使用管道以及 find、rg、grep、jq、cat 等
-    容器工具读取 /host 下未遮蔽的宿主机文件；AIOMS_PATH_MASKED 表示路径已被安全遮蔽，不能
-    据此判断为空或不存在。实时运行状态应使用结构化诊断工具，任何修改必须改用需要人工审批
-    的写工具。
-    """
     async with AsyncSessionLocal() as db:
-        server = await server_service.get_server_by_name_or_ip(db, server_name)
+        server = await server_service.get_server_by_name_or_ip(db, parsed.server_name)
     if server is None:
         return _failure(
-            f"没有找到名称或 IP 为 {server_name} 的服务器，请先确认服务器。",
+            f"没有找到名称或 IP 为 {parsed.server_name} 的服务器，请先确认服务器。",
             code="server_not_found",
         )
 
@@ -114,7 +121,7 @@ async def run_root_read_command(server_name: str, command: str) -> OperationResu
         params = build_connect_params(server)
     except SSHNotConfigured:
         return _failure(
-            f"{server_name} 没有配置 AIOMS SSH 身份，无法使用 root 只读沙箱。",
+            f"{parsed.server_name} 没有配置 AIOMS SSH 身份，无法执行宿主机只读调查。",
             code="ssh_not_configured",
         )
     except SSHKeyMissing as exc:
@@ -124,7 +131,11 @@ async def run_root_read_command(server_name: str, command: str) -> OperationResu
         )
 
     request = json.dumps(
-        {"command": command, "timeout": ROOT_READ_TIMEOUT_SECONDS},
+        {
+            "command": parsed.command,
+            "timeout": ROOT_READ_TIMEOUT_SECONDS,
+            "scope": scope,
+        },
         ensure_ascii=False,
         separators=(",", ":"),
     )
@@ -145,13 +156,13 @@ async def run_root_read_command(server_name: str, command: str) -> OperationResu
             )
     except TimeoutError:
         return _failure(
-            f"{server_name} 的 root 只读沙箱超过 {SSH_TIMEOUT_SECONDS} 秒，已停止等待。",
+            f"{parsed.server_name} 的宿主机只读调查超过 {SSH_TIMEOUT_SECONDS} 秒，已停止等待。",
             code="ssh_timeout",
             timed_out=True,
         )
     except (asyncssh.Error, OSError) as exc:
         return _failure(
-            f"连接或调用 {server_name} 的 root 只读沙箱失败：{exc}",
+            f"连接或调用 {parsed.server_name} 的宿主机只读调查失败：{exc}",
             code="ssh_failed",
         )
 
@@ -162,14 +173,14 @@ async def run_root_read_command(server_name: str, command: str) -> OperationResu
     except json.JSONDecodeError:
         detail = _redact(f"{stdout}{stderr}".strip()) or "远端没有返回内容"
         return _failure(
-            f"{server_name} 的 root 只读网关返回了无效协议：{detail[:1000]}",
+            f"{parsed.server_name} 的 root 只读网关返回了无效协议：{detail[:1000]}",
             code="invalid_gateway_response",
             exit_code=result.exit_status,
         )
 
     if not isinstance(payload, dict):
         return _failure(
-            f"{server_name} 的 root 只读网关返回值不是 JSON 对象。",
+            f"{parsed.server_name} 的 root 只读网关返回值不是 JSON 对象。",
             code="invalid_gateway_response",
             exit_code=result.exit_status,
         )
@@ -186,7 +197,7 @@ async def run_root_read_command(server_name: str, command: str) -> OperationResu
         or not isinstance(output, str)
     ):
         return _failure(
-            f"{server_name} 的 root 只读网关响应字段不完整。",
+            f"{parsed.server_name} 的 root 只读网关响应字段不完整。",
             code="invalid_gateway_response",
             exit_code=result.exit_status,
         )
@@ -195,12 +206,21 @@ async def run_root_read_command(server_name: str, command: str) -> OperationResu
     if len(output) > MAX_OUTPUT_CHARS:
         output = output[:MAX_OUTPUT_CHARS] + "\n…（后端再次截断）"
         truncated = True
-    message = (
-        f"（root 只读沙箱：{server_name}；退出码 {exit_code}；"
-        f"超时={'是' if timed_out else '否'}；截断={'是' if truncated else '否'}）"
-        f"\n{ROOT_READ_SCOPE_NOTICE}\n$ {command}\n{output}"
+    scope_notice = (
+        ROOT_READ_HOST_NOTICE if scope == "host" else ROOT_READ_TOOLBOX_NOTICE
     )
-    metadata = {"exit_code": exit_code, "timed_out": timed_out}
+    source_label = "宿主机只读调查" if scope == "host" else "文件调查工具箱"
+    message = (
+        f"（{source_label}：{parsed.server_name}；退出码 {exit_code}；"
+        f"超时={'是' if timed_out else '否'}；截断={'是' if truncated else '否'}）"
+        f"\n{scope_notice}\n$ {parsed.command}\n{output}"
+    )
+    metadata = {
+        "exit_code": exit_code,
+        "timed_out": timed_out,
+        "truncated": truncated,
+        "source": "host_read" if scope == "host" else "file_toolbox",
+    }
     if exit_code == 0 and not timed_out:
         return OperationResult.success(
             message,
@@ -212,3 +232,14 @@ async def run_root_read_command(server_name: str, command: str) -> OperationResu
         code="root_read_failed",
         metadata=metadata,
     )
+
+
+async def inspect_host(server_name: str, command: str) -> OperationResult:
+    """在宿主机真实根目录和 PATH 下执行内核强制只读的通用调查。"""
+    return await execute_root_read(server_name, command, scope="host")
+
+
+@tool(args_schema=RootReadInput)
+async def run_root_read_command(server_name: str, command: str) -> OperationResult:
+    """兼容旧调用的文件工具箱入口；新 Agent 不直接使用本工具。"""
+    return await execute_root_read(server_name, command, scope="toolbox")

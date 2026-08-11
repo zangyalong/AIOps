@@ -75,6 +75,8 @@ class RootReadExecutionTest(unittest.IsolatedAsyncioTestCase):
     async def _invoke(
         self,
         response: dict[str, object] | str,
+        *,
+        host: bool = False,
     ) -> tuple[OperationResult, _FakeConnection]:
         server = SimpleNamespace(name="web-01", ip_address="127.0.0.1")
         params = SimpleNamespace(
@@ -102,12 +104,17 @@ class RootReadExecutionTest(unittest.IsolatedAsyncioTestCase):
                 return_value=_ConnectionContext(connection),
             ),
         ):
-            result = await root_read.run_root_read_command.ainvoke(
-                {
-                    "server_name": "web-01",
-                    "command": "rg -n redis /host/etc | head",
-                }
-            )
+            if host:
+                result = await root_read.inspect_host(
+                    "web-01", "python --version; ls -la /tmp"
+                )
+            else:
+                result = await root_read.run_root_read_command.ainvoke(
+                    {
+                        "server_name": "web-01",
+                        "command": "rg -n redis /host/etc | head",
+                    }
+                )
         self.assertIsInstance(result, OperationResult)
         return result, connection
 
@@ -122,7 +129,15 @@ class RootReadExecutionTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertTrue(result.ok)
-        self.assertEqual(result.metadata, {"exit_code": 0, "timed_out": False})
+        self.assertEqual(
+            result.metadata,
+            {
+                "exit_code": 0,
+                "timed_out": False,
+                "truncated": False,
+                "source": "file_toolbox",
+            },
+        )
         self.assertIn("Shell、PATH、程序版本", result.message)
         self.assertIn("宿主机文件根是 /host", result.message)
         self.assertIn("AIOMS_PATH_MASKED", result.message)
@@ -135,6 +150,7 @@ class RootReadExecutionTest(unittest.IsolatedAsyncioTestCase):
         request = json.loads(str(kwargs["input"]))
         self.assertEqual(request["command"], "rg -n redis /host/etc | head")
         self.assertEqual(request["timeout"], root_read.ROOT_READ_TIMEOUT_SECONDS)
+        self.assertEqual(request["scope"], "toolbox")
 
     async def test_redacts_output_and_preserves_failure_metadata(self) -> None:
         result, _ = await self._invoke(
@@ -153,7 +169,15 @@ class RootReadExecutionTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertFalse(result.ok)
-        self.assertEqual(result.metadata, {"exit_code": 1, "timed_out": True})
+        self.assertEqual(
+            result.metadata,
+            {
+                "exit_code": 1,
+                "timed_out": True,
+                "truncated": False,
+                "source": "file_toolbox",
+            },
+        )
         self.assertNotIn("plain-text", result.message)
         self.assertNotIn("Bearer abc", result.message)
         self.assertNotIn("db-secret", result.message)
@@ -165,3 +189,21 @@ class RootReadExecutionTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(result.ok)
         self.assertEqual(result.code, "invalid_gateway_response")
+
+    async def test_host_inspection_uses_real_host_scope(self) -> None:
+        result, connection = await self._invoke(
+            {
+                "exit_code": 0,
+                "timed_out": False,
+                "truncated": False,
+                "output": "Python 3.6.8",
+            },
+            host=True,
+        )
+
+        self.assertTrue(result.ok)
+        self.assertIn("/、PATH 和可执行程序均来自目标服务器", result.message)
+        self.assertNotIn("宿主机文件根是 /host", result.message)
+        request = json.loads(str(connection.calls[0][1]["input"]))
+        self.assertEqual(request["scope"], "host")
+        self.assertEqual(request["command"], "python --version; ls -la /tmp")

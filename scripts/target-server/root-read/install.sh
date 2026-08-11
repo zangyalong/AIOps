@@ -121,6 +121,16 @@ fi
 [[ "$test_output" == *'"output": "aioms-root-read-ok"'* ]] \
     || fail "root-read 容器自检返回异常：$test_output"
 
+if host_test_output="$(printf '{"command":"test -r /etc/os-release && printf aioms-host-read-ok","timeout":5,"scope":"host"}' \
+    | /usr/local/sbin/aioms-root-read)"; then
+    :
+else
+    host_test_status=$?
+    fail "宿主机只读语境自检失败（退出码 $host_test_status）：${host_test_output:-无标准输出}"
+fi
+[[ "$host_test_output" == *'"output": "aioms-host-read-ok"'* ]] \
+    || fail "宿主机只读语境自检返回异常：$host_test_output"
+
 echo "AIOMS root 只读沙箱安装完成。"
 echo "SSH 用户：$AIOMS_SSH_USER"
 echo "固定镜像：$image_id"
