@@ -98,6 +98,16 @@ class RootReadSandboxContractTest(unittest.TestCase):
             [(b"/", b"ext4"), (b"/data disk", b"ext4")],
         )
 
+    def test_host_mount_parser_uses_explicit_python_311(self) -> None:
+        helper = (ROOT_READ_DIR / "host_mounts.py").read_text()
+        launcher = (ROOT_READ_DIR / "aioms-root-read").read_text()
+        installer = (ROOT_READ_DIR / "install.sh").read_text()
+        self.assertTrue(helper.startswith("#!/usr/bin/python3.11\n"))
+        self.assertIn('readonly HOST_PYTHON="/usr/bin/python3.11"', launcher)
+        self.assertIn('"$HOST_PYTHON" "$HOST_MOUNTS_HELPER"', launcher)
+        self.assertIn('readonly HOST_PYTHON="/usr/bin/python3.11"', installer)
+        self.assertIn('"$HOST_PYTHON" "$SCRIPT_DIR/host_mounts.py"', installer)
+
     def test_sudoers_allows_only_the_no_argument_gateway(self) -> None:
         sudoers = (ROOT_READ_DIR / "aioms-root-read.sudoers").read_text()
         self.assertIn('/usr/local/sbin/aioms-root-read ""', sudoers)

@@ -39,7 +39,9 @@
 sudo ./install.sh aioms
 ```
 
-首次安装需要 Docker 可用。Debian 基础镜像默认通过 DaoCloud 国内代理
+首次安装需要 Docker 和 `/usr/bin/python3.11` 可用；Alibaba Cloud Linux 3 可先执行
+`sudo dnf install -y python3.11`。宿主机挂载解析器固定使用 Python 3.11，不会替换系统默认
+Python 3.6。Debian 基础镜像默认通过 DaoCloud 国内代理
 `m.daocloud.io/docker.io/library/debian:bookworm-slim` 拉取，只影响本次镜像构建，不修改目标机
 Docker daemon 的全局镜像源。镜像内部较大的 Debian 主仓库索引通过清华 TUNA 拉取，安全更新
 仍保留 Debian 官方源；APT 构建阶段设置 3 次重试、30 秒连接超时，并关闭 HTTP Pipelining，

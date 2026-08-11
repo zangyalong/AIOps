@@ -16,15 +16,16 @@ readonly IMAGE_ID_FILE="/etc/aioms/root-read.image-id"
 readonly EMPTY_DIR="/var/lib/aioms/root-read/empty-dir"
 readonly EMPTY_FILE="/var/lib/aioms/root-read/empty-file"
 readonly HOST_MOUNTS_HELPER="/usr/local/libexec/aioms/root-read-host-mounts.py"
+readonly HOST_PYTHON="/usr/bin/python3.11"
 readonly DOCKER_BIN="$(command -v docker || true)"
 
 [[ -n "$DOCKER_BIN" ]] || fail "找不到 Docker CLI"
 [[ -r "$IMAGE_ID_FILE" ]] || fail "缺少固定镜像 ID：$IMAGE_ID_FILE"
 [[ -d "$EMPTY_DIR" && -f "$EMPTY_FILE" ]] || fail "敏感路径遮蔽资源不完整"
 [[ -x "$HOST_MOUNTS_HELPER" ]] || fail "缺少 root 所有的宿主机挂载解析器"
+[[ -x "$HOST_PYTHON" ]] || fail "缺少 Python 3.11：请先安装 python3.11"
 command -v timeout >/dev/null 2>&1 || fail "系统缺少 timeout 命令"
 command -v mktemp >/dev/null 2>&1 || fail "系统缺少 mktemp 命令"
-command -v python3 >/dev/null 2>&1 || fail "系统缺少 python3 命令"
 
 readonly IMAGE_ID="$(tr -d '[:space:]' <"$IMAGE_ID_FILE")"
 [[ "$IMAGE_ID" =~ ^sha256:[a-f0-9]{64}$ ]] || fail "固定镜像 ID 格式不合法"
@@ -130,7 +131,7 @@ is_hidden_path() {
     return 1
 }
 
-if ! "$HOST_MOUNTS_HELPER" >"$MOUNT_LIST_FILE"; then
+if ! "$HOST_PYTHON" "$HOST_MOUNTS_HELPER" >"$MOUNT_LIST_FILE"; then
     fail "无法解析宿主机挂载点"
 fi
 

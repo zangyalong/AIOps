@@ -32,9 +32,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for required_command in docker install python3 sha256sum visudo; do
+for required_command in docker install sha256sum visudo; do
     command -v "$required_command" >/dev/null 2>&1 || fail "系统缺少 $required_command"
 done
+
+readonly HOST_PYTHON="/usr/bin/python3.11"
+[[ -x "$HOST_PYTHON" ]] ||
+    fail "系统缺少 Python 3.11：请先执行 dnf install -y python3.11"
+"$HOST_PYTHON" "$SCRIPT_DIR/host_mounts.py" >/dev/null ||
+    fail "Python 3.11 无法运行宿主机挂载解析器"
 
 docker_versions="$(
     docker version --format '{{.Client.Version}} {{.Server.Version}}' 2>/dev/null
