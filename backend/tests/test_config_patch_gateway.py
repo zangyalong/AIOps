@@ -100,7 +100,7 @@ class ConfigPatchHelperTest(unittest.TestCase):
 
 
 class FileGatewayContractTest(unittest.TestCase):
-    def test_fixed_gateways_expose_structured_patch_and_transactional_nginx(
+    def test_fixed_gateways_expose_structured_patch_without_service_actions(
         self,
     ) -> None:
         reader = (FILES_DIR / "aioms-file-read").read_text()
@@ -112,12 +112,11 @@ class FileGatewayContractTest(unittest.TestCase):
         self.assertIn("policy_allows_write", reader)
         self.assertIn("config-apply", writer)
         self.assertIn('"$CONFIG_PATCH_HELPER"', writer)
-        self.assertIn("apply-nginx", writer)
-        self.assertIn("Nginx 配置禁止使用普通整文件更新", writer)
-        self.assertIn('"$nginx_bin" -t', writer)
-        self.assertIn('"$nginx_bin" -s reload', writer)
-        self.assertIn("timeout --signal=KILL 15s", writer)
-        self.assertIn("restore_backup", writer)
+        self.assertIn('cp -a -- "$target" "$backup"', writer)
+        self.assertIn('mv -f -- "$tmp" "$target"', writer)
+        self.assertNotIn("apply-nginx", writer)
+        self.assertNotIn("nginx", writer.lower())
+        self.assertNotIn("reload", writer.lower())
         self.assertIn("config_patch.py", installer)
         self.assertNotIn("NOPASSWD: ALL", sudoers)
 

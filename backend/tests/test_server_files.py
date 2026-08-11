@@ -116,18 +116,7 @@ class ServerFileToolValidationTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("-port=3306", payload["preview_diff"])
         self.assertIn("+port=3307", payload["preview_diff"])
         self.assertFalse(payload["diff_truncated"])
-        self.assertEqual(payload["write_tool"], "update_server_file")
-
-        nginx_preview = server_files._build_preview(
-            server_files.RemoteFileSnapshot(
-                path="/www/server/panel/vhost/nginx/mingzang.online.conf",
-                sha256="c" * 64,
-                redacted=False,
-                content="server_name old;\n",
-            ),
-            "server_name new;\n",
-        )
-        self.assertEqual(nginx_preview["write_tool"], "apply_nginx_config")
+        self.assertNotIn("write_tool", payload)
 
     async def test_structured_preview_works_without_reading_redacted_file(self) -> None:
         server = SimpleNamespace(name="web-01")
@@ -244,25 +233,10 @@ class ServerFileToolValidationTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("SERVER_PORT", connection.commands[0])
         self.assertNotIn("POSTGRES_PASSWORD", connection.commands[0])
 
-    async def test_nginx_apply_uses_transactional_gateway_mode(self) -> None:
+    async def test_nginx_path_uses_generic_file_editor_without_service_action(
+        self,
+    ) -> None:
         execute = AsyncMock(return_value=OperationResult.success("ok"))
-        with patch.object(server_file_executor, "update_server_file", execute):
-            result = await server_files.apply_nginx_config.ainvoke(
-                {
-                    "server_name": "web-01",
-                    "path": "/www/server/panel/vhost/nginx/mingzang.online.conf",
-                    "new_content": "server {}\n",
-                    "expected_sha256": "a" * 64,
-                    "preview_hash": "b" * 64,
-                    "preview_diff": "-old\n+new\n",
-                }
-            )
-
-        self.assertTrue(result.ok)
-        self.assertEqual(execute.await_args.kwargs["gateway_action"], "apply-nginx")
-
-    async def test_generic_file_update_cannot_bypass_nginx_transaction(self) -> None:
-        execute = AsyncMock()
         with patch.object(server_file_executor, "update_server_file", execute):
             result = await server_files.update_server_file.ainvoke(
                 {
@@ -275,9 +249,9 @@ class ServerFileToolValidationTest(unittest.IsolatedAsyncioTestCase):
                 }
             )
 
-        self.assertFalse(result.ok)
-        self.assertIn("apply_nginx_config", result.message)
-        execute.assert_not_awaited()
+        self.assertTrue(result.ok)
+        execute.assert_awaited_once()
+        self.assertNotIn("gateway_action", execute.await_args.kwargs)
 
     async def test_structured_patch_rejects_sensitive_selector(self) -> None:
         result = await server_files.preview_server_config_patch.ainvoke(

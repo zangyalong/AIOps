@@ -241,14 +241,6 @@ def _validate_config_patch(
     return None
 
 
-def _validate_nginx_path(path: str) -> str | None:
-    if path.startswith("/etc/nginx/") and path.endswith(".conf"):
-        return None
-    if path.startswith("/www/server/panel/vhost/nginx/") and path.endswith(".conf"):
-        return None
-    return "Nginx 发布只允许 /etc/nginx 下或宝塔 vhost/nginx 目录中的 .conf 文件"
-
-
 async def _resolve_server(server_name: str) -> tuple[Server | None, str | None]:
     async with AsyncSessionLocal() as db:
         server = await server_service.get_server_by_name_or_ip(db, server_name)
@@ -460,11 +452,6 @@ def _build_preview(snapshot: RemoteFileSnapshot, new_content: str) -> dict[str, 
         "preview_diff": diff or "（内容没有变化）",
         "changed": bool(diff),
         "diff_truncated": diff_truncated,
-        "write_tool": (
-            "apply_nginx_config"
-            if _validate_nginx_path(snapshot.path) is None
-            else "update_server_file"
-        ),
     }
 
 
@@ -527,8 +514,7 @@ async def preview_server_file_update(
     """读取当前文件并生成统一差异预览，不修改服务器。
 
     文件只要含脱敏字段，就拒绝整文件预览，以免模型用脱敏占位符覆盖真实凭据。成功返回的哈希和
-    preview_diff 必须原样交给返回结果指定的 write_tool；Nginx 配置只能交给
-    apply_nginx_config，其他普通文本交给 update_server_file。
+    preview_diff 必须原样交给 update_server_file。
     """
     content_error = _validate_new_content(new_content)
     if content_error:
@@ -607,11 +593,6 @@ async def update_server_file(
     这是高风险写操作。执行前重新读取文件并核对旧哈希、预览哈希和差异；随后上传到固定暂存目录，
     由 root 网关备份、保留所有权与权限并原子替换。不能写入敏感凭据或任意未授权路径。
     """
-    if _validate_nginx_path(path) is None:
-        return OperationResult.failure(
-            "Nginx 配置必须使用 apply_nginx_config，以确保校验、reload 和失败回滚。",
-            code="nginx_requires_transactional_apply",
-        )
     return await server_file_executor.update_server_file(
         server_name,
         path,
@@ -624,39 +605,6 @@ async def update_server_file(
         read_snapshot=_read_snapshot,
         build_preview=_build_preview,
         connect_params=_connect_params_or_error,
-    )
-
-
-@tool(args_schema=UpdateServerFileInput)
-async def apply_nginx_config(
-    server_name: str,
-    path: str,
-    new_content: str,
-    expected_sha256: str,
-    preview_hash: str,
-    preview_diff: str,
-) -> OperationResult:
-    """审批后发布已精确授权的 Nginx 配置并在目标机完成校验与 reload。
-
-    使用 file-update-preview 的完整差异。root 网关原子替换后执行固定 Nginx 二进制的配置测试；
-    测试或 reload 失败会立即恢复备份，不能用于普通文本文件。
-    """
-    path_error = _validate_nginx_path(path)
-    if path_error:
-        return OperationResult.failure(path_error, code="invalid_nginx_path")
-    return await server_file_executor.update_server_file(
-        server_name,
-        path,
-        new_content,
-        expected_sha256,
-        preview_hash,
-        preview_diff,
-        validate_content=_validate_new_content,
-        resolve_server=_resolve_server,
-        read_snapshot=_read_snapshot,
-        build_preview=_build_preview,
-        connect_params=_connect_params_or_error,
-        gateway_action="apply-nginx",
     )
 
 

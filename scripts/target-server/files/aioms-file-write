@@ -66,9 +66,8 @@ if [[ $# -eq 6 && "$1" == "config-apply" ]]; then
     exit 0
 fi
 
-[[ $# -eq 4 && ( "$1" == "apply" || "$1" == "apply-nginx" ) ]] ||
-    file_fail "用法：aioms-file-write apply|apply-nginx TARGET EXPECTED_SHA256 TOKEN | config-apply TARGET EXPECTED_SHA256 FORMAT SELECTOR VALUE_JSON"
-write_mode="$1"
+[[ $# -eq 4 && "$1" == "apply" ]] ||
+    file_fail "用法：aioms-file-write apply TARGET EXPECTED_SHA256 TOKEN | config-apply TARGET EXPECTED_SHA256 FORMAT SELECTOR VALUE_JSON"
 target="$(canonical_existing_path "$2")"
 expected_sha="$3"
 token="$4"
@@ -77,31 +76,6 @@ validate_text_file "$target"
 policy_allows_write "$target" || file_fail "文件未获得精确写入授权：$target"
 [[ "$expected_sha" =~ ^[a-f0-9]{64}$ ]] || file_fail "旧内容 SHA-256 格式不合法"
 [[ "$token" =~ ^[a-f0-9]{32}$ ]] || file_fail "上传令牌格式不合法"
-
-nginx_bin=""
-nginx_config="false"
-case "$target" in
-    /etc/nginx/*.conf|/etc/nginx/conf.d/*.conf|/etc/nginx/sites-available/*|/www/server/panel/vhost/nginx/*.conf)
-        nginx_config="true"
-        ;;
-esac
-if [[ "$nginx_config" == "true" && "$write_mode" != "apply-nginx" ]]; then
-    file_fail "Nginx 配置禁止使用普通整文件更新，必须使用 apply-nginx"
-fi
-if [[ "$write_mode" == "apply-nginx" ]]; then
-    [[ "$nginx_config" == "true" ]] ||
-        file_fail "Nginx 发布只允许已授权的标准 Nginx 配置路径：$target"
-    for candidate in \
-        /www/server/nginx/sbin/nginx \
-        /usr/sbin/nginx \
-        /usr/local/sbin/nginx; do
-        if [[ -x "$candidate" ]]; then
-            nginx_bin="$candidate"
-            break
-        fi
-    done
-    [[ -n "$nginx_bin" ]] || file_fail "没有找到固定位置的 Nginx 可执行文件"
-fi
 
 readonly INCOMING_DIR="/var/lib/aioms/file-incoming"
 payload="$INCOMING_DIR/$token"
@@ -133,8 +107,7 @@ cp -a -- "$target" "$backup"
 
 target_dir="$(dirname -- "$target")"
 tmp="$(mktemp "$target_dir/.aioms-edit.XXXXXX")"
-rollback_tmp=""
-cleanup() { rm -f -- "$tmp" "$rollback_tmp" "$payload"; }
+cleanup() { rm -f -- "$tmp" "$payload"; }
 trap cleanup EXIT
 cat -- "$payload" >"$tmp"
 chown --reference="$target" "$tmp"
@@ -142,38 +115,9 @@ chmod --reference="$target" "$tmp"
 mv -f -- "$tmp" "$target"
 rm -f -- "$payload"
 
-restore_backup() {
-    rollback_tmp="$(mktemp "$target_dir/.aioms-rollback.XXXXXX")"
-    cp -a -- "$backup" "$rollback_tmp"
-    mv -f -- "$rollback_tmp" "$target"
-    rollback_tmp=""
-}
-
-if [[ "$write_mode" == "apply-nginx" ]]; then
-    if ! test_output="$(timeout --signal=KILL 15s "$nginx_bin" -t 2>&1)"; then
-        restore_backup
-        test_output="${test_output:0:4096}"
-        file_fail "Nginx 配置校验失败，已恢复旧文件：$test_output"
-    fi
-    if ! reload_output="$(timeout --signal=KILL 15s "$nginx_bin" -s reload 2>&1)"; then
-        restore_backup
-        reload_output="${reload_output:0:4096}"
-        rollback_status="旧配置已恢复"
-        if ! timeout --signal=KILL 15s "$nginx_bin" -t >/dev/null 2>&1 \
-            || ! timeout --signal=KILL 15s "$nginx_bin" -s reload >/dev/null 2>&1; then
-            rollback_status="旧文件已恢复，但 Nginx 旧配置重载也失败，请立即人工检查"
-        fi
-        file_fail "Nginx reload 失败；$rollback_status：$reload_output"
-    fi
-fi
-
 trap - EXIT
 
 new_sha="$(sha256sum "$target" | awk '{print $1}')"
 echo "已原子更新文件：$target"
 echo "BACKUP=$backup"
 echo "SHA256=$new_sha"
-if [[ "$write_mode" == "apply-nginx" ]]; then
-    echo "NGINX_TEST=passed"
-    echo "NGINX_RELOAD=passed"
-fi

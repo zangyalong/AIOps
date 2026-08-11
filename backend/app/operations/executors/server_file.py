@@ -5,7 +5,7 @@ from __future__ import annotations
 import secrets
 import shlex
 from collections.abc import Awaitable, Callable
-from typing import Any, Literal, Protocol
+from typing import Any, Protocol
 
 import asyncssh
 
@@ -59,7 +59,6 @@ async def update_server_file(
     read_snapshot: ReadSnapshot,
     build_preview: BuildPreview,
     connect_params: ConnectParams,
-    gateway_action: Literal["apply", "apply-nginx"] = "apply",
 ) -> OperationResult:
     content_error = validate_content(new_content)
     if content_error:
@@ -110,7 +109,7 @@ async def update_server_file(
             "-n",
             "--",
             FILE_WRITE_GATEWAY,
-            gateway_action,
+            "apply",
             snapshot.path,
             snapshot.sha256,
             token,

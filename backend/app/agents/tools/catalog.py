@@ -19,7 +19,6 @@ from app.agents.tools.alert_rules import create_alert_rule
 from app.agents.tools.deployment import deploy_server_environment
 from app.agents.tools.investigation import investigate
 from app.agents.tools.server_files import (
-    apply_nginx_config,
     patch_server_config,
     update_server_file,
 )
@@ -194,20 +193,6 @@ def _patch_server_config_action(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _apply_nginx_config_action(args: dict[str, Any]) -> dict[str, Any]:
-    server = str(args.get("server_name") or "?")
-    path = str(args.get("path") or "?")
-    preview_diff = str(args.get("preview_diff") or "（缺少 Nginx 差异预览）")
-    return {
-        "kind": "nginx_config_apply",
-        "title": f"发布并重载 {server} 上的 Nginx 配置 {path}",
-        "server_name": server,
-        "path": path,
-        "command": f"{preview_diff}\n校验通过后 reload；失败自动恢复备份",
-        "preview_hash": str(args.get("preview_hash") or ""),
-    }
-
-
 READ_TOOLS: tuple[BaseTool, ...] = (investigate,)
 
 _WRITE_SPECS = (
@@ -255,11 +240,6 @@ _WRITE_SPECS = (
         tool=patch_server_config,
         risk_level="medium",
         build_action_details=_patch_server_config_action,
-    ),
-    WriteToolSpec(
-        tool=apply_nginx_config,
-        risk_level="high",
-        build_action_details=_apply_nginx_config_action,
     ),
 )
 
