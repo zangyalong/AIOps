@@ -1,7 +1,19 @@
 ARG BASE_IMAGE=m.daocloud.io/docker.io/library/debian:bookworm-slim
 FROM ${BASE_IMAGE}
 
-RUN apt-get update \
+RUN sed -Ei \
+        's|https?://deb.debian.org/debian$|http://mirrors.tuna.tsinghua.edu.cn/debian|' \
+        /etc/apt/sources.list.d/debian.sources \
+    && grep -q \
+        '^URIs: http://mirrors.tuna.tsinghua.edu.cn/debian$' \
+        /etc/apt/sources.list.d/debian.sources \
+    && printf '%s\n' \
+        'Acquire::Retries "3";' \
+        'Acquire::http::Timeout "30";' \
+        'Acquire::https::Timeout "30";' \
+        'Acquire::http::Pipeline-Depth "0";' \
+        > /etc/apt/apt.conf.d/99aioms-build \
+    && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         bash \
         ca-certificates \
@@ -15,7 +27,8 @@ RUN apt-get update \
         python3-minimal \
         ripgrep \
         systemd \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -f /etc/apt/apt.conf.d/99aioms-build
 
 COPY entrypoint.py /usr/local/libexec/aioms/root-read-entrypoint.py
 
