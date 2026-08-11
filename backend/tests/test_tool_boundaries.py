@@ -59,6 +59,9 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         prompt = chat_graph.OPS_AGENT_PROMPT
         self.assertIn("调查与变更", prompt)
         self.assertIn("目标服务器真实的 `/`、PATH 和程序", prompt)
+        self.assertIn("700/777", prompt)
+        self.assertIn("不能据此推断", prompt)
+        self.assertIn("本调查也始终不可写", prompt)
         self.assertNotIn("run_diagnostic_command", prompt)
         self.assertNotIn("run_root_read_command", prompt)
         self.assertNotIn("/host", prompt)

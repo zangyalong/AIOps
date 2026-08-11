@@ -32,7 +32,9 @@ ROOT_READ_TOOLBOX_NOTICE = (
 )
 ROOT_READ_HOST_NOTICE = (
     "[证据范围] 命令的 /、PATH 和可执行程序均来自目标服务器；宿主文件系统只读，"
-    "敏感路径和运行时控制面已遮蔽。看到 AIOMS_PATH_MASKED 表示无法读取该路径。"
+    "敏感路径和运行时控制面已遮蔽。普通 Unix 所有者及 700/777 等权限位不能用来判定 "
+    "AIOMS 是否获准读取，也不能扩大到目录内其他文件；只有实际出现 AIOMS_PATH_MASKED、权限错误或不存在"
+    "才能判定无法读取。即使权限位允许写，本次调查也不可写。"
 )
 
 RootReadScope = Literal["host", "toolbox"]
