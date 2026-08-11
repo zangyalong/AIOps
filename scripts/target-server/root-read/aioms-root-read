@@ -198,6 +198,7 @@ timeout \
     "${OUTER_TIMEOUT_SECONDS}s" \
     "$DOCKER_BIN" run \
         --rm \
+        --interactive \
         --name "$CONTAINER_NAME" \
         --hostname aioms-root-read \
         --pull never \

@@ -107,8 +107,13 @@ visudo -cf "$TEMP_SUDOERS"
 install -o root -g root -m 0440 "$TEMP_SUDOERS" "$SUDOERS_TARGET"
 visudo -cf "$SUDOERS_TARGET"
 
-test_output="$(printf '{"command":"printf aioms-root-read-ok","timeout":5}' \
-    | /usr/local/sbin/aioms-root-read)" || fail "root-read 容器自检失败"
+if test_output="$(printf '{"command":"printf aioms-root-read-ok","timeout":5}' \
+    | /usr/local/sbin/aioms-root-read)"; then
+    :
+else
+    test_status=$?
+    fail "root-read 容器自检失败（退出码 $test_status）：${test_output:-无标准输出}"
+fi
 [[ "$test_output" == *'"output": "aioms-root-read-ok"'* ]] \
     || fail "root-read 容器自检返回异常：$test_output"
 

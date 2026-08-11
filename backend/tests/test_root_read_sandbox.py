@@ -26,6 +26,7 @@ class RootReadSandboxContractTest(unittest.TestCase):
     def test_launcher_fixes_the_docker_security_boundary(self) -> None:
         launcher = (ROOT_READ_DIR / "aioms-root-read").read_text()
         for fragment in (
+            "--interactive",
             "--network none",
             "--cgroupns private",
             "--read-only",
@@ -44,6 +45,11 @@ class RootReadSandboxContractTest(unittest.TestCase):
         self.assertNotIn("--privileged", launcher)
         self.assertNotIn("docker.sock", launcher)
         self.assertNotIn("eval ", launcher)
+
+    def test_installer_preserves_root_read_self_test_errors(self) -> None:
+        installer = (ROOT_READ_DIR / "install.sh").read_text()
+        self.assertIn("test_status=$?", installer)
+        self.assertIn("${test_output:-无标准输出}", installer)
 
     def test_dockerfile_uses_the_daocloud_base_image_proxy(self) -> None:
         dockerfile = (ROOT_READ_DIR / "Dockerfile").read_text()
