@@ -66,6 +66,13 @@ class RootReadSandboxContractTest(unittest.TestCase):
                 self.assertIn(fragment, dockerfile)
         self.assertNotIn("mirrors.tuna.tsinghua.edu.cn/debian-security", dockerfile)
 
+    def test_dockerfile_installs_the_full_python_standard_library(self) -> None:
+        dockerfile = (ROOT_READ_DIR / "Dockerfile").read_text()
+        self.assertIn("        python3 \\", dockerfile)
+        self.assertNotIn("python3-minimal", dockerfile)
+        self.assertIn("import json, os, re, selectors", dockerfile)
+        self.assertIn("from typing import NoReturn", dockerfile)
+
     def test_launcher_masks_control_and_secret_paths(self) -> None:
         launcher = (ROOT_READ_DIR / "aioms-root-read").read_text()
         for path in (

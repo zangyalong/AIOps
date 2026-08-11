@@ -24,9 +24,11 @@ RUN sed -Ei \
         grep \
         jq \
         procps \
-        python3-minimal \
+        python3 \
         ripgrep \
         systemd \
+    && /usr/bin/python3 -c \
+        'import json, os, re, selectors, signal, subprocess, sys, time; from typing import NoReturn' \
     && rm -rf /var/lib/apt/lists/* \
     && rm -f /etc/apt/apt.conf.d/99aioms-build
 
