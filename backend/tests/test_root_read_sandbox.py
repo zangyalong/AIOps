@@ -51,6 +51,13 @@ class RootReadSandboxContractTest(unittest.TestCase):
         self.assertIn("test_status=$?", installer)
         self.assertIn("${test_output:-无标准输出}", installer)
 
+    def test_installer_marks_masked_paths_instead_of_making_them_empty(self) -> None:
+        installer = (ROOT_READ_DIR / "install.sh").read_text()
+        self.assertIn("AIOMS_PATH_MASKED:", installer)
+        self.assertIn("$MASK_DIR/AIOMS_PATH_MASKED.txt", installer)
+        self.assertIn('"$TEMP_STATE" "$MASK_FILE"', installer)
+        self.assertNotIn('/dev/null "$MASK_FILE"', installer)
+
     def test_dockerfile_uses_the_daocloud_base_image_proxy(self) -> None:
         dockerfile = (ROOT_READ_DIR / "Dockerfile").read_text()
         self.assertIn(

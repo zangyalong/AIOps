@@ -7,9 +7,11 @@
 - [ ] **目标服务器 root 只读沙箱**
   - 同一个 `aioms` SSH 身份可通过固定无参数入口启动一次性 Docker 诊断容器，不再维护 `grep/find/rg` 等只读 Shell 语义白名单
   - 宿主机根文件系统禁用递归后只读挂载到 `/host`，安全子挂载逐项只读加入；容器无网络、无 Docker/systemd 控制 socket、无调用方挂载参数，并遮蔽私钥、凭据、运行时控制面和数据库数据目录
+  - root-read 的 Shell、PATH 和程序属于诊断容器，只有 `/host/...` 是宿主机文件；遮蔽路径显示 `AIOMS_PATH_MASKED`，不得伪装成空目录
   - 镜像在安装时构建，运行时只接受 root 持有配置中记录的不可变 image ID；命令只从 stdin JSON 传入，宿主机不 `eval`
 - [ ] **后端通用只读工具与审计**
   - 新增 `run_root_read_command(server_name, command)`，当前单一交互角色无需审批即可调用
+  - 工具结果、基础设施专家和最终汇总统一携带执行语境；禁止把容器 OS、程序版本、PATH 或未加 `/host` 的路径写成宿主机事实
   - root-read 的完整命令、操作者、服务器、起止时间、退出码、超时和脱敏输出摘要进入 `operation_records`
   - 现有 systemd / Docker 等实时状态查询继续走结构化只读工具；所有写操作继续走 Operation Broker、人工审批和固定写网关，不开放任意 root 写 Shell
 - [ ] **接入、测试与目标机验收**

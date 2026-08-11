@@ -25,12 +25,13 @@ flowchart LR
 - `operations/policy.py`：纯规则判断，不访问数据库、不连接服务器，输出 `allow / approval_required / deny`。
 - `operation_records`：写操作保存冻结请求、审批和状态机；root-read 在执行前保存完整命令、发起人、服务器，执行后保存退出码、超时和脱敏结果。
 - `operations/executors/`：执行数据库复查、SSH/SFTP 和业务逻辑；即使上层批准，也不能绕过服务目录授权和参数校验。
-- `scripts/target-server/root-read/`：通用调查边界。固定镜像无网络运行；宿主根挂载禁用递归，安全子挂载逐项只读加入，敏感路径另行遮蔽。当前单一交互身份无需审批，但必须审计。
+- `scripts/target-server/root-read/`：宿主文件通用调查边界。Shell、PATH 和程序属于固定无网络诊断容器，只有 `/host/...` 是宿主文件；宿主根挂载禁用递归，安全子挂载逐项只读加入，敏感路径以 `AIOMS_PATH_MASKED` 明示遮蔽。当前单一交互身份无需审批，但必须审计。
 - `scripts/target-server/` 的其他目录：写操作最终权限边界。SSH 用户不能修改 root 包装脚本，sudoers 只放行固定参数入口，不开放任意宿主机写 Shell。
 
 ## 默认策略
 
 - 普通读操作自动允许；通用 root-read 不区分额外管理员角色，但必须先成功落审计记录。
+- root-read 结果必须携带执行语境；容器 OS、程序版本、PATH、未加 `/host` 的路径以及被遮蔽路径，均不能升级为宿主机事实。
 - `viewer` 和 `system` 不能发起写操作；`operator / approver / admin` 可以发起。
 - 写操作默认需要人工审批，只有 `approver / admin` 可以批准。
 - `high` 操作仍需要详情弹窗二次确认；`critical` 操作始终拒绝执行，只能给建议。

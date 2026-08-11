@@ -123,6 +123,9 @@ class RootReadExecutionTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result.ok)
         self.assertEqual(result.metadata, {"exit_code": 0, "timed_out": False})
+        self.assertIn("Shell、PATH、程序版本", result.message)
+        self.assertIn("宿主机文件根是 /host", result.message)
+        self.assertIn("AIOMS_PATH_MASKED", result.message)
         self.assertEqual(len(connection.calls), 1)
         remote_command, kwargs = connection.calls[0]
         self.assertEqual(remote_command, root_read.ROOT_READ_REMOTE_COMMAND)

@@ -55,6 +55,14 @@ class _ConnectionContext:
 
 
 class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
+    def test_prompts_preserve_the_root_read_execution_scope(self) -> None:
+        prompt = chat_graph.SPECIALIST_PROMPTS["infrastructure_agent"]
+        self.assertIn("Shell、PATH、程序", prompt)
+        self.assertIn("所有宿主机绝对路径必须写成 /host/", prompt)
+        self.assertIn("不能改用 root-read 容器冒充宿主机", prompt)
+        self.assertIn("AIOMS_PATH_MASKED", prompt)
+        self.assertIn("未加 /host 的路径属于诊断容器", chat_graph.SYNTHESIZER_PROMPT)
+
     def test_catalog_has_disjoint_read_and_write_tools(self) -> None:
         """目录必须把发现归为读、目录注册/服务重启归为写，且写工具带审批元数据。"""
         self.assertIn("run_diagnostic_command", catalog.READ_TOOLS_BY_NAME)

@@ -23,6 +23,7 @@ readonly IMAGE_ID_FILE="$STATE_DIR/root-read.image-id"
 readonly SOURCE_HASH_FILE="$STATE_DIR/root-read.source-sha256"
 readonly MASK_DIR="/var/lib/aioms/root-read/empty-dir"
 readonly MASK_FILE="/var/lib/aioms/root-read/empty-file"
+readonly MASK_NOTICE="AIOMS_PATH_MASKED: 该宿主机路径已被安全策略遮蔽，不能判断为空或不存在。"
 readonly SUDOERS_TARGET="/etc/sudoers.d/aioms-root-read"
 readonly TEMP_SUDOERS="$(mktemp /etc/sudoers.d/.aioms-root-read.XXXXXX)"
 readonly TEMP_STATE="$(mktemp /tmp/aioms-root-read-state.XXXXXX)"
@@ -58,8 +59,11 @@ install -d -o root -g root -m 0755 \
     "$INSTALL_CONTEXT" \
     "$STATE_DIR" \
     /usr/local/libexec/aioms
-install -d -o root -g root -m 0555 "$MASK_DIR"
-install -o root -g root -m 0444 /dev/null "$MASK_FILE"
+install -d -o root -g root -m 0755 "$MASK_DIR"
+printf '%s\n' "$MASK_NOTICE" >"$TEMP_STATE"
+install -o root -g root -m 0444 "$TEMP_STATE" "$MASK_DIR/AIOMS_PATH_MASKED.txt"
+chmod 0555 "$MASK_DIR"
+install -o root -g root -m 0444 "$TEMP_STATE" "$MASK_FILE"
 install -o root -g root -m 0644 "$SCRIPT_DIR/Dockerfile" "$INSTALL_CONTEXT/Dockerfile"
 install -o root -g root -m 0555 "$SCRIPT_DIR/entrypoint.py" "$INSTALL_CONTEXT/entrypoint.py"
 install -o root -g root -m 0555 \
