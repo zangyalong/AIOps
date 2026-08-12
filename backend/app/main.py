@@ -17,6 +17,7 @@ from app.api import (
     operations,
     servers,
     services,
+    skills,
 )
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal, engine
@@ -103,4 +104,5 @@ app.include_router(alerts.router)
 app.include_router(alert_rules.router)
 app.include_router(incidents.router)
 app.include_router(services.router)
+app.include_router(skills.router)
 app.include_router(operations.router)

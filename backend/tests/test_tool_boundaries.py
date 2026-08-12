@@ -4,7 +4,13 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from langchain_core.messages import HumanMessage
+
 from app.agents.graphs import chat_graph
+from app.agents.prompts import (
+    SIMPLIFIED_CHINESE_REQUIREMENT,
+    build_ops_system_prompt,
+)
 from app.agents.tools import actions, catalog
 from app.operations.executors import service_control
 from app.operations.schemas import OperationCall, OperationContext
@@ -57,7 +63,17 @@ class _ConnectionContext:
 
 class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
     def test_prompt_exposes_investigation_not_internal_executors(self) -> None:
-        prompt = chat_graph.OPS_AGENT_PROMPT
+        assembly = build_ops_system_prompt(
+            messages=[
+                HumanMessage(
+                    "修改 Docker Compose 的 .env SERVER_PORT，然后重建容器让配置生效"
+                )
+            ],
+            tools=chat_graph._ops_tools(True),
+            allow_write_tools=True,
+            run_mode="interactive",
+        )
+        prompt = assembly.text
         self.assertIn("调查与变更", prompt)
         self.assertIn("目标服务器真实的 `/`、PATH 和程序", prompt)
         self.assertIn("700/777", prompt)
@@ -72,13 +88,14 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Docker Compose", prompt)
         self.assertIn("普通 docker start/restart 不会应用新变量", prompt)
         self.assertIn("recreate_compose_service", prompt)
-        self.assertIn("不要先调用 `start_service`", prompt)
-        self.assertIn("其他 service 不构成阻塞", prompt)
+        self.assertIn("同一项目还有 PostgreSQL、Redis", prompt)
+        self.assertIn("active_skills", prompt)
+        self.assertIn("docker-compose-operations", prompt)
+        self.assertIn("configuration-changes", prompt)
         self.assertIn("同一事实只出现一次", prompt)
         self.assertIn("禁止出现", prompt)
         self.assertNotIn("run_diagnostic_command", prompt)
         self.assertNotIn("run_root_read_command", prompt)
-        self.assertNotIn("/host", prompt)
         self.assertNotIn("Supervisor", prompt)
 
     def test_catalog_has_disjoint_read_and_write_tools(self) -> None:
@@ -127,7 +144,7 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
             {tool.name for tool in chat_graph.OPS_WRITE_TOOLS},
             set(catalog.WRITE_TOOLS_BY_NAME),
         )
-        self.assertIn("必须使用简体中文", chat_graph.SIMPLIFIED_CHINESE_REQUIREMENT)
+        self.assertIn("必须使用简体中文", SIMPLIFIED_CHINESE_REQUIREMENT)
 
         action = catalog.describe_write_action(
             {

@@ -4,6 +4,7 @@ import ChatView from '../views/ChatView.vue'
 import IncidentsView from '../views/IncidentsView.vue'
 import ServicesView from '../views/ServicesView.vue'
 import ServersView from '../views/ServersView.vue'
+import SettingsView from '../views/SettingsView.vue'
 
 function lastChatPath(): string {
   const path = localStorage.getItem('aioms:last-chat-path') || '/chat'
@@ -25,6 +26,7 @@ export const router = createRouter({
     { path: '/services', name: 'services', component: ServicesView },
     { path: '/services/:serviceId', name: 'service-detail', component: ServicesView },
     { path: '/servers', name: 'servers', component: ServersView },
+    { path: '/settings', name: 'settings', component: SettingsView },
     { path: '/:pathMatch(.*)*', redirect: '/chat' },
   ],
 })
