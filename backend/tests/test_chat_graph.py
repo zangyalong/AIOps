@@ -925,6 +925,89 @@ class OpsAgentGraphTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(ids[0], ids[1])
         self.assertTrue(ids[1].startswith("call_aioms_"))
 
+    def test_repeated_invalid_investigation_is_stopped_before_execution(self) -> None:
+        history = [
+            AIMessage(
+                "查询服务器。",
+                tool_calls=[
+                    {
+                        "name": "investigate",
+                        "args": {"area": "servers"},
+                        "id": "servers-1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            ToolMessage(
+                "调查请求不完整：servers 不支持 parameters.at。",
+                tool_call_id="servers-1",
+                name="investigate",
+                status="error",
+            ),
+        ]
+        repeated = AIMessage(
+            "调整调用方式。",
+            tool_calls=[
+                {
+                    "name": "investigate",
+                    "args": {"area": "servers"},
+                    "id": "servers-2",
+                    "type": "tool_call",
+                }
+            ],
+        )
+
+        stopped = chat_graph._stop_repeated_invalid_investigation(repeated, history)
+
+        self.assertEqual(stopped.tool_calls, [])
+        self.assertIn("系统已停止重复执行", stopped.content)
+
+    def test_corrected_investigation_can_run_after_parameter_error(self) -> None:
+        history = [
+            AIMessage(
+                "查询指标。",
+                tool_calls=[
+                    {
+                        "name": "investigate",
+                        "args": {
+                            "area": "metrics",
+                            "target": "web-01",
+                            "query": "memory",
+                            "parameters": {"time": "1h"},
+                        },
+                        "id": "metrics-1",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            ToolMessage(
+                "调查请求不完整：metrics 不支持 parameters.time。",
+                tool_call_id="metrics-1",
+                name="investigate",
+                status="error",
+            ),
+        ]
+        corrected = AIMessage(
+            "改用趋势图协议。",
+            tool_calls=[
+                {
+                    "name": "investigate",
+                    "args": {
+                        "area": "visualization",
+                        "target": "web-01",
+                        "query": "memory",
+                        "parameters": {"kind": "metrics", "minutes": 60},
+                    },
+                    "id": "metrics-2",
+                    "type": "tool_call",
+                }
+            ],
+        )
+
+        result = chat_graph._stop_repeated_invalid_investigation(corrected, history)
+
+        self.assertEqual(result.tool_calls, corrected.tool_calls)
+
     def test_missing_tail_tool_result_gets_failure_repair(self) -> None:
         repairs = chat_graph._trailing_protocol_repairs(
             [

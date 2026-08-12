@@ -13,6 +13,7 @@ from types import MappingProxyType
 from typing import Any, Literal
 
 from langchain_core.tools import BaseTool
+from pydantic import BaseModel
 
 from app.agents.tools.actions import (
     recreate_compose_service,
@@ -312,10 +313,19 @@ def _normalize_tool_call(tool: BaseTool, call: OperationCall) -> OperationCall:
     """在审批前完成工具 schema 校验，后续只传递同一份规范化参数。"""
     schema = tool.get_input_schema()
     validated = schema.model_validate(call.normalized_args())
+    normalized = validated.model_dump(mode="json", exclude_unset=True)
+    full = validated.model_dump(mode="json")
+    # 顶层默认值会影响真实执行和审批（例如 environment=prod），必须冻结下来；但默认创建的
+    # 嵌套参数对象不是模型实际传入的内容，不能把其中的 at=None 等字段伪装成显式参数。
+    for name in schema.model_fields:
+        if name not in normalized and not isinstance(
+            getattr(validated, name), BaseModel
+        ):
+            normalized[name] = full[name]
     return OperationCall(
         id=call.id,
         name=call.name,
-        args=validated.model_dump(mode="json"),
+        args=normalized,
     )
 
 

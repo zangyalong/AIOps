@@ -293,6 +293,11 @@ def _validate_parameters(
 ) -> None:
     unknown = sorted(set(parameters) - _ALLOWED_PARAMETERS[area])
     if unknown:
+        if area == "servers":
+            raise InvestigationRequestError(
+                f"servers 不支持 parameters.{unknown[0]}。列出已纳管服务器不需要任何"
+                '附加参数，正确调用：{"area":"servers"}。'
+            )
         if area == "metrics":
             raise InvestigationRequestError(
                 f"metrics 不支持 parameters.{unknown[0]}。metrics 只查当前值，"

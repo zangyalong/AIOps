@@ -9,7 +9,7 @@ from app.agents.prompts import (
     SIMPLIFIED_CHINESE_REQUIREMENT,
     build_ops_system_prompt,
 )
-from app.agents.tools import actions, catalog
+from app.agents.tools import actions, catalog, investigation
 from app.operations.executors import service_control
 from app.operations.schemas import OperationCall, OperationContext
 
@@ -60,6 +60,50 @@ class _ConnectionContext:
 
 
 class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
+    async def test_broker_does_not_inject_nested_investigation_defaults(self) -> None:
+        call = OperationCall(
+            id="servers-1",
+            name="investigate",
+            args={"area": "servers"},
+        )
+        normalized = catalog._normalize_tool_call(investigation.investigate, call)
+
+        self.assertNotIn("parameters", normalized.args)
+
+        query = AsyncMock(return_value="server list")
+        with patch.object(
+            investigation,
+            "query_servers",
+            SimpleNamespace(ainvoke=query),
+        ):
+            result = await catalog.OPERATION_BROKER.execute(
+                call,
+                OperationContext(
+                    actor_id="test-worker",
+                    actor_role="system",
+                    run_mode="unattended",
+                ),
+            )
+
+        self.assertTrue(result.ok)
+        query.assert_awaited_once_with({})
+
+    def test_explicit_investigation_parameters_are_preserved(self) -> None:
+        call = OperationCall(
+            id="metrics-1",
+            name="investigate",
+            args={
+                "area": "metrics",
+                "target": "web-01",
+                "query": "memory",
+                "parameters": {"target_type": "server"},
+            },
+        )
+
+        normalized = catalog._normalize_tool_call(investigation.investigate, call)
+
+        self.assertEqual(normalized.args["parameters"], {"target_type": "server"})
+
     def test_prompt_exposes_investigation_not_internal_executors(self) -> None:
         assembly = build_ops_system_prompt(
             tools=chat_graph._ops_tools(True),

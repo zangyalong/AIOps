@@ -116,6 +116,15 @@ class InvestigationFacadeTest(unittest.IsolatedAsyncioTestCase):
                 self.assertIn('"target_type":"instance"', result.message)
                 self.assertIn('"area":"visualization"', result.message)
 
+    async def test_servers_parameter_error_includes_copyable_call(self) -> None:
+        result = await investigation.investigate.ainvoke(
+            {"area": "servers", "parameters": {"at": None}}
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "invalid_investigation_request")
+        self.assertIn('正确调用：{"area":"servers"}', result.message)
+
     async def test_invalid_metrics_target_type_returns_actionable_correction(
         self,
     ) -> None:

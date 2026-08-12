@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from functools import cache, lru_cache
@@ -112,6 +113,67 @@ def _normalize_tool_call_ids(message: AIMessage) -> AIMessage:
     return message.model_copy(update={"tool_calls": normalized})
 
 
+def _tool_call_signature(tool_call: dict) -> tuple[str, str]:
+    args = tool_call.get("args") or {}
+    return (
+        str(tool_call.get("name") or ""),
+        json.dumps(
+            args,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ),
+    )
+
+
+def _failed_invalid_investigation_signatures(
+    messages: list[BaseMessage],
+) -> set[tuple[str, str]]:
+    """收集已经得到参数协议错误的调查调用，供确定性防重使用。"""
+    pending: dict[str, tuple[str, str]] = {}
+    failed: set[tuple[str, str]] = set()
+    for message in messages:
+        if isinstance(message, AIMessage):
+            for call in message.tool_calls:
+                if call.get("name") == "investigate":
+                    pending[str(call.get("id") or "")] = _tool_call_signature(call)
+            continue
+        if not isinstance(message, ToolMessage) or message.name != "investigate":
+            continue
+        signature = pending.pop(message.tool_call_id, None)
+        content = message.content if isinstance(message.content, str) else ""
+        if (
+            signature is not None
+            and message.status == "error"
+            and content.startswith("调查请求不完整：")
+        ):
+            failed.add(signature)
+    return failed
+
+
+def _stop_repeated_invalid_investigation(
+    response: AIMessage,
+    history: list[BaseMessage],
+) -> AIMessage:
+    """模型忽略纠错提示时，阻止完全相同的无效调查再次进入工具节点。"""
+    if not response.tool_calls:
+        return response
+    failed = _failed_invalid_investigation_signatures(history)
+    if not failed or not all(
+        call.get("name") == "investigate" and _tool_call_signature(call) in failed
+        for call in response.tool_calls
+    ):
+        return response
+    return AIMessage(
+        content=(
+            "同一调查请求已经因参数协议错误失败，系统已停止重复执行。"
+            "请按上一条工具错误给出的正确结构重新提问；若没有示例，请补充明确的调查目标。"
+        ),
+        name="ops_agent",
+    )
+
+
 def _trailing_protocol_repairs(messages: list[BaseMessage]) -> list[ToolMessage]:
     """为尾部未响应的 tool_calls 补失败结果，保证下一次模型请求协议完整。"""
     pending: dict[str, str] = {}
@@ -172,6 +234,7 @@ async def ops_agent_node(state: ChatState) -> dict:
     response = _normalize_tool_call_ids(
         response.model_copy(update={"name": "ops_agent"})
     )
+    response = _stop_repeated_invalid_investigation(response, model_messages)
     if response.tool_calls:
         raw_narration = response.content if isinstance(response.content, str) else ""
         response = response.model_copy(
