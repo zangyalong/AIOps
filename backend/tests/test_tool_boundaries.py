@@ -71,6 +71,11 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("apply_nginx_config", prompt)
         self.assertIn("Docker Compose", prompt)
         self.assertIn("普通 docker start/restart 不会应用新变量", prompt)
+        self.assertIn("recreate_compose_service", prompt)
+        self.assertIn("不要先调用 `start_service`", prompt)
+        self.assertIn("其他 service 不构成阻塞", prompt)
+        self.assertIn("同一事实只出现一次", prompt)
+        self.assertIn("禁止出现", prompt)
         self.assertNotIn("run_diagnostic_command", prompt)
         self.assertNotIn("run_root_read_command", prompt)
         self.assertNotIn("/host", prompt)
@@ -84,6 +89,7 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("restart_service", catalog.WRITE_TOOLS_BY_NAME)
         self.assertIn("start_service", catalog.WRITE_TOOLS_BY_NAME)
         self.assertIn("stop_service", catalog.WRITE_TOOLS_BY_NAME)
+        self.assertIn("recreate_compose_service", catalog.WRITE_TOOLS_BY_NAME)
         self.assertIn("create_alert_rule", catalog.WRITE_TOOLS_BY_NAME)
         self.assertIn("register_server_services", catalog.WRITE_TOOLS_BY_NAME)
         self.assertIn("apply_server_log_config", catalog.WRITE_TOOLS_BY_NAME)
@@ -104,6 +110,9 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(restart_spec)
         self.assertEqual(restart_spec.effect, "write")
         self.assertEqual(restart_spec.risk_level, "high")
+        recreate_spec = catalog.get_operation_spec("recreate_compose_service")
+        self.assertIsNotNone(recreate_spec)
+        self.assertEqual(recreate_spec.risk_level, "high")
         patch_spec = catalog.get_operation_spec("patch_server_config")
         self.assertIsNotNone(patch_spec)
         self.assertEqual(patch_spec.risk_level, "medium")
@@ -191,6 +200,20 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
             "aioms-service-control stop docker orders-api",
             docker_stop_action["command"],
         )
+
+        recreate_action = catalog.describe_write_action(
+            {
+                "id": "compose-recreate-1",
+                "name": "recreate_compose_service",
+                "args": {
+                    "server_name": "demo",
+                    "container_name": "sub2api",
+                },
+            }
+        )
+        self.assertEqual(recreate_action["risk_level"], "high")
+        self.assertEqual(recreate_action["kind"], "compose_service_recreate")
+        self.assertIn("aioms-compose-recreate sub2api", recreate_action["command"])
 
         rule_action = catalog.describe_write_action(
             {

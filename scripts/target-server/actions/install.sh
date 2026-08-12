@@ -41,9 +41,11 @@ command -v visudo >/dev/null 2>&1 || fail "找不到 visudo"
 
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly GATEWAY_SOURCE="$SCRIPT_DIR/aioms-service-control"
+readonly COMPOSE_GATEWAY_SOURCE="$SCRIPT_DIR/aioms-compose-recreate"
 readonly POLICY_SOURCE="$SCRIPT_DIR/aioms-service-policy"
 readonly SUDOERS_TEMPLATE="$SCRIPT_DIR/aioms-service-control.sudoers"
 [[ -f "$GATEWAY_SOURCE" ]] || fail "缺少固定服务控制包装器"
+[[ -f "$COMPOSE_GATEWAY_SOURCE" ]] || fail "缺少固定 Compose 重建包装器"
 [[ -f "$POLICY_SOURCE" ]] || fail "缺少固定服务授权策略包装器"
 [[ -f "$SUDOERS_TEMPLATE" ]] || fail "缺少 sudoers 模板"
 
@@ -77,6 +79,7 @@ sort -u -o "$allowlist_tmp" "$allowlist_tmp"
 
 install -d -o root -g root -m 0755 /etc/aioms
 install -o root -g root -m 0755 "$GATEWAY_SOURCE" /usr/local/sbin/aioms-service-control
+install -o root -g root -m 0755 "$COMPOSE_GATEWAY_SOURCE" /usr/local/sbin/aioms-compose-recreate
 install -o root -g root -m 0755 "$POLICY_SOURCE" /usr/local/sbin/aioms-service-policy
 install -o root -g root -m 0644 "$allowlist_tmp" /etc/aioms/service-control.allowlist
 

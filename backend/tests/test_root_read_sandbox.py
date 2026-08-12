@@ -89,14 +89,22 @@ class RootReadSandboxContractTest(unittest.TestCase):
         self.assertIn('ctypes.CDLL("libcap.so.2")', dockerfile)
         self.assertIn("from typing import NoReturn", dockerfile)
 
-    def test_host_scope_preloads_libcap_and_does_not_require_dev_null(self) -> None:
+    def test_host_scope_preloads_libcap_and_exposes_only_dev_null(self) -> None:
         entrypoint = ENTRYPOINT.read_text()
+        launcher = (ROOT_READ_DIR / "aioms-root-read").read_text()
+        installer = (ROOT_READ_DIR / "install.sh").read_text()
         self.assertLess(
             entrypoint.index("libcap = _load_libcap()"),
             entrypoint.index('os.chroot("/host")'),
         )
         self.assertIn("stdin=subprocess.PIPE", entrypoint)
         self.assertNotIn("stdin=subprocess.DEVNULL", entrypoint)
+        self.assertIn(
+            'type=bind,src=$MASKED_DEV_DIR,dst=/host/dev,readonly', launcher
+        )
+        self.assertIn('type=bind,src=/dev/null,dst=/host/dev/null', launcher)
+        self.assertIn('"$MASKED_DEV_DIR/null"', installer)
+        self.assertIn("2>/dev/null", installer)
 
     def test_launcher_masks_control_and_secret_paths(self) -> None:
         launcher = (ROOT_READ_DIR / "aioms-root-read").read_text()

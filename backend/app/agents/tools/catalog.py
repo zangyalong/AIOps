@@ -14,7 +14,12 @@ from typing import Any, Literal
 
 from langchain_core.tools import BaseTool
 
-from app.agents.tools.actions import restart_service, start_service, stop_service
+from app.agents.tools.actions import (
+    recreate_compose_service,
+    restart_service,
+    start_service,
+    stop_service,
+)
 from app.agents.tools.alert_rules import create_alert_rule
 from app.agents.tools.deployment import deploy_server_environment
 from app.agents.tools.file_access import grant_server_file_write_access
@@ -91,6 +96,22 @@ def _stop_service_action(args: dict[str, Any]) -> dict[str, Any]:
 
 def _restart_service_action(args: dict[str, Any]) -> dict[str, Any]:
     return _service_control_action(args, action="restart")
+
+
+def _recreate_compose_service_action(args: dict[str, Any]) -> dict[str, Any]:
+    server = str(args.get("server_name") or "?")
+    container = str(args.get("container_name") or "?")
+    return {
+        "kind": "compose_service_recreate",
+        "title": f"重建 {server} 上的 Compose 服务 {container}",
+        "server_name": server,
+        "service_name": container,
+        "runtime_type": "docker-compose",
+        "command": (
+            "sudo -n -- /usr/local/sbin/aioms-compose-recreate "
+            f"{shlex.quote(container)}"
+        ),
+    }
 
 
 def _create_alert_rule_action(args: dict[str, Any]) -> dict[str, Any]:
@@ -243,6 +264,11 @@ _WRITE_SPECS = (
         tool=restart_service,
         risk_level="high",
         build_action_details=_restart_service_action,
+    ),
+    WriteToolSpec(
+        tool=recreate_compose_service,
+        risk_level="high",
+        build_action_details=_recreate_compose_service_action,
     ),
     WriteToolSpec(
         tool=apply_server_log_config,

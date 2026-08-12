@@ -1,0 +1,164 @@
+#!/bin/bash
+
+set -euo pipefail
+PATH=/usr/sbin:/usr/bin:/usr/local/bin:/sbin:/bin
+
+fail() {
+    echo "aioms-compose-recreate: $*" >&2
+    exit 1
+}
+
+[[ $EUID -eq 0 ]] || fail "必须由 root 通过 sudoers 调用"
+[[ $# -eq 1 ]] || fail "用法：aioms-compose-recreate CONTAINER_NAME"
+[[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" ]] || fail "缺少非 root 调用身份"
+
+readonly CONTAINER_NAME="$1"
+readonly ALLOWLIST="/etc/aioms/service-control.allowlist"
+readonly CONTAINER_PATTERN='^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$'
+readonly PROJECT_PATTERN='^[a-z0-9][a-z0-9_-]{0,127}$'
+readonly COMPOSE_SERVICE_PATTERN='^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$'
+
+[[ "$CONTAINER_NAME" =~ $CONTAINER_PATTERN ]] || fail "Docker 容器名格式不合法"
+[[ -f "$ALLOWLIST" && ! -L "$ALLOWLIST" ]] || fail "服务控制白名单不存在或不安全"
+read -r allowlist_owner allowlist_mode < <(stat -c '%u %a' "$ALLOWLIST")
+[[ "$allowlist_owner" == "0" ]] || fail "服务控制白名单必须由 root 持有"
+(( (8#$allowlist_mode & 8#022) == 0 )) || fail "服务控制白名单不能由组或其他用户写入"
+grep -Fxq -- "docker:$CONTAINER_NAME" "$ALLOWLIST" \
+    || fail "运行对象 docker:$CONTAINER_NAME 不在目标服务器白名单中"
+
+find_docker() {
+    local candidate
+    for candidate in /usr/bin/docker /usr/local/bin/docker; do
+        if [[ -x "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return
+        fi
+    done
+    fail "没有找到 Docker CLI"
+}
+
+readonly DOCKER_BIN="$(find_docker)"
+actual_name="$($DOCKER_BIN inspect --format '{{.Name}}' -- "$CONTAINER_NAME" 2>&1)" \
+    || fail "无法核对 Docker 容器 $CONTAINER_NAME：$actual_name"
+[[ "$actual_name" == "/$CONTAINER_NAME" ]] || fail "Docker 容器名称核对不一致：$actual_name"
+
+label_value() {
+    "$DOCKER_BIN" inspect --format "{{ index .Config.Labels \"$1\" }}" -- "$CONTAINER_NAME"
+}
+
+project="$(label_value com.docker.compose.project)"
+compose_service="$(label_value com.docker.compose.service)"
+working_dir_label="$(label_value com.docker.compose.project.working_dir)"
+config_files_label="$(label_value com.docker.compose.project.config_files)"
+[[ "$project" =~ $PROJECT_PATTERN ]] || fail "容器缺少合法的 Compose project 标签"
+[[ "$compose_service" =~ $COMPOSE_SERVICE_PATTERN ]] || fail "容器缺少合法的 Compose service 标签"
+[[ "$working_dir_label" == /* && -d "$working_dir_label" && ! -L "$working_dir_label" ]] \
+    || fail "容器的 Compose working_dir 不存在或不安全"
+[[ -n "$config_files_label" && "$config_files_label" != *$'\n'* ]] \
+    || fail "容器缺少合法的 Compose config_files 标签"
+working_dir="$(realpath -e -- "$working_dir_label")"
+
+# 固定网关以 root 调用 Docker，因此配置及其父目录不能被 AIOMS
+# SSH 用户直接改写；Agent 只能通过独立审批的文件网关修改它们。
+assert_not_aioms_writable() {
+    local candidate="$1"
+    while true; do
+        if runuser -u "$SUDO_USER" -- test -w "$candidate"; then
+            fail "Compose 路径可被 AIOMS SSH 用户绕过审批改写：$candidate"
+        fi
+        [[ "$candidate" == "/" ]] && break
+        candidate="$(dirname -- "$candidate")"
+    done
+}
+
+command -v runuser >/dev/null 2>&1 || fail "系统缺少 runuser，无法核对 Compose 路径权限"
+assert_not_aioms_writable "$working_dir"
+
+IFS=',' read -r -a raw_config_files <<<"$config_files_label"
+(( ${#raw_config_files[@]} >= 1 && ${#raw_config_files[@]} <= 8 )) \
+    || fail "Compose 配置文件数量不在 1..8 范围内"
+config_files=()
+compose_args=()
+for raw_path in "${raw_config_files[@]}"; do
+    raw_path="${raw_path#"${raw_path%%[![:space:]]*}"}"
+    raw_path="${raw_path%"${raw_path##*[![:space:]]}"}"
+    [[ -n "$raw_path" && "$raw_path" != *$'\n'* && "$raw_path" != *$'\r'* ]] \
+        || fail "Compose 配置文件标签包含空路径或换行"
+    if [[ "$raw_path" == /* ]]; then
+        candidate_path="$raw_path"
+    else
+        # Compose v1 可能把 config_files 记为相对路径，其基准就是
+        # 同一组标签中的 working_dir；不在当前 Shell 目录下猜测。
+        candidate_path="$working_dir/$raw_path"
+    fi
+    [[ -f "$candidate_path" && ! -L "$candidate_path" ]] \
+        || fail "Compose 配置文件不存在或不安全：$raw_path"
+    config_path="$(realpath -e -- "$candidate_path")"
+    assert_not_aioms_writable "$config_path"
+    config_files+=("$config_path")
+    compose_args+=(-f "$config_path")
+done
+if [[ -e "$working_dir/.env" ]]; then
+    [[ -f "$working_dir/.env" && ! -L "$working_dir/.env" ]] \
+        || fail "Compose .env 不是安全的普通文件"
+    assert_not_aioms_writable "$working_dir/.env"
+fi
+
+target_id="$($DOCKER_BIN inspect --format '{{.Id}}' -- "$CONTAINER_NAME")"
+mapfile -t project_service_ids < <(
+    "$DOCKER_BIN" ps --all --quiet --no-trunc \
+        --filter "label=com.docker.compose.project=$project" \
+        --filter "label=com.docker.compose.service=$compose_service"
+)
+[[ ${#project_service_ids[@]} -eq 1 ]] \
+    || fail "Compose service $project/$compose_service 当前对应 ${#project_service_ids[@]} 个容器；受控单服务重建只支持单副本"
+[[ "${project_service_ids[0]}" == "$target_id" ]] \
+    || fail "Compose service $project/$compose_service 的当前容器与已授权容器 $CONTAINER_NAME 不一致"
+
+if "$DOCKER_BIN" compose version >/dev/null 2>&1; then
+    compose_command=("$DOCKER_BIN" compose)
+elif command -v docker-compose >/dev/null 2>&1; then
+    compose_command=(docker-compose)
+else
+    fail "找不到 Docker Compose"
+fi
+
+cd -- "$working_dir"
+COMPOSE_IGNORE_ORPHANS=true COMPOSE_MENU=false \
+    "${compose_command[@]}" --ansi never \
+    --project-directory "$working_dir" \
+    --project-name "$project" \
+    "${compose_args[@]}" config --quiet \
+    || fail "Compose 配置预检失败，未执行重建"
+
+COMPOSE_IGNORE_ORPHANS=true COMPOSE_MENU=false \
+    "${compose_command[@]}" --ansi never \
+    --project-directory "$working_dir" \
+    --project-name "$project" \
+    "${compose_args[@]}" up --detach --no-deps --force-recreate \
+    --no-build --pull never "$compose_service" \
+    || fail "Compose 单服务重建失败"
+
+mapfile -t recreated_ids < <(
+    "$DOCKER_BIN" ps --all --quiet --no-trunc \
+        --filter "label=com.docker.compose.project=$project" \
+        --filter "label=com.docker.compose.service=$compose_service"
+)
+[[ ${#recreated_ids[@]} -eq 1 ]] || fail "重建后 Compose service 容器数量异常"
+recreated_id="${recreated_ids[0]}"
+recreated_name="$($DOCKER_BIN inspect --format '{{.Name}}' -- "$recreated_id")"
+[[ "$recreated_name" == "/$CONTAINER_NAME" ]] \
+    || fail "重建后容器名发生变化：$recreated_name"
+state="$($DOCKER_BIN inspect --format '{{.State.Status}}' -- "$recreated_id")"
+[[ "$state" == "running" ]] || fail "重建后容器状态异常：$state"
+health="$($DOCKER_BIN inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' -- "$recreated_id")"
+ports="$($DOCKER_BIN port "$recreated_id" 2>/dev/null || true)"
+
+echo "已受控重建 Compose 服务 $project/$compose_service（容器 $CONTAINER_NAME）。"
+echo "当前状态：$state；健康状态：$health。"
+if [[ -n "$ports" ]]; then
+    echo "当前端口映射："
+    printf '%s\n' "$ports"
+else
+    echo "当前没有发布宿主机端口。"
+fi

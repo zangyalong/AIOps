@@ -7,7 +7,7 @@
 
 1. 安装无网络、宿主机只读并遮蔽敏感路径的 root 诊断沙箱。
 2. 安装 AIOMS 服务发现所需的结构化只读网关和精确 sudoers 权限。
-3. 为同一个非 root `aioms` 用户安装统一的 systemd / Docker 白名单服务控制写网关；白名单留空时拒绝全部。
+3. 为同一个非 root `aioms` 用户安装统一的 systemd / Docker 白名单服务控制写网关，以及只从已授权容器标签反查项目的 Docker Compose 单服务 recreate 网关；白名单留空时拒绝全部。
 4. 按需安装 Grafana Alloy 基础组件；服务发现并注册后由 AI 生成日志配置并审批启用。
 5. 按独立开关部署 node_exporter、cAdvisor、MySQL、PostgreSQL 和 Redis exporter。
 
@@ -107,6 +107,7 @@ target-server/
 ├── actions/
 │   ├── install.sh               # systemd / Docker 统一服务控制写网关安装器
 │   ├── aioms-service-control    # 只接受 start/stop/restart + 白名单运行时身份
+│   ├── aioms-compose-recreate   # 只接受已授权容器名，反查 Compose 单服务并重建
 │   ├── aioms-service-policy     # 只接受页面授权触发的白名单 add/remove
 │   ├── aioms-service-control.sudoers
 │   └── README.md                # 双端白名单和权限边界

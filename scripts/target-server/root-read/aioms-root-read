@@ -15,13 +15,16 @@ readonly OUTER_TIMEOUT_SECONDS=30
 readonly IMAGE_ID_FILE="/etc/aioms/root-read.image-id"
 readonly EMPTY_DIR="/var/lib/aioms/root-read/empty-dir"
 readonly EMPTY_FILE="/var/lib/aioms/root-read/empty-file"
+readonly MASKED_DEV_DIR="/var/lib/aioms/root-read/masked-dev"
 readonly HOST_MOUNTS_HELPER="/usr/local/libexec/aioms/root-read-host-mounts.py"
 readonly HOST_PYTHON="/usr/bin/python3.11"
 readonly DOCKER_BIN="$(command -v docker || true)"
 
 [[ -n "$DOCKER_BIN" ]] || fail "找不到 Docker CLI"
 [[ -r "$IMAGE_ID_FILE" ]] || fail "缺少固定镜像 ID：$IMAGE_ID_FILE"
-[[ -d "$EMPTY_DIR" && -f "$EMPTY_FILE" ]] || fail "敏感路径遮蔽资源不完整"
+[[ -d "$EMPTY_DIR" && -f "$EMPTY_FILE" \
+    && -d "$MASKED_DEV_DIR" && -f "$MASKED_DEV_DIR/null" ]] \
+    || fail "敏感路径遮蔽资源不完整"
 [[ -x "$HOST_MOUNTS_HELPER" ]] || fail "缺少 root 所有的宿主机挂载解析器"
 [[ -x "$HOST_PYTHON" ]] || fail "缺少 Python 3.11：请先安装 python3.11"
 command -v timeout >/dev/null 2>&1 || fail "系统缺少 timeout 命令"
@@ -168,7 +171,11 @@ done <"$MOUNT_LIST_FILE"
 hide_directory() {
     local host_path="$1"
     if [[ -d "$host_path" && ! -L "$host_path" ]]; then
-        mount_args+=(--mount "type=bind,src=$EMPTY_DIR,dst=/host$host_path,readonly")
+        if [[ "$host_path" == "/dev" ]]; then
+            mount_args+=(--mount "type=bind,src=$MASKED_DEV_DIR,dst=/host/dev,readonly")
+        else
+            mount_args+=(--mount "type=bind,src=$EMPTY_DIR,dst=/host$host_path,readonly")
+        fi
     fi
 }
 
@@ -190,6 +197,11 @@ done
 for path in /etc/ssh/ssh_host_*_key; do
     hide_file "$path"
 done
+
+# host scope chroot 后的 Shell 仍需要标准 null 设备才能正常处理
+# >/dev/null、2>/dev/null 和 2>&1。完整宿主 /dev 仍被遮蔽，只对这一个
+# 无持久化效果的字符设备增加精确嵌套挂载。
+mount_args+=(--mount "type=bind,src=/dev/null,dst=/host/dev/null")
 
 set +e
 timeout \

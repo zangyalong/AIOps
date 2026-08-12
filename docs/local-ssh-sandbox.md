@@ -124,7 +124,7 @@ systemd 服务控制；这两项应在专门、可重建的 Linux 测试机上�
 
 ## 写工具验收说明
 
-`start_service`、`stop_service`、`restart_service` 与上面的读诊断工具走不同边界：模型提出
+`start_service`、`stop_service`、`restart_service` 和 `recreate_compose_service` 与上面的读诊断工具走不同边界：模型提出
 操作后，LangGraph 会先挂起并等待人工批准；批准后，工具使用同一非 root AIOMS 身份调用固定网关，且
 AIOMS 与目标服务器两端都检查精确白名单。例如在专用测试机上允许控制 nginx：
 

@@ -23,6 +23,7 @@ readonly IMAGE_ID_FILE="$STATE_DIR/root-read.image-id"
 readonly SOURCE_HASH_FILE="$STATE_DIR/root-read.source-sha256"
 readonly MASK_DIR="/var/lib/aioms/root-read/empty-dir"
 readonly MASK_FILE="/var/lib/aioms/root-read/empty-file"
+readonly MASKED_DEV_DIR="/var/lib/aioms/root-read/masked-dev"
 readonly MASK_NOTICE="AIOMS_PATH_MASKED: 该宿主机路径已被安全策略遮蔽，不能判断为空或不存在。"
 readonly SUDOERS_TARGET="/etc/sudoers.d/aioms-root-read"
 readonly TEMP_SUDOERS="$(mktemp /etc/sudoers.d/.aioms-root-read.XXXXXX)"
@@ -60,10 +61,16 @@ install -d -o root -g root -m 0755 \
     "$STATE_DIR" \
     /usr/local/libexec/aioms
 install -d -o root -g root -m 0755 "$MASK_DIR"
+install -d -o root -g root -m 0755 "$MASKED_DEV_DIR"
 printf '%s\n' "$MASK_NOTICE" >"$TEMP_STATE"
 install -o root -g root -m 0444 "$TEMP_STATE" "$MASK_DIR/AIOMS_PATH_MASKED.txt"
 chmod 0555 "$MASK_DIR"
 install -o root -g root -m 0444 "$TEMP_STATE" "$MASK_FILE"
+# Docker 嵌套挂载需要目标先存在；这个空普通文件仅作为
+# /host/dev/null 的挂载点，运行时会被真正的 null 字符设备覆盖。
+: >"$TEMP_STATE"
+install -o root -g root -m 0444 "$TEMP_STATE" "$MASKED_DEV_DIR/null"
+chmod 0555 "$MASKED_DEV_DIR"
 install -o root -g root -m 0644 "$SCRIPT_DIR/Dockerfile" "$INSTALL_CONTEXT/Dockerfile"
 install -o root -g root -m 0555 "$SCRIPT_DIR/entrypoint.py" "$INSTALL_CONTEXT/entrypoint.py"
 install -o root -g root -m 0555 \
@@ -121,7 +128,7 @@ fi
 [[ "$test_output" == *'"output": "aioms-root-read-ok"'* ]] \
     || fail "root-read 容器自检返回异常：$test_output"
 
-if host_test_output="$(printf '{"command":"test -r /etc/os-release && printf aioms-host-read-ok","timeout":5,"scope":"host"}' \
+if host_test_output="$(printf '{"command":"test -r /etc/os-release 2>/dev/null && printf aioms-host-read-ok","timeout":5,"scope":"host"}' \
     | /usr/local/sbin/aioms-root-read)"; then
     :
 else

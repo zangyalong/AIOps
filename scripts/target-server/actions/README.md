@@ -9,6 +9,19 @@ stop docker orders-api
 restart systemd mysqld.service
 ```
 
+Docker Compose 用 `.env` 插值的配置变化不能通过普通 `docker restart`
+生效。独立的 `recreate_compose_service` 高风险工具会调用：
+
+```text
+aioms-compose-recreate sub2api
+```
+
+网关不接受 Compose 路径、project、service 或附加 flags；它只从已授权容器的
+`com.docker.compose.*` 标签反查原始项目，并限定目标 service 必须是单副本，再执行
+`up -d --no-deps --force-recreate --no-build --pull never`。Compose 项目可以包含
+数据库、Redis 等其他 service，`--no-deps` 会确保这些依赖不会随目标一起重建。
+配置及父目录若可被 AIOMS SSH 用户直接写入，网关会拒绝，避免绕过文件变更审批。
+
 策略包装器只接受用户在服务目录明确开启或关闭控制授权后的白名单同步：
 
 ```text
@@ -27,7 +40,7 @@ docker:orders-api
 还会核对 unit 已加载或容器名称完全一致，执行后核对实际状态。systemd 停止只有
 `inactive` 算成功，`failed` 会明确报错；Docker 停止只有 `exited` 算成功。
 
-sudoers 只授权两个 root 所有的固定包装器，不开放任意 `systemctl`、Docker CLI 或 Shell。
+sudoers 只授权三个 root 所有的固定包装器，不开放任意 `systemctl`、Docker CLI 或 Shell。
 `aioms-service-policy` 使用文件锁和同目录临时文件原子更新白名单，不执行任何启停操作；实际
 控制仍必须经过独立的 Tool 人工审批。
 

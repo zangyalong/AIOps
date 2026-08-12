@@ -89,6 +89,7 @@ const TOOL_LABELS: Record<string, string> = {
   start_service: '启动服务',
   stop_service: '停止服务',
   restart_service: '重启服务',
+  recreate_compose_service: '重建 Compose 服务',
   create_alert_rule: '创建预警规则',
   apply_server_log_config: '应用服务器日志配置',
   deploy_server_environment: '自动部署服务器环境',
@@ -105,6 +106,7 @@ const WRITE_TOOLS = new Set([
   'start_service',
   'stop_service',
   'restart_service',
+  'recreate_compose_service',
   'apply_server_log_config',
   'deploy_server_environment',
   'update_server_file',
@@ -121,12 +123,16 @@ const MEDIUM_RISK_TOOLS = new Set([
 const HIGH_RISK_TOOLS = new Set([
   'stop_service',
   'restart_service',
+  'recreate_compose_service',
   'apply_server_log_config',
   'deploy_server_environment',
   'update_server_file',
 ])
 
 function historyApprovalCommand(name: string, args: Record<string, unknown>): string {
+  if (name === 'recreate_compose_service') {
+    return `重建 Compose 服务 ${String(args.container_name ?? '?')}`
+  }
   if (name === 'start_service' || name === 'stop_service' || name === 'restart_service') {
     const action = { start_service: '启动', stop_service: '停止', restart_service: '重启' }[name]
     return `${action} ${String(args.runtime_type ?? 'systemd')} 服务 ${String(args.service_name ?? '?')}`

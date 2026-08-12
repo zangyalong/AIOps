@@ -214,7 +214,8 @@ def _run(
         shell_args,
         cwd=cwd,
         env=environment,
-        # host scope 会遮蔽 /dev，使用匿名管道提供 EOF，不能依赖 /dev/null。
+        # stdin 使用匿名管道提供 EOF；host scope 另外只精确挂载
+        # /dev/null，不暴露完整的宿主机 /dev。
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
