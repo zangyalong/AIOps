@@ -12,6 +12,7 @@ export interface ChatMessage {
   // assistant 调工具时带上它的 tool_calls；tool 消息带它回应的 tool_call_id。刷新后据此重建过程。
   tool_calls?: ToolCall[] | null
   tool_call_id?: string | null
+  tool_status?: 'completed' | 'failed' | null
 }
 
 export interface ChatRunHistory {
@@ -41,6 +42,8 @@ export interface PendingAction {
   service_name?: string
   environment?: string
   service_names?: string[]
+  path?: string
+  selector?: string
   risk_level?: 'medium' | 'high' | 'critical'
   args?: Record<string, unknown>
   operation_id: string

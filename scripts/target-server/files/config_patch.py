@@ -189,7 +189,9 @@ def _validate_selector_names(parts: list[str]) -> None:
         raise ConfigPatchError(f"选择器包含敏感字段 {sensitive}，禁止通过 Agent 修改")
 
 
-def _dotenv_patch(source: bytes, selector: str, value: object) -> tuple[bytes, object]:
+def _dotenv_patch(
+    source: bytes, selector: str, value: object
+) -> tuple[bytes, object, int]:
     if not _ENV_KEY.fullmatch(selector):
         raise ConfigPatchError("dotenv 选择器必须是合法环境变量名")
     _validate_selector_names([selector])
@@ -219,7 +221,7 @@ def _dotenv_patch(source: bytes, selector: str, value: object) -> tuple[bytes, o
     if _looks_sensitive_value(before):
         raise ConfigPatchError(f"变量 {selector} 的当前值疑似敏感，禁止返回预览")
     lines[index] = f"{match.group('prefix')}{value}{ending}"
-    return "".join(lines).encode("utf-8"), before
+    return "".join(lines).encode("utf-8"), before, index + 1
 
 
 def _pointer_parts(selector: str, format_label: str = "JSON") -> list[str]:
@@ -279,7 +281,9 @@ def _set_python_value(document: object, parts: list[str], value: object) -> None
         raise ConfigPatchError("JSON Pointer 的父节点不是容器")
 
 
-def _json_patch(source: bytes, selector: str, value: object) -> tuple[bytes, object]:
+def _json_patch(
+    source: bytes, selector: str, value: object
+) -> tuple[bytes, object, int]:
     try:
         text = source.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -310,7 +314,8 @@ def _json_patch(source: bytes, selector: str, value: object) -> tuple[bytes, obj
         type(actual_target.value) is type(value) and actual_target.value == value
     ):
         raise ConfigPatchError("JSON 补丁改变了选择器以外的语义")
-    return updated_text.encode("utf-8"), target.value
+    line = text.count("\n", 0, target.start) + 1
+    return updated_text.encode("utf-8"), target.value, line
 
 
 def _validate_yaml_tree(root: Node) -> None:
@@ -395,7 +400,9 @@ def _same_tree(left: object, right: object) -> bool:
     return left == right
 
 
-def _yaml_patch(source: bytes, selector: str, value: object) -> tuple[bytes, object]:
+def _yaml_patch(
+    source: bytes, selector: str, value: object
+) -> tuple[bytes, object, int]:
     try:
         text = source.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -451,7 +458,7 @@ def _yaml_patch(source: bytes, selector: str, value: object) -> tuple[bytes, obj
         type(actual_value) is type(value) and actual_value == value
     ):
         raise ConfigPatchError("YAML 补丁改变了选择器以外的语义")
-    return updated_text.encode("utf-8"), before
+    return updated_text.encode("utf-8"), before, target.start_mark.line + 1
 
 
 def _patch(
@@ -468,15 +475,15 @@ def _patch(
             or filename.endswith(".env")
         ):
             raise ConfigPatchError("dotenv 驱动只允许 .env、.env.* 或 *.env 文件")
-        updated, before = _dotenv_patch(source, selector, value)
+        updated, before, line = _dotenv_patch(source, selector, value)
     elif config_format == "json":
         if not filename.endswith(".json"):
             raise ConfigPatchError("JSON 驱动只允许 .json 文件")
-        updated, before = _json_patch(source, selector, value)
+        updated, before, line = _json_patch(source, selector, value)
     elif config_format == "yaml":
         if not filename.endswith((".yaml", ".yml")):
             raise ConfigPatchError("YAML 驱动只允许 .yaml 或 .yml 文件")
-        updated, before = _yaml_patch(source, selector, value)
+        updated, before, line = _yaml_patch(source, selector, value)
     else:
         raise ConfigPatchError("format 只支持 dotenv、json 或 yaml")
     result = {
@@ -486,6 +493,7 @@ def _patch(
         "output_sha256": hashlib.sha256(updated).hexdigest(),
         "before": before,
         "after": value,
+        "line": line,
         "changed": source != updated,
     }
     return updated, result

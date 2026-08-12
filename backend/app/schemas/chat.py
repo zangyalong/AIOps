@@ -57,6 +57,7 @@ class ChatMessageOut(BaseModel):
     # 前端刷新后据此原样重建"旁白 → 工具行 → 答案"。
     tool_calls: list[dict] | None = None
     tool_call_id: str | None = None
+    tool_status: Literal["completed", "failed"] | None = None
 
 
 class ChatRunHistoryOut(BaseModel):

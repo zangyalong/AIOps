@@ -10,8 +10,22 @@ export interface ChatRun {
 export type ChatStreamEvent =
   | { type: 'narration'; seq: number; content: string }
   | { type: 'token'; seq: number; content: string }
-  | { type: 'tool_start'; seq: number; id: string; tool: string }
-  | { type: 'tool_end'; seq: number; id: string }
+  | {
+      type: 'tool_start'
+      seq: number
+      id: string
+      tool: string
+      args: Record<string, unknown>
+    }
+  | { type: 'tool_end'; seq: number; id: string; result: string; failed: boolean }
+  | {
+      type: 'operation_end'
+      seq: number
+      id: string
+      tool: string
+      result: string
+      failed: boolean
+    }
   | {
       type: 'approval_required'
       seq: number

@@ -167,6 +167,7 @@ class ConfigPatchPreview:
     path: str
     config_format: ConfigFormat
     selector: str
+    line: int | None
     before: ConfigScalar
     after: ConfigScalar
     expected_sha256: str
@@ -236,9 +237,7 @@ def _validate_config_patch(
         if not filename.endswith(allowed_suffixes):
             return f"{format_label} 驱动只允许 {allowed_suffixes_text} 文件"
         if not selector.startswith("/"):
-            return (
-                f"{format_label} 选择器必须是非空 JSON Pointer，例如 /server/port"
-            )
+            return f"{format_label} 选择器必须是非空 JSON Pointer，例如 /server/port"
         raw_parts = selector[1:].split("/")
         if any(re.search(r"~(?:[^01]|$)", part) for part in raw_parts):
             return "JSON Pointer 中 ~ 只能写成 ~0 或 ~1"
@@ -356,15 +355,19 @@ def _config_diff(
     selector: str,
     before: ConfigScalar,
     after: ConfigScalar,
+    line: int | None,
 ) -> str:
+    header = (
+        f"@@ -{line},1 +{line},1 @@ {config_format} {selector}"
+        if line is not None
+        else f"@@ {config_format} {selector} @@"
+    )
     if config_format == "dotenv":
         return _normalize_preview_diff(
-            f"@@ dotenv {selector} @@\n-{selector}={before}\n+{selector}={after}\n"
+            f"{header}\n-{selector}={before}\n+{selector}={after}\n"
         )
     return _normalize_preview_diff(
-        f"@@ {config_format} {selector} @@\n"
-        f"-{_config_value_json(before)}\n"
-        f"+{_config_value_json(after)}\n"
+        f"{header}\n-{_config_value_json(before)}\n+{_config_value_json(after)}\n"
     )
 
 
@@ -397,18 +400,23 @@ async def _preview_config_patch(
     before = payload.get("before")
     after = payload.get("after")
     changed = payload.get("changed")
+    line = payload.get("line")
     if (
         payload.get("format") != config_format
         or payload.get("selector") != selector
         or not _SHA256_PATTERN.fullmatch(str(expected_sha256 or ""))
         or not _SHA256_PATTERN.fullmatch(str(output_sha256 or ""))
         or not isinstance(changed, bool)
+        or (
+            line is not None
+            and (isinstance(line, bool) or not isinstance(line, int) or line < 1)
+        )
         or not _same_scalar(after, value)
         or isinstance(before, (dict, list))
     ):
         return None, "目标服务器配置补丁网关返回的字段不完整或与请求不一致"
     preview_diff = (
-        _config_diff(config_format, selector, before, after)
+        _config_diff(config_format, selector, before, after, line)
         if changed
         else "（配置值没有变化）"
     )
@@ -418,6 +426,7 @@ async def _preview_config_patch(
                 "path": path,
                 "format": config_format,
                 "selector": selector,
+                "line": line,
                 "before": before,
                 "after": after,
                 "expected_sha256": expected_sha256,
@@ -434,6 +443,7 @@ async def _preview_config_patch(
             path=path,
             config_format=config_format,
             selector=selector,
+            line=line,
             before=before,
             after=after,
             expected_sha256=str(expected_sha256),

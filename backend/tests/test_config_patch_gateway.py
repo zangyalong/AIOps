@@ -51,6 +51,7 @@ class ConfigPatchHelperTest(unittest.TestCase):
             self.assertNotIn("keep-real-secret", preview.stdout)
             self.assertNotIn("also-keep", preview.stdout)
             self.assertEqual(json.loads(preview.stdout)["before"], "8080")
+            self.assertEqual(json.loads(preview.stdout)["line"], 2)
             self.assertEqual(
                 output.read_text(),
                 "POSTGRES_PASSWORD=keep-real-secret\n"
@@ -80,6 +81,7 @@ class ConfigPatchHelperTest(unittest.TestCase):
 
             self.assertEqual(applied.returncode, 0, applied.stderr)
             self.assertNotIn("keep-real-secret", applied.stdout)
+            self.assertEqual(json.loads(applied.stdout)["line"], 2)
             self.assertEqual(output.read_text(), content.replace("8080", "8081"))
 
     def test_yaml_pointer_replaces_compose_port_without_returning_secrets(
@@ -123,6 +125,7 @@ class ConfigPatchHelperTest(unittest.TestCase):
                 json.loads(preview.stdout)["before"],
                 "${SERVER_PORT:-8080}:8080",
             )
+            self.assertEqual(json.loads(preview.stdout)["line"], 5)
             self.assertEqual(
                 output.read_text(),
                 content.replace(
@@ -174,9 +177,7 @@ class ConfigPatchHelperTest(unittest.TestCase):
                 "/services/app",
                 '"three"',
             )
-            alias = self._run(
-                "preview", str(alias_file), "yaml", "/port", "8081"
-            )
+            alias = self._run("preview", str(alias_file), "yaml", "/port", "8081")
 
             self.assertNotEqual(sensitive.returncode, 0)
             self.assertIn("敏感字段", sensitive.stderr)
@@ -197,7 +198,7 @@ class FileGatewayContractTest(unittest.TestCase):
             common = temp_dir / "file-common"
             common.write_text(
                 "MAX_FILE_BYTES=65536\n"
-                "file_fail() { echo \"aioms-file-read: $*\" >&2; exit 1; }\n"
+                'file_fail() { echo "aioms-file-read: $*" >&2; exit 1; }\n'
                 "require_root_gateway() { :; }\n"
                 "validate_policy_file() { :; }\n"
                 "canonical_existing_path() { printf '%s\\n' \"$1\"; }\n"

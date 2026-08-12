@@ -15,6 +15,7 @@ from app.services import (
     chat_run_record_service,
     conversation_service,
     message_service,
+    operation_record_service,
 )
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
@@ -36,6 +37,15 @@ async def get_conversation(
 
     messages = await message_service.list_messages(db, conversation_id)
     chat_runs = await chat_run_record_service.list_chat_runs(db, conversation_id)
+    operation_records = (
+        await operation_record_service.list_conversation_operation_records(
+            db, conversation_id
+        )
+    )
+    operation_status = {
+        (record.chat_run_id, record.tool_call_id): record.status
+        for record in operation_records
+    }
 
     return ConversationDetail(
         conversation=ConversationSummary.model_validate(conversation),
@@ -47,6 +57,14 @@ async def get_conversation(
                 run_id=m.run_id,
                 tool_calls=m.tool_calls,
                 tool_call_id=m.tool_call_id,
+                tool_status=(
+                    "failed"
+                    if operation_status.get((m.run_id, m.tool_call_id))
+                    in {"failed", "denied", "expired"}
+                    else "completed"
+                    if operation_status.get((m.run_id, m.tool_call_id)) == "completed"
+                    else None
+                ),
             )
             for m in messages
         ],

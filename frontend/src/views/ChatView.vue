@@ -12,6 +12,8 @@ import {
 import { fetchConversationDetail } from '../api/conversations'
 import ConversationList from '../components/ConversationList.vue'
 import MarkdownContent from '../components/MarkdownContent.vue'
+import OperationCard from '../components/OperationCard.vue'
+import ToolCallCard from '../components/ToolCallCard.vue'
 import type { ChatMessage, ChatRunHistory } from '../types/chat'
 
 // 会话时间线：消息、工具行、写操作审批行按发生顺序混在一个数组里，这样它们能显示在实际
@@ -20,7 +22,16 @@ import type { ChatMessage, ChatRunHistory } from '../types/chat'
 type TimelineItem =
   | { kind: 'message'; key: string; role: 'user' | 'assistant'; content: string }
   | { kind: 'narration'; key: string; content: string }
-  | { kind: 'tool'; key: string; id: string; tool: string; done: boolean; failed?: boolean }
+  | {
+      kind: 'tool'
+      key: string
+      id: string
+      tool: string
+      args: Record<string, unknown>
+      result?: string
+      done: boolean
+      failed?: boolean
+    }
   | { kind: 'run-error'; key: string; content: string }
   | {
       // 写操作审批行：pending 时右侧带执行/不执行按钮；裁决后翻成 approved（已批准）/rejected（已拒绝）
@@ -29,10 +40,22 @@ type TimelineItem =
       threadId: string // 挂起恢复用；历史重建的已决定项为 '' （无需也无法再恢复）
       toolCallId: string
       operationId: string
-      command: string // 展示的命令 / 动作摘要
+      tool: string
+      title: string
+      command: string
+      args: Record<string, unknown>
+      diff?: string
+      result?: string
       label: string // 副标题（在哪台执行等），可空
       riskLevel?: 'medium' | 'high' | 'critical'
-      status: 'pending' | 'selected_approved' | 'selected_rejected' | 'approved' | 'rejected' | 'failed'
+      status:
+        | 'pending'
+        | 'selected_approved'
+        | 'selected_rejected'
+        | 'approved'
+        | 'completed'
+        | 'rejected'
+        | 'failed'
     }
 type ApprovalItem = Extract<TimelineItem, { kind: 'approval' }>
 
@@ -47,6 +70,7 @@ const route = useRoute()
 const router = useRouter()
 const conversationListRef = ref<InstanceType<typeof ConversationList> | null>(null)
 const messagesEl = ref<HTMLElement | null>(null)
+const inputEl = ref<HTMLTextAreaElement | null>(null)
 // 当前是否有一个写操作挂在审批门上等裁决。非空时输入框禁用（先处理确认再继续对话），
 // 记住要恢复哪条挂起（threadId）——裁决时按 threadId 把这次挂起的所有待批行一起翻状态。
 const pendingApproval = ref<{
@@ -66,39 +90,6 @@ function uid(): string {
   return `i${uidCounter++}`
 }
 
-const TOOL_LABELS: Record<string, string> = {
-  investigate: '调查运维证据',
-  // 以下旧名称只用于兼容已经落库的历史对话，新 Agent 不再直接调用。
-  query_servers: '查询服务器列表',
-  query_server_metrics: '查询服务器指标',
-  query_metrics: '查询 Prometheus 指标',
-  list_metric_instances: '查询监控实例',
-  search_logs: '检索日志',
-  query_alerts: '查询告警',
-  query_server_services: '查询服务器上的服务',
-  discover_server_services: '发现服务器运行服务',
-  register_server_services: '注册服务目录',
-  run_diagnostic_command: '执行只读诊断',
-  run_root_read_command: '执行宿主文件只读调查',
-  find_server_files: '查找服务器文件',
-  read_server_file: '读取服务器文件',
-  preview_server_file_update: '预览服务器文件变更',
-  preview_server_config_patch: '预览结构化配置补丁',
-  update_server_file: '更新服务器文件',
-  patch_server_config: '修改服务器配置项',
-  start_service: '启动服务',
-  stop_service: '停止服务',
-  restart_service: '重启服务',
-  recreate_compose_service: '重建 Compose 服务',
-  create_alert_rule: '创建预警规则',
-  apply_server_log_config: '应用服务器日志配置',
-  deploy_server_environment: '自动部署服务器环境',
-  run_whitelisted_command: '执行远程命令（旧记录）',
-}
-function toolLabel(name: string): string {
-  return TOOL_LABELS[name] ?? name
-}
-
 // 写工具都必须还原为审批行；旧名称仅用于正确显示已有历史，不会再绑定给 Agent。
 const WRITE_TOOLS = new Set([
   'register_server_services',
@@ -109,6 +100,7 @@ const WRITE_TOOLS = new Set([
   'recreate_compose_service',
   'apply_server_log_config',
   'deploy_server_environment',
+  'grant_server_file_write_access',
   'update_server_file',
   'patch_server_config',
   'run_whitelisted_command',
@@ -118,6 +110,7 @@ const MEDIUM_RISK_TOOLS = new Set([
   'register_server_services',
   'create_alert_rule',
   'start_service',
+  'grant_server_file_write_access',
   'patch_server_config',
 ])
 const HIGH_RISK_TOOLS = new Set([
@@ -154,16 +147,42 @@ function historyApprovalCommand(name: string, args: Record<string, unknown>): st
   if (name === 'deploy_server_environment') {
     return `自动部署 ${String(args.server_name ?? '?')} 的环境配置`
   }
+  if (name === 'grant_server_file_write_access') {
+    return `授权精确写入 ${String(args.path ?? '?')}`
+  }
   if (name === 'update_server_file') {
-    return String(args.preview_diff ?? `更新 ${String(args.path ?? '?')}`)
+    return `原子更新 ${String(args.path ?? '?')}`
   }
   if (name === 'patch_server_config') {
-    return String(
-      args.preview_diff ??
-        `修改 ${String(args.path ?? '?')} 的 ${String(args.selector ?? '?')}`,
-    )
+    return `修改 ${String(args.path ?? '?')} 的 ${String(args.selector ?? '?')}`
   }
   return String(args.command ?? name)
+}
+
+function historyApprovalTitle(name: string, args: Record<string, unknown>): string {
+  const server = String(args.server_name ?? '目标服务器')
+  const labels: Record<string, string> = {
+    register_server_services: '注册服务目录',
+    create_alert_rule: '创建预警规则',
+    start_service: '启动服务',
+    stop_service: '停止服务',
+    restart_service: '重启服务',
+    recreate_compose_service: '重建 Compose 服务',
+    apply_server_log_config: '应用日志配置',
+    deploy_server_environment: '部署服务器环境',
+    grant_server_file_write_access: '授予精确文件写权限',
+    update_server_file: '更新服务器文件',
+    patch_server_config: '修改服务器配置项',
+  }
+  const label = labels[name] ?? name
+  return args.server_name ? `${label} · ${server}` : label
+}
+
+function approvalDiff(args: Record<string, unknown>, command = ''): string | undefined {
+  const preview = args.preview_diff
+  if (typeof preview === 'string' && preview.trim()) return preview
+  if (/^(?:--- |\+\+\+ |@@ |[-+])/.test(command.trim())) return command
+  return undefined
 }
 
 function historyRiskLevel(name: string): 'medium' | 'high' | undefined {
@@ -206,6 +225,25 @@ function scrollToBottom() {
   const el = messagesEl.value
   if (el) el.scrollTop = el.scrollHeight
 }
+
+function resizeInput() {
+  nextTick(() => {
+    const element = inputEl.value
+    if (!element) return
+    element.style.height = 'auto'
+    const height = Math.min(element.scrollHeight, 144)
+    element.style.height = `${Math.max(height, 42)}px`
+    element.style.overflowY = element.scrollHeight > 144 ? 'auto' : 'hidden'
+  })
+}
+
+function onComposerKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return
+  event.preventDefault()
+  void send()
+}
+
+watch(input, resizeInput)
 
 // 时间线变化（新消息、流式 token、工具卡片）时自动滚到底部；但只在用户本来就贴着底部
 // 时才滚，避免用户向上翻看历史时被强行拽回来。默认 flush:'pre'，回调里读到的是更新前的
@@ -256,10 +294,30 @@ async function consume(stream: AsyncGenerator<ChatStreamEvent>) {
     } else if (event.type === 'tool_start') {
       // 工具过程与最终回答分块展示；正常情况下最终回答尚未出现，这里关闭气泡是防御性处理。
       assistantOpen = false
-      timeline.value.push({ kind: 'tool', key: uid(), id: event.id, tool: event.tool, done: false })
+      timeline.value.push({
+        kind: 'tool',
+        key: uid(),
+        id: event.id,
+        tool: event.tool,
+        args: event.args,
+        done: false,
+      })
     } else if (event.type === 'tool_end') {
       const item = timeline.value.find((t) => t.kind === 'tool' && t.id === event.id)
-      if (item && item.kind === 'tool') item.done = true
+      if (item && item.kind === 'tool') {
+        item.done = true
+        item.result = event.result
+        item.failed = event.failed
+      }
+    } else if (event.type === 'operation_end') {
+      const item = timeline.value.find(
+        (candidate) =>
+          candidate.kind === 'approval' && candidate.toolCallId === event.id,
+      )
+      if (item && item.kind === 'approval') {
+        item.result = event.result
+        item.status = event.failed ? 'failed' : 'completed'
+      }
     } else if (event.type === 'approval_required') {
       // 图挂在写操作审批门上：每个待批动作画一条紧凑审批行（浅底 + 右侧执行/不执行按钮），门控
       // 输入框，等用户逐项裁决后续跑。记下 conversation（可能这轮新建的）+ thread_id。
@@ -272,7 +330,11 @@ async function consume(stream: AsyncGenerator<ChatStreamEvent>) {
           threadId: event.thread_id,
           toolCallId: a.tool_call_id,
           operationId: a.operation_id ?? '',
-          command: a.command ?? (a.args ? JSON.stringify(a.args) : a.title),
+          tool: a.tool,
+          title: a.title,
+          command: approvalDiff(a.args ?? {}, a.command ?? '') ? '' : (a.command ?? ''),
+          args: a.args ?? {},
+          diff: approvalDiff(a.args ?? {}, a.command ?? ''),
           label: [a.server_name, a.environment].filter(Boolean).join(' · '),
           riskLevel: a.risk_level,
           status: 'pending',
@@ -289,7 +351,8 @@ async function consume(stream: AsyncGenerator<ChatStreamEvent>) {
         if (
           item.kind === 'approval' &&
           item.threadId === event.thread_id &&
-          item.status !== 'failed'
+          item.status !== 'failed' &&
+          item.status !== 'completed'
         ) {
           const decision = decisions.get(item.toolCallId)
           if (decision) item.status = decision.approved ? 'approved' : 'rejected'
@@ -350,6 +413,7 @@ async function send() {
 
   timeline.value.push({ kind: 'message', key: uid(), role: 'user', content: text })
   input.value = ''
+  resizeInput()
   sending.value = true
   error.value = null
   assistantOpen = false
@@ -461,7 +525,10 @@ function buildTimeline(
   const visibleMessages = messages.filter(
     (message) => message.role === 'user' || !replayRunId || message.run_id !== replayRunId,
   )
-  const toolResultById = new Map<string, string>()
+  const toolResultById = new Map<
+    string,
+    { content: string; failed: boolean }
+  >()
   const resultKey = (runId: string | null | undefined, toolCallId: string) =>
     `${runId ?? 'legacy'}:${toolCallId}`
   const lastMessageIndexByRun = new Map<string, number>()
@@ -470,7 +537,10 @@ function buildTimeline(
   })
   for (const message of visibleMessages) {
     if (message.role === 'tool' && message.tool_call_id) {
-      toolResultById.set(resultKey(message.run_id, message.tool_call_id), message.content)
+      toolResultById.set(resultKey(message.run_id, message.tool_call_id), {
+        content: message.content,
+        failed: message.tool_status === 'failed',
+      })
     }
   }
 
@@ -486,7 +556,7 @@ function buildTimeline(
           ? resultKey(message.run_id, toolCall.id)
           : ''
         if (WRITE_TOOLS.has(toolCall.name)) {
-          const result = (toolResultKey && toolResultById.get(toolResultKey)) || ''
+          const result = toolResultKey ? toolResultById.get(toolResultKey) : undefined
           const args = (toolCall.args ?? {}) as Record<string, unknown>
           items.push({
             kind: 'approval',
@@ -494,16 +564,23 @@ function buildTimeline(
             threadId: '',
             toolCallId: toolCall.id ?? '',
             operationId: '',
+            tool: toolCall.name,
+            title: historyApprovalTitle(toolCall.name, args),
             command: historyApprovalCommand(toolCall.name, args),
+            args,
+            diff: approvalDiff(args),
+            result: result?.content,
             label: [args.server_name, args.environment].filter(Boolean).map(String).join(' · '),
             riskLevel: historyRiskLevel(toolCall.name),
             status: !result
               ? run?.status === 'failed'
                 ? 'failed'
                 : 'pending'
-              : result.startsWith('用户拒绝执行')
+              : result.content.startsWith('用户拒绝执行')
                 ? 'rejected'
-                : 'approved',
+                : result.failed
+                  ? 'failed'
+                  : 'completed',
           })
         } else {
           const done = Boolean(toolResultKey && toolResultById.has(toolResultKey))
@@ -512,8 +589,14 @@ function buildTimeline(
             key: uid(),
             id: uid(),
             tool: toolCall.name,
+            args: (toolCall.args ?? {}) as Record<string, unknown>,
+            result: toolResultKey
+              ? toolResultById.get(toolResultKey)?.content
+              : undefined,
             done,
-            failed: !done && run?.status === 'failed',
+            failed:
+              (toolResultKey && toolResultById.get(toolResultKey)?.failed) ||
+              (!done && run?.status === 'failed'),
           })
         }
       }
@@ -655,44 +738,33 @@ onBeforeUnmount(() => {
               <span v-else class="plain-message">{{ item.content }}</span>
             </div>
             <div v-else-if="item.kind === 'narration'" class="expert-narration">
-              <span class="narration-label">专家旁白</span>
+              <span class="narration-marker" aria-hidden="true" />
               <span>{{ item.content }}</span>
             </div>
-            <div v-else-if="item.kind === 'tool'" class="tool-line" :class="{ done: item.done, failed: item.failed }">
-              {{ item.failed ? '✕' : item.done ? '✓' : '›' }}
-              {{ item.failed ? '调用失败：' : item.done ? '已' : '正在' }}{{ toolLabel(item.tool) }}{{ item.done || item.failed ? '' : '…' }}
+            <div v-else-if="item.kind === 'tool'" class="execution-item">
+              <ToolCallCard
+                :tool="item.tool"
+                :args="item.args"
+                :result="item.result"
+                :status="item.failed ? 'failed' : item.done ? 'completed' : 'running'"
+              />
             </div>
             <p v-else-if="item.kind === 'run-error'" class="run-error">本轮失败：{{ item.content }}</p>
-            <div v-else-if="item.kind === 'approval'" class="approval-line" :class="item.status">
-              <span class="approval-icon">{{
-                item.status === 'pending'
-                  ? '›'
-                  : item.status === 'approved' || item.status === 'selected_approved'
-                    ? '✓'
-                    : '✕'
-              }}</span>
-              <span class="approval-text">
-                <span class="approval-verb">{{
-                  item.status === 'pending'
-                    ? '待确认'
-                    : item.status === 'approved'
-                      ? '已批准'
-                      : item.status === 'selected_approved'
-                        ? '已选择执行'
-                        : item.status === 'selected_rejected'
-                          ? '已选择不执行'
-                      : item.status === 'failed'
-                        ? '未完成'
-                        : '已拒绝'
-                }}</span>
-                <span v-if="item.riskLevel" class="approval-risk">{{ riskLevelLabel(item.riskLevel) }}</span>
-                <code class="approval-cmd">{{ item.command }}</code>
-                <span v-if="item.label" class="approval-loc">· {{ item.label }}</span>
-              </span>
-              <span v-if="item.status === 'pending'" class="approval-btns">
-                <button type="button" class="approve" :disabled="sending" @click="requestApproval(item)">执行</button>
-                <button type="button" class="reject" :disabled="sending" @click="selectApproval(item, false)">不执行</button>
-              </span>
+            <div v-else-if="item.kind === 'approval'" class="execution-item">
+              <OperationCard
+                :tool="item.tool"
+                :title="item.title"
+                :command="item.command"
+                :label="item.label"
+                :risk-level="item.riskLevel"
+                :status="item.status"
+                :args="item.args"
+                :diff="item.diff"
+                :result="item.result"
+                :disabled="sending"
+                @approve="requestApproval(item)"
+                @reject="selectApproval(item, false)"
+              />
             </div>
           </template>
           <p v-if="showThinking" class="hint">正在生成回答…</p>
@@ -702,13 +774,18 @@ onBeforeUnmount(() => {
 
       <div class="input-panel">
         <form class="input-row" @submit.prevent="send">
-          <input
+          <textarea
+            ref="inputEl"
             v-model="input"
+            rows="1"
             :placeholder="pendingApproval ? '请先处理上面的确认…' : '描述目标、服务器或异常现象…'"
             :disabled="sending || !!pendingApproval"
+            aria-label="给运维助手发送消息"
+            @keydown="onComposerKeydown"
           />
           <button type="submit" :disabled="sending || !!pendingApproval">发送</button>
         </form>
+        <p class="input-hint">Enter 发送 · Shift + Enter 换行</p>
       </div>
     </div>
 
@@ -881,146 +958,54 @@ h1 {
 }
 
 .expert-narration {
+  position: relative;
   align-self: stretch;
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   gap: 0.65rem;
-  padding: 0.55rem 0.7rem;
-  border-left: 2px solid #8ba7d3;
-  background: #f6f8fc;
+  padding: 0.15rem 0.65rem 0.15rem 1.15rem;
   color: var(--color-text-muted);
   font-size: 0.86rem;
   line-height: 1.55;
 }
 
-.narration-label {
+.expert-narration::before {
+  content: '';
+  position: absolute;
+  top: 0.75rem;
+  bottom: -1.05rem;
+  left: 0.34rem;
+  width: 1px;
+  background: var(--color-border);
+}
+
+.narration-marker {
+  position: absolute;
+  top: 0.54rem;
+  left: 0.08rem;
+  width: 8px;
+  height: 8px;
   flex-shrink: 0;
-  color: #526b92;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  border: 2px solid var(--color-surface);
+  border-radius: 50%;
+  background: #7b8b94;
+  box-shadow: 0 0 0 1px var(--color-border-strong);
 }
 
-/* 工具调用渲染成单行文本：运行时黑色，完成后变灰以区分。不是气泡/胶囊。 */
-.tool-line {
-  align-self: flex-start;
-  font-size: 0.85rem;
-  padding: 0 0.15rem;
-  color: var(--color-text); /* 运行中：黑色 */
-}
-
-.tool-line:not(.done) {
-  animation: blink 1.4s ease-in-out infinite;
-}
-
-.tool-line.done {
-  color: var(--color-text-muted); /* 完成后：灰色 */
-  animation: none;
-}
-
-.tool-line.failed {
-  color: var(--color-status-unreachable);
-  animation: none;
-}
-
-@keyframes blink {
-  50% {
-    opacity: 0.5;
-  }
-}
-
-/* 写操作审批行：一整行浅色底，左侧图标+动作文字（命令用等宽），右侧执行/不执行按钮。
-   pending 时带按钮；裁决后（approved/rejected）按钮消失、图标与措辞随状态变，且随历史持久重建。 */
-.approval-line {
+.execution-item {
+  position: relative;
   align-self: stretch;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.4rem 0.6rem;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-bg);
-  font-size: 0.85rem;
+  padding-left: 1.15rem;
 }
 
-.approval-icon {
-  color: var(--color-text-muted);
-  flex-shrink: 0;
-}
-
-.approval-line.approved .approval-icon,
-.approval-line.selected_approved .approval-icon {
-  color: var(--color-accent);
-}
-
-.approval-line.rejected .approval-icon,
-.approval-line.selected_rejected .approval-icon,
-.approval-line.failed .approval-icon {
-  color: var(--color-status-unreachable);
-}
-
-.approval-text {
-  flex: 1;
-  min-width: 0;
-  color: var(--color-text);
-}
-
-.approval-verb {
-  margin-right: 0.35rem;
-}
-
-.approval-risk {
-  margin-right: 0.35rem;
-  padding: 0.05rem 0.3rem;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--color-status-unreachable) 12%, transparent);
-  color: var(--color-status-unreachable);
-  font-size: 0.75rem;
-}
-
-.approval-cmd {
-  padding: 0.05rem 0.35rem;
-  border: 1px solid var(--color-border);
-  border-radius: 4px;
-  background: var(--color-surface);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.82rem;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-
-.approval-loc {
-  margin-left: 0.35rem;
-  color: var(--color-text-muted);
-}
-
-.approval-btns {
-  display: flex;
-  gap: 0.4rem;
-  flex-shrink: 0;
-}
-
-.approval-btns button {
-  padding: 0.25rem 0.7rem;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  font-size: 0.8rem;
-}
-
-.approval-btns .approve {
-  background: var(--color-accent);
-  color: var(--color-accent-contrast);
-  border-color: var(--color-accent);
-}
-
-.approval-btns .reject {
-  background: var(--color-surface);
-  color: var(--color-text);
-}
-
-.approval-btns button:disabled {
-  opacity: 0.6;
-  cursor: default;
+.execution-item::before {
+  content: '';
+  position: absolute;
+  top: -0.95rem;
+  bottom: -0.95rem;
+  left: 0.34rem;
+  width: 1px;
+  background: var(--color-border);
 }
 
 .confirm-backdrop {
@@ -1176,11 +1161,19 @@ h1 {
   background: #ffffff;
 }
 
-.input-row input {
+.input-row textarea {
   flex: 1;
+  min-width: 0;
+  min-height: 42px;
+  max-height: 144px;
   padding: 0.55rem 0.85rem;
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
+  resize: none;
+  font: inherit;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .input-row button {
@@ -1194,6 +1187,15 @@ h1 {
 .input-row button:disabled {
   opacity: 0.6;
   cursor: default;
+}
+
+.input-hint {
+  max-width: 860px;
+  margin: 0.35rem auto 0;
+  padding-right: 0.2rem;
+  color: var(--color-text-muted);
+  font-size: 0.66rem;
+  text-align: right;
 }
 
 /* 视觉重塑：把对话区做成运维工作流，而不是通用聊天窗口。 */
@@ -1376,20 +1378,12 @@ h1 {
   background: #e5f2f4;
 }
 
-.tool-line {
-  padding: 0.38rem 0.6rem;
-  border-left: 2px solid var(--color-accent);
-  color: var(--color-text-muted);
-  background: linear-gradient(90deg, rgba(22, 137, 154, 0.07), transparent 75%);
-  font-family: var(--font-data);
-  font-size: 0.74rem;
-}
-
 .input-panel {
   padding: 0.75rem 2rem 1.35rem;
 }
 
 .input-row {
+  align-items: flex-end;
   max-width: 860px;
   gap: 8px;
   padding: 6px;
@@ -1399,11 +1393,12 @@ h1 {
   box-shadow: 0 8px 28px rgba(16, 39, 51, 0.08);
 }
 
-.input-row input {
+.input-row textarea {
   min-height: 42px;
   border: 0;
   background: transparent;
   box-shadow: none;
+  outline: none;
 }
 
 .input-row button {

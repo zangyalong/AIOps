@@ -9,6 +9,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_openai import StreamChunkTimeoutError
 
 from app.models.message import Message
+from app.operations.schemas import OperationResult
 from app.services import chat_service
 
 
@@ -65,11 +66,18 @@ class _FakeGraph:
                 "event": "on_tool_start",
                 "name": "investigate",
                 "run_id": "tool-run",
+                "data": {"input": {"area": "metrics", "query": "cpu"}},
             },
             {
                 "event": "on_tool_end",
                 "name": "investigate",
                 "run_id": "tool-run",
+                "data": {
+                    "output": OperationResult.success(
+                        "CPU 使用率为 12%",
+                        metadata={"evidence_source": "Prometheus"},
+                    )
+                },
             },
             {
                 "event": "on_chat_model_stream",
@@ -172,6 +180,9 @@ class ChatStreamTest(unittest.IsolatedAsyncioTestCase):
             ["narration", "tool_start", "tool_end", "token", "done"],
         )
         self.assertEqual(events[0]["content"], "我先查询服务器的实时指标。")
+        self.assertEqual(events[1]["args"], {"area": "metrics", "query": "cpu"})
+        self.assertEqual(events[2]["result"], "CPU 使用率为 12%")
+        self.assertFalse(events[2]["failed"])
         self.assertEqual(events[3]["content"], "一次生成的最终回答")
         self.assertIsNotNone(graph.run_config)
         assert graph.run_config is not None
@@ -198,6 +209,24 @@ class ChatStreamTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertLessEqual(len(narration), 96)
         self.assertTrue(narration.endswith("…"))
+
+    def test_write_tool_result_keeps_tool_call_id_and_error_status(self) -> None:
+        output = {
+            "messages": [
+                ToolMessage(
+                    "端口冲突，容器未启动",
+                    tool_call_id="write-call",
+                    name="start_service",
+                    status="error",
+                )
+            ]
+        }
+
+        messages = chat_service._write_tool_results(output)
+        self.assertEqual([message.tool_call_id for message in messages], ["write-call"])
+        result, failed = chat_service._stream_tool_result(messages[0])
+        self.assertEqual(result, "端口冲突，容器未启动")
+        self.assertTrue(failed)
 
     async def test_stream_timeout_returns_readable_error(self) -> None:
         run_id = uuid.uuid4()

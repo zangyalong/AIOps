@@ -240,5 +240,11 @@ async def list_operation_records(
     )
 
 
+async def list_conversation_operation_records(
+    db: AsyncSession, conversation_id: uuid.UUID
+) -> list[OperationRecord]:
+    return await operation_record_repository.list_by_conversation(db, conversation_id)
+
+
 async def fail_incomplete_operations(db: AsyncSession) -> int:
     return await operation_record_repository.fail_incomplete(db, now=_now())

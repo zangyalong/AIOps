@@ -6,6 +6,7 @@ from datetime import datetime
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.chat_run import ChatRun
 from app.models.operation_record import OperationRecord
 
 
@@ -55,6 +56,18 @@ async def list_records(
         statement = statement.where(OperationRecord.status == status)
     result = await db.scalars(
         statement.order_by(OperationRecord.created_at.desc()).limit(limit)
+    )
+    return list(result)
+
+
+async def list_by_conversation(
+    db: AsyncSession, conversation_id: uuid.UUID
+) -> list[OperationRecord]:
+    result = await db.scalars(
+        select(OperationRecord)
+        .join(ChatRun, OperationRecord.chat_run_id == ChatRun.id)
+        .where(ChatRun.conversation_id == conversation_id)
+        .order_by(OperationRecord.created_at)
     )
     return list(result)
 

@@ -129,6 +129,7 @@ class ServerFileToolValidationTest(unittest.IsolatedAsyncioTestCase):
                 "output_sha256": "b" * 64,
                 "before": "8080",
                 "after": "8081",
+                "line": 74,
                 "changed": True,
             }
         )
@@ -159,6 +160,7 @@ class ServerFileToolValidationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["expected_sha256"], "a" * 64)
         self.assertIn("-SERVER_PORT=8080", payload["preview_diff"])
         self.assertIn("+SERVER_PORT=8081", payload["preview_diff"])
+        self.assertIn("@@ -74,1 +74,1 @@", payload["preview_diff"])
         self.assertIn("密码和密钥不会返回", payload["notice"])
         read_snapshot.assert_not_awaited()
         run_gateway.assert_awaited_once_with(
@@ -185,6 +187,7 @@ class ServerFileToolValidationTest(unittest.IsolatedAsyncioTestCase):
                 "output_sha256": "b" * 64,
                 "before": before,
                 "after": after,
+                "line": 5,
                 "changed": True,
             }
         )
@@ -212,7 +215,7 @@ class ServerFileToolValidationTest(unittest.IsolatedAsyncioTestCase):
             )
 
         payload = json.loads(result)
-        self.assertIn(f"@@ yaml {selector} @@", payload["preview_diff"])
+        self.assertIn(f"@@ -5,1 +5,1 @@ yaml {selector}", payload["preview_diff"])
         self.assertIn(json.dumps(before), payload["preview_diff"])
         self.assertIn(json.dumps(after), payload["preview_diff"])
         read_snapshot.assert_not_awaited()
@@ -233,6 +236,7 @@ class ServerFileToolValidationTest(unittest.IsolatedAsyncioTestCase):
             path="/sub2api-deploy/.env",
             config_format="dotenv",
             selector="SERVER_PORT",
+            line=74,
             before="8080",
             after="8081",
             expected_sha256="a" * 64,
@@ -297,6 +301,7 @@ class ServerFileToolValidationTest(unittest.IsolatedAsyncioTestCase):
             path="/home/OnlineAPI/deploy/docker-compose.yml",
             config_format="yaml",
             selector="/services/sub2api/ports/0",
+            line=5,
             before="${SERVER_PORT:-8080}:8080",
             after="${SERVER_PORT:-8081}:8080",
             expected_sha256="a" * 64,

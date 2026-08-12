@@ -1,51 +1,47 @@
-# 对话流视觉 QA
+**Comparison target**
 
-- Source visual truth: `/var/folders/6l/2x93jbfx5910gg3hkd__k3fc0000gn/T/codex-clipboard-6ee36c1b-03aa-4665-88aa-cfeb6b0976c6.png`
-- Scrollbar reference: `/var/folders/6l/2x93jbfx5910gg3hkd__k3fc0000gn/T/codex-clipboard-10cd1d05-f6c0-40e7-95e8-c7a7bb10fa3c.png`
-- Implementation screenshot: `/private/tmp/aioms-chat-v2-full.png`
-- Viewport: 1622 × 1034 CSS px, device pixel ratio 1
-- Source pixels: 1622 × 1034
-- Implementation pixels: 1622 × 1034
-- State: 已打开一条长历史对话，并将最后一条用户消息滚动到可见区域
+- Source visual truth: `/var/folders/6l/2x93jbfx5910gg3hkd__k3fc0000gn/T/codex-clipboard-a4c4a3c5-0f6d-4cc1-81bb-15886df1fd03.png`, `/var/folders/6l/2x93jbfx5910gg3hkd__k3fc0000gn/T/codex-clipboard-afee842a-22ba-4755-8f74-ecbec11986ed.png`, and the user-supplied Pi Agent source at `/Users/leishaohui/Desktop/zyl/pi-main`.
+- Implementation: the existing AIOMS `/chat` screen rendered in the Codex in-app browser.
+- Implementation screenshot path: unavailable. The pre-polish implementation was captured and inspected in the in-app browser, but the final post-fix reload was denied by the browser's local-page security review.
+- Viewport: 1280 × 720 CSS pixels, device scale factor 1.
+- Source pixels: 544 × 125 and 594 × 204; source images are focused diff references rather than a full-page frame.
+- State: a historical production-like conversation containing read investigations, failed/successful write operations, and a dotenv patch preview.
+- Density normalization: none; the focused diff region was judged at its rendered CSS size because the references use different crops and dimensions.
 
-## Full-view comparison evidence
+**Full-view comparison evidence**
 
-- 一级导航宽 200px；历史对话区宽 230px；主对话区从 x=430 延伸到页面最右侧 x=1622。
-- AIOMS 品牌位于页面顶部导航行内，顶部为 0，高度为 64px，并与对话页头处于同一顶部层级。
-- 历史对话区域背景实测为 `rgb(248, 249, 250)`（`#F8F9FA`）。
-- 主对话区、消息滚动区和输入区背景实测均为 `rgb(255, 255, 255)`（`#FFFFFF`）。
-- 对话内容列宽 760px，在 1192px 的主对话区内水平居中，左右边界为 x=640.5 和 x=1400.5。
-- 消息滚动容器右边界为 x=1622，与页面最右边界重合；滚动条不再位于对话内容列右侧。
+- The conversation now reads as a continuous execution rail: short narration, concrete tool call, expandable details, then the final answer. It no longer repeats one generic “已调查运维证据” line for every call.
+- User messages remain visually distinct while assistant text stays full-width, preserving the existing AIOMS visual system instead of copying Claude's colors.
+- Write operations show title, technical tool name, risk, execution state, target, visible diff, and optional parameters/output in one hierarchy.
 
-## Focused region comparison evidence
+**Focused region comparison evidence**
 
-- 用户消息保持右对齐，背景实测为 `rgb(234, 241, 254)`（`#EAF1FE`）。
-- 用户消息圆角实测为 10px，内边距约为 8px × 13px，普通助手消息仍无气泡背景。
-- 滚动条使用白色窄轨道和 6px 灰色圆角滑块；滑块长度由当前对话总高度决定。
-- Markdown 表格、行内代码和高风险审批条保留原有结构样式，业务内容没有被改写。
+- The dotenv preview is rendered as an editor-style hunk with separate deletion/addition rows, old/new line-number gutters, semantic red/green backgrounds, and intraline emphasis. Older persisted previews without numeric hunk metadata remain readable; new previews include actual source line numbers.
+- The textarea was filled with a long Chinese sentence and grew from 42 px to 133 px; Shift+Enter inserted a newline and clearing the input returned it to 42 px.
+- A historical `investigate` card was expanded: “调用参数” contained `{ "area": "servers" }` and “工具输出” contained the persisted evidence. Historical write failures were correlated with operation audit records and rendered as failed rather than completed.
 
-## Required fidelity surfaces
+**Findings and comparison history**
 
-- Fonts and typography: 沿用项目现有系统字体、字号和 Markdown 层级，没有重新引入“我：”“助手：”角色标签。
-- Spacing and layout rhythm: 页头、消息内容和输入框共用 760px 居中列；滚动层独立铺满主区域。
-- Colors and visual tokens: 历史区 `#F8F9FA`、主区 `#FFFFFF`、用户消息 `#EAF1FE`，均通过浏览器计算样式核实。
-- Image quality and asset fidelity: 该界面没有新增图片或非标准图标资产。
-- Copy and content: 仅调整布局和视觉样式，未修改对话内容。
+- [P2, fixed] The first implementation expanded the entire write-operation detail panel whenever a diff existed, causing large argument JSON to dominate the timeline. The diff now stays visible while parameters and execution output remain collapsed behind “详情”.
+- [P2, fixed] The old preview flattened the hunk, risk, and path into one inline code row. The replacement separates action metadata from the editor diff and preserves semantic line structure.
+- [P2, fixed] The old single-line input scrolled horizontally. The replacement wraps naturally, auto-grows to 144 px, supports Shift+Enter, and remains keyboard accessible.
+- Post-fix evidence: the production build passes after separating the always-visible diff from the collapsed parameter/output detail. A final rendered recapture is still required because the browser denied the post-fix local-page reload.
 
-## Findings
+**Required fidelity surfaces**
 
-- 没有发现需要修复的 P0、P1 或 P2 问题。
+- Fonts and typography: existing AIOMS display/body/data font tokens are preserved; code, args, tool names, and diff content consistently use the data font with readable line height and wrapping.
+- Spacing and layout rhythm: compact 44–48 px headers and a one-pixel execution rail replace disconnected generic rows; expanded content has bounded scroll regions.
+- Colors and visual tokens: existing teal/neutral AIOMS palette is retained; status colors are limited to success, risk, failure, and diff semantics.
+- Image quality and asset fidelity: no new raster or decorative assets were needed; existing product marks are unchanged. The target is a code-native diff, so editor rows are implemented as semantic HTML/CSS rather than image placeholders.
+- Copy and content: user-facing labels describe the actual investigation domain and action; technical tool names remain visible for auditability.
+- Responsiveness/accessibility: expand controls are real buttons with `aria-expanded` and focus outlines; mobile layouts hide secondary metadata and stack operation actions; textarea has an accessible label.
 
-## Comparison history
+**Residual test gaps**
 
-- Pass 1: 移除角色标签和普通消息背景，建立 760px 居中内容列并调整滚动条样式。
-- Pass 2: 将滚动层扩展到主区域最右侧，补齐历史区与主区背景色、顶部品牌对齐和用户消息浅蓝圆角背景；同尺寸复核通过。
+- The currently running backend process must reload before newly generated previews return numeric hunk lines; old history correctly uses the backward-compatible semantic hunk header.
+- No automated component-test framework exists in the frontend, so the expand/collapse and textarea behavior were verified in the running browser plus production build/type checking.
+- The final density adjustment was not recaptured after browser security review denied the local-page reload; user-side visual confirmation remains required.
 
-## Primary interactions and console
+**Final result**
 
-- 已验证长历史对话正常载入。
-- 已验证消息区域可滚动，且能将指定用户消息滚动到可见区域。
-- 已验证输入框和发送按钮仍可见、布局未溢出。
-- 浏览器控制台 error/warn: 0。
-
-final result: passed
+blocked

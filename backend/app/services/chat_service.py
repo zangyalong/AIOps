@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from typing import TypedDict
 
@@ -17,6 +18,7 @@ from app.agents.tools.catalog import TOOLS_BY_NAME, WRITE_TOOL_NAMES
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models.message import Message
+from app.operations.schemas import OperationResult
 from app.schemas.chat import OperationApprovalDecision
 from app.services import (
     chat_run_record_service,
@@ -34,6 +36,9 @@ class ChatStreamEvent(TypedDict, total=False):
     message: str
     tool: str  # tool_start 时带上工具名，前端渲染成"正在调用 XXX"
     id: str  # tool_start / tool_end 用同一个 run_id 配对，前端据此把某个工具标记成已完成
+    args: dict[str, object]  # tool_start：模型提交给已登记工具的结构化参数
+    result: str  # tool_end / operation_end：工具真实返回内容
+    failed: bool  # 工具结果是否为 error，不能再从自然语言猜测
     thread_id: str  # approval_required：恢复请求要带回来的挂起线程标识
     actions: list[
         dict
@@ -48,6 +53,41 @@ class PreparedChatTurn:
     graph_input: dict
     thread_id: str
     run_id: uuid.UUID
+
+
+def _stream_tool_args(value: object) -> dict[str, object]:
+    """把 LangChain 事件参数收敛为 SSE 可序列化对象。"""
+    if not isinstance(value, Mapping):
+        return {}
+    return json.loads(json.dumps(dict(value), ensure_ascii=False, default=str))
+
+
+def _stream_tool_result(value: object) -> tuple[str, bool]:
+    """提取工具真实结果及结构化失败状态，供实时卡片展示。"""
+    if isinstance(value, OperationResult):
+        return value.message, not value.ok
+    if isinstance(value, ToolMessage):
+        content = value.content
+        if not isinstance(content, str):
+            content = json.dumps(content, ensure_ascii=False, default=str)
+        return content, value.status == "error"
+    if isinstance(value, str):
+        return value, False
+    return json.dumps(value, ensure_ascii=False, default=str), False
+
+
+def _write_tool_results(output: object) -> list[ToolMessage]:
+    """从 tools 节点结果中取出带准确 tool_call_id 的写工具执行结果。"""
+    if not isinstance(output, dict):
+        return []
+    messages = output.get("messages")
+    if not isinstance(messages, list):
+        return []
+    return [
+        message
+        for message in messages
+        if isinstance(message, ToolMessage) and message.name in WRITE_TOOL_NAMES
+    ]
 
 
 def _business_tool_names(message_or_chunk: object) -> set[str]:
@@ -323,11 +363,22 @@ async def _drive_graph(
             # 节点输出里的消息已经经过图内规范化：ops_agent 产生工具调用或最终回答，tools
             # 产生逐调用结果。按节点结束顺序落库，比直接存底层模型原始输出更可靠。
             if kind == "on_chain_end" and event_name in {"ops_agent", "tools"}:
+                node_output = event.get("data", {}).get("output")
                 await _persist_node_output(
                     conversation_id,
                     run_id,
-                    event.get("data", {}).get("output"),
+                    node_output,
                 )
+                if event_name == "tools":
+                    for message in _write_tool_results(node_output):
+                        result, failed = _stream_tool_result(message)
+                        yield {
+                            "type": "operation_end",
+                            "id": message.tool_call_id,
+                            "tool": message.name or "",
+                            "result": result,
+                            "failed": failed,
+                        }
 
             # 工具调用的开始/结束：只转发只读工具的 start/end 让前端画工具行（TOOLS_BY_NAME 兜底
             # 过滤）。写工具（WRITE_TOOL_NAMES）不发——它由前端那条带按钮的审批行代表自己
@@ -347,9 +398,18 @@ async def _drive_graph(
                     "type": "tool_start",
                     "id": event["run_id"],
                     "tool": event_name,
+                    "args": _stream_tool_args(event.get("data", {}).get("input")),
                 }
             elif kind == "on_tool_end" and is_visible_tool:
-                yield {"type": "tool_end", "id": event["run_id"]}
+                result, failed = _stream_tool_result(
+                    event.get("data", {}).get("output")
+                )
+                yield {
+                    "type": "tool_end",
+                    "id": event["run_id"],
+                    "result": result,
+                    "failed": failed,
+                }
             elif kind == "on_chat_model_stream":
                 chunk = event["data"]["chunk"]
                 content = chunk.content if isinstance(chunk.content, str) else ""
