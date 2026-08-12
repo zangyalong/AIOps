@@ -111,8 +111,13 @@ class UpdateServerFileInput(PreviewServerFileUpdateInput):
             raise ValueError("必须是 64 位 SHA-256 十六进制摘要")
         return value
 
+    @field_validator("preview_diff")
+    @classmethod
+    def normalize_preview_diff(cls, value: str) -> str:
+        return _normalize_preview_diff(value)
 
-ConfigFormat = Literal["dotenv", "json"]
+
+ConfigFormat = Literal["dotenv", "json", "yaml"]
 ConfigScalar = str | int | float | bool | None
 
 
@@ -142,6 +147,11 @@ class PatchServerConfigInput(PreviewServerConfigPatchInput):
         if not _SHA256_PATTERN.fullmatch(value):
             raise ValueError("必须是 64 位 SHA-256 十六进制摘要")
         return value
+
+    @field_validator("preview_diff")
+    @classmethod
+    def normalize_preview_diff(cls, value: str) -> str:
+        return _normalize_preview_diff(value)
 
 
 @dataclass(frozen=True)
@@ -191,6 +201,11 @@ def _config_value_json(value: ConfigScalar) -> str:
     )
 
 
+def _normalize_preview_diff(value: str) -> str:
+    """统一模型复制时容易丢失的行尾表示，保留每一行的实际差异内容。"""
+    return value.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n")
+
+
 def _validate_config_patch(
     path: str,
     config_format: ConfigFormat,
@@ -210,11 +225,20 @@ def _validate_config_patch(
         selector_parts = [selector]
         if not isinstance(value, str):
             return "dotenv 新值必须是字符串"
-    elif config_format == "json":
-        if not filename.endswith(".json"):
-            return "JSON 驱动只允许 .json 文件"
+    elif config_format in {"json", "yaml"}:
+        format_label = "JSON" if config_format == "json" else "YAML"
+        if config_format == "json":
+            allowed_suffixes = (".json",)
+            allowed_suffixes_text = ".json"
+        else:
+            allowed_suffixes = (".yaml", ".yml")
+            allowed_suffixes_text = ".yaml 或 .yml"
+        if not filename.endswith(allowed_suffixes):
+            return f"{format_label} 驱动只允许 {allowed_suffixes_text} 文件"
         if not selector.startswith("/"):
-            return "JSON 选择器必须是非空 JSON Pointer，例如 /server/port"
+            return (
+                f"{format_label} 选择器必须是非空 JSON Pointer，例如 /server/port"
+            )
         raw_parts = selector[1:].split("/")
         if any(re.search(r"~(?:[^01]|$)", part) for part in raw_parts):
             return "JSON Pointer 中 ~ 只能写成 ~0 或 ~1"
@@ -222,7 +246,7 @@ def _validate_config_patch(
             part.replace("~1", "/").replace("~0", "~") for part in raw_parts
         ]
     else:
-        return "config_format 只支持 dotenv 或 json"
+        return "config_format 只支持 dotenv、json 或 yaml"
     sensitive = next(
         (part for part in selector_parts if _SENSITIVE_SELECTOR.search(part)), None
     )
@@ -334,9 +358,11 @@ def _config_diff(
     after: ConfigScalar,
 ) -> str:
     if config_format == "dotenv":
-        return f"@@ dotenv {selector} @@\n-{selector}={before}\n+{selector}={after}\n"
-    return (
-        f"@@ json {selector} @@\n"
+        return _normalize_preview_diff(
+            f"@@ dotenv {selector} @@\n-{selector}={before}\n+{selector}={after}\n"
+        )
+    return _normalize_preview_diff(
+        f"@@ {config_format} {selector} @@\n"
         f"-{_config_value_json(before)}\n"
         f"+{_config_value_json(after)}\n"
     )
@@ -429,6 +455,7 @@ def _build_preview(snapshot: RemoteFileSnapshot, new_content: str) -> dict[str, 
             tofile=f"{snapshot.path}（拟更新）",
         )
     )
+    diff = _normalize_preview_diff(diff)
     diff_truncated = len(diff) > MAX_DIFF_CHARS
     if diff_truncated:
         diff = diff[:MAX_DIFF_CHARS]
@@ -527,8 +554,8 @@ async def preview_server_file_update(
         return read_error or "读取失败"
     if snapshot.redacted:
         return (
-            "当前文件包含已脱敏字段，禁止整文件覆盖；如果只修改 dotenv 或 JSON 的已有"
-            "单个非敏感标量，请改用 change.query=config-patch-preview。"
+            "当前文件包含已脱敏字段，禁止整文件覆盖；如果只修改 dotenv、JSON 或 YAML "
+            "的已有单个非敏感标量，请改用 change.query=config-patch-preview。"
         )
     preview = _build_preview(snapshot, new_content)
     if preview["diff_truncated"]:
@@ -548,9 +575,9 @@ async def preview_server_config_patch(
 ) -> str:
     """预览已授权配置文件中的一个非敏感标量补丁，不返回其他真实配置值。
 
-    dotenv 使用环境变量名作为 selector；JSON 使用 JSON Pointer（例如 /server/port）。只修改
-    已存在且唯一的字段，不允许密码、Token、密钥、新增字段、对象或数组。成功返回的三个审批
-    字段必须原样交给 patch_server_config。
+    dotenv 使用环境变量名作为 selector；JSON/YAML 使用 JSON Pointer（例如
+    /services/app/ports/0）。只修改已存在且唯一的字段，不允许密码、Token、密钥、
+    新增字段、对象或数组。成功返回的三个审批字段必须原样交给 patch_server_config。
     """
     validation_error = _validate_config_patch(path, config_format, selector, value)
     if validation_error:
@@ -622,7 +649,7 @@ async def patch_server_config(
     preview_hash: str,
     preview_diff: str,
 ) -> OperationResult:
-    """审批后原子修改已授权 dotenv 或 JSON 文件中的一个非敏感标量。
+    """审批后原子修改已授权 dotenv、JSON 或 YAML 文件中的一个非敏感标量。
 
     执行前会在目标机重新生成同一补丁并核对旧文件哈希与审批差异；root 网关备份旧文件、保留
     所有权和权限后原子替换。真实密钥始终留在目标机。

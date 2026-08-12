@@ -19,6 +19,8 @@ install -d -o root -g root -m 0755 /usr/local/libexec/aioms /etc/aioms
 install -o root -g root -m 0644 "$SCRIPT_DIR/aioms-file-common" /usr/local/libexec/aioms/file-common
 readonly HOST_PYTHON="/usr/bin/python3.11"
 [[ -x "$HOST_PYTHON" ]] || fail "系统缺少 Python 3.11：请先安装 python3.11"
+"$HOST_PYTHON" -c 'import yaml' >/dev/null 2>&1 ||
+    fail "系统 Python 3.11 缺少 PyYAML：请先为 /usr/bin/python3.11 安装 PyYAML"
 "$HOST_PYTHON" -c \
     'import ast, pathlib, sys; ast.parse(pathlib.Path(sys.argv[1]).read_text())' \
     "$SCRIPT_DIR/config_patch.py" \

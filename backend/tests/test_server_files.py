@@ -170,6 +170,61 @@ class ServerFileToolValidationTest(unittest.IsolatedAsyncioTestCase):
             '"8081"',
         )
 
+    async def test_yaml_preview_uses_pointer_without_reading_compose_file(
+        self,
+    ) -> None:
+        server = SimpleNamespace(name="web-01")
+        selector = "/services/sub2api/ports/0"
+        before = "${SERVER_PORT:-8080}:8080"
+        after = "${SERVER_PORT:-8081}:8080"
+        gateway_payload = json.dumps(
+            {
+                "format": "yaml",
+                "selector": selector,
+                "source_sha256": "a" * 64,
+                "output_sha256": "b" * 64,
+                "before": before,
+                "after": after,
+                "changed": True,
+            }
+        )
+        with (
+            patch.object(
+                server_files,
+                "_resolve_server",
+                AsyncMock(return_value=(server, None)),
+            ),
+            patch.object(
+                server_files,
+                "_run_read_gateway",
+                AsyncMock(return_value=(0, gateway_payload)),
+            ) as run_gateway,
+            patch.object(server_files, "_read_snapshot", AsyncMock()) as read_snapshot,
+        ):
+            result = await server_files.preview_server_config_patch.ainvoke(
+                {
+                    "server_name": "web-01",
+                    "path": "/home/OnlineAPI/deploy/docker-compose.yml",
+                    "config_format": "yaml",
+                    "selector": selector,
+                    "value": after,
+                }
+            )
+
+        payload = json.loads(result)
+        self.assertIn(f"@@ yaml {selector} @@", payload["preview_diff"])
+        self.assertIn(json.dumps(before), payload["preview_diff"])
+        self.assertIn(json.dumps(after), payload["preview_diff"])
+        read_snapshot.assert_not_awaited()
+        run_gateway.assert_awaited_once_with(
+            server,
+            "config-preview",
+            "/home/OnlineAPI/deploy/docker-compose.yml",
+            "yaml",
+            selector,
+            json.dumps(after),
+        )
+
     async def test_structured_patch_rechecks_preview_and_runs_fixed_gateway(
         self,
     ) -> None:
@@ -184,7 +239,7 @@ class ServerFileToolValidationTest(unittest.IsolatedAsyncioTestCase):
             output_sha256="b" * 64,
             preview_hash="c" * 64,
             preview_diff=(
-                "@@ dotenv SERVER_PORT @@\n-SERVER_PORT=8080\n+SERVER_PORT=8081\n"
+                "@@ dotenv SERVER_PORT @@\n-SERVER_PORT=8080\n+SERVER_PORT=8081"
             ),
             changed=True,
         )
@@ -224,7 +279,7 @@ class ServerFileToolValidationTest(unittest.IsolatedAsyncioTestCase):
                     "value": "8081",
                     "expected_sha256": preview.expected_sha256,
                     "preview_hash": preview.preview_hash,
-                    "preview_diff": preview.preview_diff,
+                    "preview_diff": f"{preview.preview_diff}\n",
                 }
             )
 
@@ -233,6 +288,58 @@ class ServerFileToolValidationTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("aioms-file-write config-apply", connection.commands[0])
         self.assertIn("SERVER_PORT", connection.commands[0])
         self.assertNotIn("POSTGRES_PASSWORD", connection.commands[0])
+
+    async def test_structured_patch_reports_the_exact_changed_preview_field(
+        self,
+    ) -> None:
+        server = SimpleNamespace(name="web-01")
+        preview = server_files.ConfigPatchPreview(
+            path="/home/OnlineAPI/deploy/docker-compose.yml",
+            config_format="yaml",
+            selector="/services/sub2api/ports/0",
+            before="${SERVER_PORT:-8080}:8080",
+            after="${SERVER_PORT:-8081}:8080",
+            expected_sha256="a" * 64,
+            output_sha256="b" * 64,
+            preview_hash="c" * 64,
+            preview_diff=(
+                "@@ yaml /services/sub2api/ports/0 @@\n"
+                '-"${SERVER_PORT:-8080}:8080"\n'
+                '+"${SERVER_PORT:-8081}:8080"'
+            ),
+            changed=True,
+        )
+        with (
+            patch.object(
+                server_files,
+                "_resolve_server",
+                AsyncMock(return_value=(server, None)),
+            ),
+            patch.object(
+                server_files,
+                "_preview_config_patch",
+                AsyncMock(return_value=(preview, None)),
+            ),
+            patch.object(server_file_executor.asyncssh, "connect") as connect,
+        ):
+            result = await server_files.patch_server_config.ainvoke(
+                {
+                    "server_name": "web-01",
+                    "path": preview.path,
+                    "config_format": "yaml",
+                    "selector": preview.selector,
+                    "value": preview.after,
+                    "expected_sha256": preview.expected_sha256,
+                    "preview_hash": preview.preview_hash,
+                    "preview_diff": preview.preview_diff.replace("8080", "8000", 1),
+                }
+            )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "preview_changed")
+        self.assertIn("变化字段：preview_diff", result.message)
+        self.assertEqual(result.metadata, {"changed_fields": ["preview_diff"]})
+        connect.assert_not_called()
 
     async def test_nginx_path_uses_generic_file_editor_without_service_action(
         self,

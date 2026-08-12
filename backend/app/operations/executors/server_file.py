@@ -86,14 +86,21 @@ async def update_server_file(
             "完整差异超过审批展示上限，已拒绝通过通用工具写入。",
             code="diff_too_large",
         )
-    if (
-        snapshot.sha256 != expected_sha256
-        or current_preview["preview_hash"] != preview_hash
-        or current_preview["preview_diff"] != preview_diff
-    ):
+    changed_fields = [
+        name
+        for name, changed in (
+            ("expected_sha256", snapshot.sha256 != expected_sha256),
+            ("preview_hash", current_preview["preview_hash"] != preview_hash),
+            ("preview_diff", current_preview["preview_diff"] != preview_diff),
+        )
+        if changed
+    ]
+    if changed_fields:
         return OperationResult.failure(
-            "文件内容或审批差异已变化，请重新生成预览并再次确认。",
+            "文件内容或审批差异已变化"
+            f"（变化字段：{', '.join(changed_fields)}），请重新生成预览并再次确认。",
             code="preview_changed",
+            metadata={"changed_fields": changed_fields},
         )
 
     params, connect_error = connect_params(server)
@@ -181,14 +188,24 @@ async def patch_server_config(
             f"{selector} 已是目标值，没有修改服务器。",
             code="no_change",
         )
-    if (
-        current_preview.expected_sha256 != expected_sha256
-        or current_preview.preview_hash != preview_hash
-        or current_preview.preview_diff != preview_diff
-    ):
+    changed_fields = [
+        name
+        for name, changed in (
+            (
+                "expected_sha256",
+                current_preview.expected_sha256 != expected_sha256,
+            ),
+            ("preview_hash", current_preview.preview_hash != preview_hash),
+            ("preview_diff", current_preview.preview_diff != preview_diff),
+        )
+        if changed
+    ]
+    if changed_fields:
         return OperationResult.failure(
-            "文件内容或审批补丁已变化，请重新生成预览并再次确认。",
+            "文件内容或审批补丁已变化"
+            f"（变化字段：{', '.join(changed_fields)}），请重新生成预览并再次确认。",
             code="preview_changed",
+            metadata={"changed_fields": changed_fields},
         )
 
     params, connect_error = connect_params(server)

@@ -1,5 +1,5 @@
 #!/usr/bin/python3.11
-"""在目标机本地生成 dotenv / JSON 标量补丁，真实配置不会返回 AIOMS 后端。"""
+"""在目标机本地生成 dotenv / JSON / YAML 标量补丁，真实配置不会返回后端。"""
 
 from __future__ import annotations
 
@@ -13,6 +13,9 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
+
+import yaml
+from yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 
 MAX_FILE_BYTES = 65_536
 MAX_VALUE_BYTES = 4_096
@@ -30,6 +33,16 @@ _SENSITIVE_VALUE_ASSIGNMENT = re.compile(
     r"client[_-]?secret|credential|authorization)\s*[:=]",
     re.IGNORECASE,
 )
+_YAML_MAP_TAG = "tag:yaml.org,2002:map"
+_YAML_SEQUENCE_TAG = "tag:yaml.org,2002:seq"
+_YAML_STRING_TAG = "tag:yaml.org,2002:str"
+_YAML_SCALAR_TAGS = {
+    _YAML_STRING_TAG,
+    "tag:yaml.org,2002:int",
+    "tag:yaml.org,2002:float",
+    "tag:yaml.org,2002:bool",
+    "tag:yaml.org,2002:null",
+}
 
 
 class ConfigPatchError(ValueError):
@@ -209,9 +222,11 @@ def _dotenv_patch(source: bytes, selector: str, value: object) -> tuple[bytes, o
     return "".join(lines).encode("utf-8"), before
 
 
-def _pointer_parts(selector: str) -> list[str]:
+def _pointer_parts(selector: str, format_label: str = "JSON") -> list[str]:
     if not selector.startswith("/"):
-        raise ConfigPatchError("JSON 选择器必须是非空 JSON Pointer，例如 /server/port")
+        raise ConfigPatchError(
+            f"{format_label} 选择器必须是非空 JSON Pointer，例如 /server/port"
+        )
     if any(char in selector for char in ("\x00", "\n", "\r")):
         raise ConfigPatchError("JSON Pointer 不能包含空字符或换行")
     parts: list[str] = []
@@ -298,6 +313,147 @@ def _json_patch(source: bytes, selector: str, value: object) -> tuple[bytes, obj
     return updated_text.encode("utf-8"), target.value
 
 
+def _validate_yaml_tree(root: Node) -> None:
+    seen: set[int] = set()
+
+    def visit(node: Node) -> None:
+        identity = id(node)
+        if identity in seen:
+            raise ConfigPatchError(
+                "YAML 包含别名引用，无法保证单路径补丁不会影响其他字段"
+            )
+        seen.add(identity)
+        if isinstance(node, MappingNode):
+            if node.tag != _YAML_MAP_TAG:
+                raise ConfigPatchError(f"YAML 包含不支持的映射标签：{node.tag}")
+            keys: set[str] = set()
+            for key_node, value_node in node.value:
+                if not isinstance(key_node, ScalarNode) or key_node.tag != _YAML_STRING_TAG:
+                    raise ConfigPatchError("YAML 映射键必须是字符串")
+                if key_node.value == "<<":
+                    raise ConfigPatchError(
+                        "YAML 包含合并键，无法保证单路径补丁语义"
+                    )
+                if key_node.value in keys:
+                    raise ConfigPatchError(f"YAML 映射包含重复键：{key_node.value}")
+                keys.add(key_node.value)
+                visit(key_node)
+                visit(value_node)
+            return
+        if isinstance(node, SequenceNode):
+            if node.tag != _YAML_SEQUENCE_TAG:
+                raise ConfigPatchError(f"YAML 包含不支持的序列标签：{node.tag}")
+            for child in node.value:
+                visit(child)
+            return
+        if isinstance(node, ScalarNode):
+            if node.tag not in _YAML_SCALAR_TAGS:
+                raise ConfigPatchError(f"YAML 包含不支持的标量标签：{node.tag}")
+            return
+        raise ConfigPatchError("YAML 包含不支持的节点类型")
+
+    visit(root)
+
+
+def _yaml_child(node: Node, part: str) -> Node:
+    if isinstance(node, MappingNode):
+        for key_node, value_node in node.value:
+            if key_node.value == part:
+                return value_node
+        raise ConfigPatchError(f"YAML Pointer 字段不存在：{part}")
+    if isinstance(node, SequenceNode):
+        if not re.fullmatch(r"0|[1-9][0-9]*", part):
+            raise ConfigPatchError(f"YAML 数组下标不合法：{part}")
+        index = int(part)
+        if index >= len(node.value):
+            raise ConfigPatchError(f"YAML 数组下标越界：{part}")
+        return node.value[index]
+    raise ConfigPatchError("YAML Pointer 不能继续进入标量值")
+
+
+def _resolve_yaml_node(root: Node, parts: list[str]) -> Node:
+    target = root
+    for part in parts:
+        target = _yaml_child(target, part)
+    return target
+
+
+def _same_tree(left: object, right: object) -> bool:
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        assert isinstance(right, dict)
+        return left.keys() == right.keys() and all(
+            _same_tree(left[key], right[key]) for key in left
+        )
+    if isinstance(left, list):
+        assert isinstance(right, list)
+        return len(left) == len(right) and all(
+            _same_tree(left_value, right_value)
+            for left_value, right_value in zip(left, right, strict=True)
+        )
+    return left == right
+
+
+def _yaml_patch(source: bytes, selector: str, value: object) -> tuple[bytes, object]:
+    try:
+        text = source.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ConfigPatchError("YAML 文件必须是 UTF-8 文本") from exc
+    try:
+        root = yaml.compose(text, Loader=yaml.SafeLoader)
+    except yaml.YAMLError as exc:
+        raise ConfigPatchError(f"YAML 格式不合法：{exc}") from exc
+    if root is None:
+        raise ConfigPatchError("YAML 文件不能为空")
+    _validate_yaml_tree(root)
+    parts = _pointer_parts(selector, "YAML")
+    target = _resolve_yaml_node(root, parts)
+    if not isinstance(target, ScalarNode):
+        raise ConfigPatchError("只允许替换已有 YAML 标量，不能替换映射或序列")
+    if target.style in {"|", ">"}:
+        raise ConfigPatchError("不支持替换 YAML 多行块标量")
+    try:
+        before = yaml.safe_load(text[target.start_mark.index : target.end_mark.index])
+    except yaml.YAMLError as exc:
+        raise ConfigPatchError("无法解析目标 YAML 标量") from exc
+    if isinstance(before, (dict, list)) or not isinstance(
+        before, (str, int, float, bool, type(None))
+    ):
+        raise ConfigPatchError("目标 YAML 值不是受支持的标量")
+    if _looks_sensitive_value(before):
+        raise ConfigPatchError("目标 YAML 字段的当前值疑似敏感，禁止返回预览")
+    replacement = json.dumps(
+        value,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    )
+    updated_text = (
+        f"{text[: target.start_mark.index]}{replacement}{text[target.end_mark.index :]}"
+    )
+    try:
+        expected = yaml.safe_load(text)
+        actual = yaml.safe_load(updated_text)
+        actual_root = yaml.compose(updated_text, Loader=yaml.SafeLoader)
+    except yaml.YAMLError as exc:
+        raise ConfigPatchError("内部 YAML 补丁校验失败") from exc
+    if actual_root is None:
+        raise ConfigPatchError("内部 YAML 补丁校验失败")
+    _validate_yaml_tree(actual_root)
+    expected = copy.deepcopy(expected)
+    _set_python_value(expected, parts, value)
+    actual_target = _resolve_yaml_node(actual_root, parts)
+    actual_value = yaml.safe_load(
+        updated_text[actual_target.start_mark.index : actual_target.end_mark.index]
+    )
+    if not _same_tree(actual, expected) or not (
+        type(actual_value) is type(value) and actual_value == value
+    ):
+        raise ConfigPatchError("YAML 补丁改变了选择器以外的语义")
+    return updated_text.encode("utf-8"), before
+
+
 def _patch(
     source_path: Path, config_format: str, selector: str, value: object
 ) -> tuple[bytes, dict[str, object]]:
@@ -317,8 +473,12 @@ def _patch(
         if not filename.endswith(".json"):
             raise ConfigPatchError("JSON 驱动只允许 .json 文件")
         updated, before = _json_patch(source, selector, value)
+    elif config_format == "yaml":
+        if not filename.endswith((".yaml", ".yml")):
+            raise ConfigPatchError("YAML 驱动只允许 .yaml 或 .yml 文件")
+        updated, before = _yaml_patch(source, selector, value)
     else:
-        raise ConfigPatchError("format 只支持 dotenv 或 json；YAML 驱动尚未启用")
+        raise ConfigPatchError("format 只支持 dotenv、json 或 yaml")
     result = {
         "format": config_format,
         "selector": selector,
@@ -367,6 +527,7 @@ def main() -> None:
         RecursionError,
         UnicodeError,
         json.JSONDecodeError,
+        yaml.YAMLError,
     ) as exc:
         _fail(str(exc))
     print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))

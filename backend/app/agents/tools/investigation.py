@@ -123,7 +123,7 @@ class InvestigationInput(BaseModel):
         description=(
             "要调查的内容、表达式、运行对象选择器或宿主机只读命令。area=change "
             "时只能使用 log-config-preview/find-files/read-file/file-update-preview/"
-            "config-patch-preview；修改 dotenv 或 JSON 已有单个标量必须使用 "
+            "config-patch-preview；修改 dotenv、JSON 或 YAML 已有单个标量必须使用 "
             "config-patch-preview，完整替换普通文本才使用 file-update-preview"
         ),
     )
@@ -224,7 +224,7 @@ def _validate_change_parameters(
         "value",
     }:
         raise InvestigationRequestError(
-            "file-update-preview 不接受结构化配置参数；修改 dotenv 或 JSON 的已有"
+            "file-update-preview 不接受结构化配置参数；修改 dotenv、JSON 或 YAML 的已有"
             "单个标量请改用 change.query=config-patch-preview"
         )
     supported_text = "、".join(sorted(supported)) if supported else "无"

@@ -11,6 +11,7 @@ from app.operations.schemas import OperationCall, OperationSpec
 
 OperationExecutor = Callable[[OperationCall], Awaitable[Any]]
 ApprovalViewBuilder = Callable[[OperationCall], Mapping[str, Any]]
+OperationCallNormalizer = Callable[[OperationCall], OperationCall]
 
 
 @dataclass(frozen=True)
@@ -18,6 +19,7 @@ class RegisteredOperation:
     spec: OperationSpec
     executor: OperationExecutor
     build_approval_view: ApprovalViewBuilder | None = None
+    normalize_call: OperationCallNormalizer | None = None
 
 
 class OperationRegistry:

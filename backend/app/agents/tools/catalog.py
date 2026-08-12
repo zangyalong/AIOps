@@ -281,6 +281,17 @@ def _index_tools(tools: Iterable[BaseTool], category: str) -> dict[str, BaseTool
     return result
 
 
+def _normalize_tool_call(tool: BaseTool, call: OperationCall) -> OperationCall:
+    """在审批前完成工具 schema 校验，后续只传递同一份规范化参数。"""
+    schema = tool.get_input_schema()
+    validated = schema.model_validate(call.normalized_args())
+    return OperationCall(
+        id=call.id,
+        name=call.name,
+        args=validated.model_dump(mode="json"),
+    )
+
+
 _read_by_name = _index_tools(READ_TOOLS, "读")
 _write_specs_by_name = {spec.tool.name: spec for spec in _WRITE_SPECS}
 if len(_write_specs_by_name) != len(_WRITE_SPECS):
@@ -312,6 +323,7 @@ def _registered_read_operation(tool: BaseTool) -> RegisteredOperation:
             audit_execution=True,
         ),
         executor=execute,
+        normalize_call=lambda call: _normalize_tool_call(tool, call),
     )
 
 
@@ -335,6 +347,7 @@ def _registered_write_operation(write_spec: WriteToolSpec) -> RegisteredOperatio
         ),
         executor=execute,
         build_approval_view=build_approval_view,
+        normalize_call=lambda call: _normalize_tool_call(write_spec.tool, call),
     )
 
 
@@ -365,6 +378,7 @@ def build_scoped_operation_broker(tools: Iterable[BaseTool]) -> OperationBroker:
                 spec=registered.spec,
                 executor=execute,
                 build_approval_view=registered.build_approval_view,
+                normalize_call=registered.normalize_call,
             )
         )
     return OperationBroker(OperationRegistry(scoped))

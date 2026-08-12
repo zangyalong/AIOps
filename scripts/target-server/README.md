@@ -115,7 +115,7 @@ target-server/
 │   ├── aioms-file-read          # 授权范围内查找并脱敏读取文本
 │   ├── aioms-file-policy        # 页面触发的 read/write 白名单同步
 │   ├── aioms-file-write         # 整文件或字段补丁的备份与原子替换
-│   ├── config_patch.py          # dotenv / JSON 非敏感标量补丁器
+│   ├── config_patch.py          # dotenv / JSON / YAML 非敏感标量补丁器
 │   └── README.md                # 敏感路径、大小和审批边界
 ├── alloy/
 │   ├── install.sh               # Alloy 基础组件/管理员配置安装器
@@ -135,7 +135,7 @@ target-server/
 
 普通配置、代码和日志调查由 `root-read/` 提供，不需要维护读取命令或业务目录白名单。运行包仍会安装 `files/` 下的受控文件网关；它用于“准备修改文件”的快照、哈希复核和审批写入。文件写白名单默认为空，需要在 AIOMS 服务目录的实例详情中登记“精确可写文件”；页面会通过同一个非 root SSH 身份把授权同步到目标机 root 持有的 `/etc/aioms/file-access.allowlist`。
 
-受控文件快照仅支持不超过 64 KiB 的文本文件并自动脱敏。普通整文件写入不会接收密码、Token、私钥或脱敏占位符，执行前必须展示完整 diff 并通过高风险二次确认。结构化补丁可在不读取其他真实字段的情况下修改 dotenv 已有变量或 JSON Pointer 指向的已有非敏感标量，使用中风险单次审批；YAML 尚未启用。文件网关只编辑文件，不执行配置校验、reload、服务重启或部署；这些后续动作必须走各自的独立受控入口。目标机备份统一位于 `/var/lib/aioms/file-backups/`。
+受控文件快照仅支持不超过 64 KiB 的文本文件并自动脱敏。普通整文件写入不会接收密码、Token、私钥或脱敏占位符，执行前必须展示完整 diff 并通过高风险二次确认。结构化补丁可在不读取其他真实字段的情况下修改 dotenv 已有变量，或 JSON Pointer 指向的 JSON/YAML 已有非敏感标量，使用中风险单次审批。文件网关只编辑文件，不执行配置校验、reload、服务重启或部署；这些后续动作必须走各自的独立受控入口。目标机备份统一位于 `/var/lib/aioms/file-backups/`。
 
 长期生效的文件会安装到 `/usr/local/sbin/`、`/etc/sudoers.d/`、`/etc/alloy/` 和
 `/etc/aioms-exporters/`。上传到临时目录的配置包在验证完成后可以删除。

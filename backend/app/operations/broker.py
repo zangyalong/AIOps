@@ -32,6 +32,8 @@ class OperationBroker:
         context: OperationContext,
     ) -> PreparedOperation:
         operation = self._registry.require(call.name)
+        if operation.normalize_call is not None:
+            call = operation.normalize_call(call)
         resolved_context = context.for_call(
             call,
             environment_arg=operation.spec.environment_arg,
@@ -60,4 +62,4 @@ class OperationBroker:
         if prepared.decision.result != "allow":
             raise OperationNotAllowed(prepared.decision)
         operation = self._registry.require(call.name)
-        return await operation.executor(call)
+        return await operation.executor(prepared.call)

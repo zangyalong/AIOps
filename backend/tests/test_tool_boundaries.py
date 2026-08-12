@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 from app.agents.graphs import chat_graph
 from app.agents.tools import actions, catalog
 from app.operations.executors import service_control
+from app.operations.schemas import OperationCall, OperationContext
 
 
 class _SessionContext:
@@ -282,6 +283,41 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(config_patch_action["risk_level"], "medium")
         self.assertEqual(config_patch_action["kind"], "server_config_patch")
         self.assertIn("SERVER_PORT=8081", config_patch_action["command"])
+
+    def test_config_patch_is_normalized_before_approval_and_execution(self) -> None:
+        raw_diff = "@@ yaml /services/app/ports/0 @@\n-8080\n+8081\n"
+        call = OperationCall(
+            id="yaml-port-patch",
+            name="patch_server_config",
+            args={
+                "server_name": " web-01 ",
+                "path": "/opt/app/docker-compose.yml",
+                "config_format": "yaml",
+                "selector": "/services/app/ports/0",
+                "value": "8081:8080",
+                "expected_sha256": "A" * 64,
+                "preview_hash": "B" * 64,
+                "preview_diff": raw_diff,
+            },
+        )
+
+        prepared = catalog.OPERATION_BROKER.prepare(
+            call,
+            OperationContext(
+                actor_id="admin-1",
+                actor_role="admin",
+                run_mode="interactive",
+            ),
+        )
+
+        self.assertEqual(prepared.call.args["server_name"], "web-01")
+        self.assertEqual(prepared.call.args["expected_sha256"], "a" * 64)
+        self.assertEqual(prepared.call.args["preview_hash"], "b" * 64)
+        self.assertEqual(prepared.call.args["preview_diff"], raw_diff.rstrip("\n"))
+        self.assertEqual(
+            prepared.approval_view["command"],
+            raw_diff.rstrip("\n"),
+        )
 
     async def test_restart_service_rejects_unregistered_instance_before_ssh(
         self,

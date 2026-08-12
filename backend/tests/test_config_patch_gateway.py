@@ -82,6 +82,55 @@ class ConfigPatchHelperTest(unittest.TestCase):
             self.assertNotIn("keep-real-secret", applied.stdout)
             self.assertEqual(output.read_text(), content.replace("8080", "8081"))
 
+    def test_yaml_pointer_replaces_compose_port_without_returning_secrets(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "docker-compose.yml"
+            output = Path(directory) / "updated"
+            content = (
+                "services:\n"
+                "  sub2api:\n"
+                "    # 只修改宿主机端口，容器端口保持 8080\n"
+                "    ports:\n"
+                '      - "${SERVER_PORT:-8080}:8080"\n'
+                "    environment:\n"
+                "      POSTGRES_PASSWORD: keep-real-secret\n"
+            )
+            source.write_text(content)
+            output.touch()
+
+            preview = self._run(
+                "preview",
+                str(source),
+                "yaml",
+                "/services/sub2api/ports/0",
+                '"${SERVER_PORT:-8081}:8080"',
+            )
+            applied = self._run(
+                "apply",
+                str(source),
+                str(output),
+                "yaml",
+                "/services/sub2api/ports/0",
+                '"${SERVER_PORT:-8081}:8080"',
+            )
+
+            self.assertEqual(preview.returncode, 0, preview.stderr)
+            self.assertEqual(applied.returncode, 0, applied.stderr)
+            self.assertNotIn("keep-real-secret", preview.stdout)
+            self.assertEqual(
+                json.loads(preview.stdout)["before"],
+                "${SERVER_PORT:-8080}:8080",
+            )
+            self.assertEqual(
+                output.read_text(),
+                content.replace(
+                    '"${SERVER_PORT:-8080}:8080"',
+                    '"${SERVER_PORT:-8081}:8080"',
+                ),
+            )
+
     def test_sensitive_selector_and_ambiguous_keys_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             env_file = Path(directory) / ".env"
@@ -98,6 +147,43 @@ class ConfigPatchHelperTest(unittest.TestCase):
             self.assertIn("敏感字段", sensitive.stderr)
             self.assertNotEqual(duplicate.returncode, 0)
             self.assertIn("重复键", duplicate.stderr)
+
+    def test_yaml_sensitive_selector_duplicate_key_and_alias_are_rejected(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temp_dir = Path(directory)
+            sensitive_file = temp_dir / "sensitive.yaml"
+            sensitive_file.write_text("services:\n  app:\n    password: old\n")
+            duplicate_file = temp_dir / "duplicate.yaml"
+            duplicate_file.write_text("services:\n  app: one\n  app: two\n")
+            alias_file = temp_dir / "alias.yaml"
+            alias_file.write_text("port: &port 8080\nother_port: *port\n")
+
+            sensitive = self._run(
+                "preview",
+                str(sensitive_file),
+                "yaml",
+                "/services/app/password",
+                '"new"',
+            )
+            duplicate = self._run(
+                "preview",
+                str(duplicate_file),
+                "yaml",
+                "/services/app",
+                '"three"',
+            )
+            alias = self._run(
+                "preview", str(alias_file), "yaml", "/port", "8081"
+            )
+
+            self.assertNotEqual(sensitive.returncode, 0)
+            self.assertIn("敏感字段", sensitive.stderr)
+            self.assertNotEqual(duplicate.returncode, 0)
+            self.assertIn("重复键", duplicate.stderr)
+            self.assertNotEqual(alias.returncode, 0)
+            self.assertIn("别名", alias.stderr)
 
 
 class FileGatewayContractTest(unittest.TestCase):
@@ -160,6 +246,7 @@ class FileGatewayContractTest(unittest.TestCase):
         self.assertNotIn("nginx", writer.lower())
         self.assertNotIn("reload", writer.lower())
         self.assertIn("config_patch.py", installer)
+        self.assertIn("import yaml", installer)
         self.assertNotIn("NOPASSWD: ALL", sudoers)
 
     def test_gateway_shell_scripts_parse(self) -> None:
