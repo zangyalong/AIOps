@@ -14,7 +14,7 @@ from urllib.parse import urlencode
 
 from langchain_core.tools import tool
 
-from app.agents.tools.metrics import PROMQL_TEMPLATES
+from app.agents.tools.metrics import promql_for_metric
 from app.core.config import settings
 
 # kind -> (数据源 uid, 数据源 type)。uid 跟 provisioning 里配的一致。
@@ -31,7 +31,12 @@ _WHAT = {"metrics": "指标走势图", "logs": "日志面板", "alerts": "告警
 
 
 @tool
-async def grafana_explore_link(kind: str, query: str = "", minutes: int = 60) -> str:
+async def grafana_explore_link(
+    kind: str,
+    query: str = "",
+    minutes: int = 60,
+    instance: str = "",
+) -> str:
     """生成一个 Grafana Explore 图表链接，用户点开就能看指标走势图 / 日志面板 / 告警时间线。
 
     适合用户想"看走势 / 看图 / 可视化"、或想跳到 Grafana 进一步排查时用（想要文字结论就用
@@ -43,6 +48,7 @@ async def grafana_explore_link(kind: str, query: str = "", minutes: int = 60) ->
         - kind=logs：传 LogQL（如 {service_name="aioms-fake-app"}）；也可只传服务名会自动包成选择器；留空看所有服务。
         - kind=alerts：留空看所有正在触发的告警；也可传 critical / warning / info 只看某个级别。
     - minutes：图表时间窗，最近多少分钟，默认 60。
+    - instance：仅 kind=metrics 使用；非空时给内置指标模板添加准确 instance 过滤。
     """
     kind = kind.strip().lower()
     if kind not in _DATASOURCE:
@@ -54,7 +60,7 @@ async def grafana_explore_link(kind: str, query: str = "", minutes: int = 60) ->
         if not q:
             return "看指标图需要指定 query（cpu / memory / disk / up，或一段 PromQL）。"
         # cpu/memory/disk/up 换成模板 PromQL，否则当成用户直接给的 PromQL
-        expr = PROMQL_TEMPLATES.get(q, q)
+        expr = promql_for_metric(q, instance)
     elif kind == "logs":
         if not q:
             expr = '{service_name=~".+"}'  # 不指定就看所有服务

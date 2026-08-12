@@ -2,6 +2,18 @@
 
 跟踪多步骤任务的进度。这不是项目路线图，只在用户明确列出一批任务时才新增/更新——规则见 [CLAUDE.md](../CLAUDE.md) 「与 Claude 的协作模式」第 9 条。
 
+## 统一调查工具参数协议修复
+
+- [ ] **让 metrics 参数对 Agent 自描述**
+  - `parameters` 从任意字典改为字段化 schema，明确 `target_type=server|instance` 及每个字段适用的 area
+  - 明确当前指标值走 metrics、时间趋势走 visualization，禁止猜测 time/instance/monitor_labels
+  - visualization 指标趋势按 target 自动解析并限定 Prometheus instance，避免生成全实例图表
+- [ ] **失败后提供确定的纠正路径**
+  - metrics 参数错误返回服务器当前值、instance 当前值与最近 60 分钟趋势的可复制调用示例
+  - Prompt 限制同类协议错误只能按纠正结构重试一次，不再连续发明新字段
+- [ ] **自动化检查与真实对话验收**
+  - Ruff、完整后端测试通过后保持未勾选，等用户确认真实对话不再出现连续参数试错后验收
+
 ## 运行时提示词与运维 Skills
 
 - [ ] **把统一 Ops Agent 提示词改为运行时组装**

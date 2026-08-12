@@ -45,11 +45,44 @@ _TITLES = {
 }
 
 
+def promql_for_metric(metric: str, instance: str = "") -> str:
+    """把常用指标名转换成 PromQL；需要时在表达式中限定准确 instance。"""
+    normalized = metric.strip()
+    promql = PROMQL_TEMPLATES.get(normalized, normalized)
+    if not instance or normalized not in PROMQL_TEMPLATES:
+        return promql
+
+    safe_instance = (
+        instance.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+    )
+    selector = f'instance="{safe_instance}"'
+    if normalized == "cpu":
+        return (
+            "100 - (avg by(instance)(rate(node_cpu_seconds_total"
+            f'{{mode="idle",{selector}}}[5m])) * 100)'
+        )
+    if normalized == "memory":
+        return (
+            f"(1 - node_memory_MemAvailable_bytes{{{selector}}} / "
+            f"node_memory_MemTotal_bytes{{{selector}}}) * 100"
+        )
+    if normalized == "disk":
+        filesystem_filter = (
+            'fstype!~"tmpfs|overlay|squashfs|fuse.*|virtiofs.*|fakeowner|selfowner"'
+        )
+        filesystem_selector = f"{{{selector},{filesystem_filter}}}"
+        return (
+            f"(1 - node_filesystem_avail_bytes{filesystem_selector} / "
+            f"node_filesystem_size_bytes{filesystem_selector}) * 100"
+        )
+    return f"up{{{selector}}}"
+
+
 async def _query_metrics_text(metric: str, instance: str = "") -> str:
     """执行 Prometheus 查询并格式化成 Agent 可直接引用的文本。"""
     metric = metric.strip()
     is_template = metric in PROMQL_TEMPLATES
-    promql = PROMQL_TEMPLATES.get(metric, metric)  # 命中模板用模板，否则当原始 PromQL
+    promql = promql_for_metric(metric)  # 命中模板用模板，否则当原始 PromQL
 
     try:
         results = await prom_query(promql)
@@ -123,13 +156,9 @@ async def query_server_metrics(server: str, metric: str) -> str:
     工具会优先使用 servers.monitor_labels.instance；未配置时自动按服务器 IP 匹配 Prometheus
     instance。因此查询业务服务器时直接调用本工具，不需要先调用 list_metric_instances。
     """
-    identifier = server.strip()
-    async with AsyncSessionLocal() as db:
-        srv = await server_service.get_server_by_name_or_ip(db, identifier)
+    srv, instance, error = await resolve_server_metric_instance(server)
     if srv is None:
-        return f'没有找到名称或 IP 为 "{identifier}" 的已纳管服务器。'
-
-    instance, error = await _resolve_metric_instance(srv)
+        return error or f'没有找到名称或 IP 为 "{server.strip()}" 的已纳管服务器。'
     if instance is None:
         return error or f"无法确定服务器 {srv.name} 对应的 Prometheus instance。"
 
@@ -138,6 +167,20 @@ async def query_server_metrics(server: str, metric: str) -> str:
         f"服务器映射：{srv.name} ({srv.ip_address}) → Prometheus instance={instance}\n"
         f"{result}"
     )
+
+
+async def resolve_server_metric_instance(
+    server: str,
+) -> tuple[Server | None, str | None, str | None]:
+    """按已纳管服务器名称/IP解析 Prometheus instance，供查询与趋势图共用。"""
+    identifier = server.strip()
+    async with AsyncSessionLocal() as db:
+        srv = await server_service.get_server_by_name_or_ip(db, identifier)
+    if srv is None:
+        return None, None, f'没有找到名称或 IP 为 "{identifier}" 的已纳管服务器。'
+
+    instance, error = await _resolve_metric_instance(srv)
+    return srv, instance, error
 
 
 async def _resolve_metric_instance(server: Server) -> tuple[str | None, str | None]:

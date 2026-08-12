@@ -9,6 +9,25 @@ from app.operations.schemas import OperationResult
 
 
 class InvestigationFacadeTest(unittest.IsolatedAsyncioTestCase):
+    def test_parameters_schema_is_closed_and_describes_metrics_protocol(self) -> None:
+        schema = investigation.InvestigationInput.model_json_schema()
+        parameters_schema = schema["$defs"]["InvestigationParameters"]
+        target_type_schema = parameters_schema["properties"]["target_type"]
+
+        self.assertFalse(parameters_schema["additionalProperties"])
+        self.assertEqual(
+            target_type_schema["anyOf"][0]["enum"],
+            ["server", "instance"],
+        )
+        self.assertIn(
+            "metrics 只允许 target_type",
+            schema["properties"]["parameters"]["description"],
+        )
+        self.assertIn(
+            "area=visualization",
+            schema["properties"]["query"]["description"],
+        )
+
     async def test_host_area_uses_real_host_inspector_and_labels_source(self) -> None:
         inspect = AsyncMock(
             return_value=OperationResult.success(
@@ -74,18 +93,196 @@ class InvestigationFacadeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("runtime.query", result.message)
 
     async def test_unknown_parameter_is_rejected_instead_of_ignored(self) -> None:
+        for field, value in (
+            ("time", "1h"),
+            ("minutes", 60),
+            ("instance", "139.196.175.226:9100"),
+            ("monitor_labels", {"instance": "139.196.175.226:9100"}),
+        ):
+            with self.subTest(field=field):
+                result = await investigation.investigate.ainvoke(
+                    {
+                        "area": "metrics",
+                        "target": "web-01",
+                        "query": "cpu",
+                        "parameters": {field: value},
+                    }
+                )
+
+                self.assertFalse(result.ok)
+                self.assertEqual(result.code, "invalid_investigation_request")
+                self.assertIn(f"不支持 parameters.{field}", result.message)
+                self.assertIn('"area":"metrics"', result.message)
+                self.assertIn('"target_type":"instance"', result.message)
+                self.assertIn('"area":"visualization"', result.message)
+
+    async def test_invalid_metrics_target_type_returns_actionable_correction(
+        self,
+    ) -> None:
         result = await investigation.investigate.ainvoke(
             {
                 "area": "metrics",
                 "target": "web-01",
-                "query": "cpu",
-                "parameters": {"minutes": 60},
+                "query": "memory",
+                "parameters": {"target_type": "node"},
             }
         )
 
         self.assertFalse(result.ok)
         self.assertEqual(result.code, "invalid_investigation_request")
-        self.assertIn("不支持 parameters.minutes", result.message)
+        self.assertIn('只能是 "server" 或 "instance"', result.message)
+        self.assertIn('不要使用 "node"', result.message)
+
+    async def test_metrics_server_target_is_resolved_by_backend(self) -> None:
+        query_server = AsyncMock(return_value="server metric result")
+        query_instance = AsyncMock()
+        with (
+            patch.object(
+                investigation,
+                "query_server_metrics",
+                SimpleNamespace(ainvoke=query_server),
+            ),
+            patch.object(
+                investigation,
+                "query_metrics",
+                SimpleNamespace(ainvoke=query_instance),
+            ),
+        ):
+            result = await investigation.investigate.ainvoke(
+                {
+                    "area": "metrics",
+                    "target": "web-01",
+                    "query": "memory",
+                    "parameters": {},
+                }
+            )
+
+        self.assertTrue(result.ok)
+        query_server.assert_awaited_once_with({"server": "web-01", "metric": "memory"})
+        query_instance.assert_not_awaited()
+
+    async def test_metrics_instance_target_uses_explicit_instance_mode(self) -> None:
+        query_server = AsyncMock()
+        query_instance = AsyncMock(return_value="instance metric result")
+        with (
+            patch.object(
+                investigation,
+                "query_server_metrics",
+                SimpleNamespace(ainvoke=query_server),
+            ),
+            patch.object(
+                investigation,
+                "query_metrics",
+                SimpleNamespace(ainvoke=query_instance),
+            ),
+        ):
+            result = await investigation.investigate.ainvoke(
+                {
+                    "area": "metrics",
+                    "target": "139.196.175.226:9100",
+                    "query": "memory",
+                    "parameters": {"target_type": "instance"},
+                }
+            )
+
+        self.assertTrue(result.ok)
+        query_server.assert_not_awaited()
+        query_instance.assert_awaited_once_with(
+            {
+                "metric": "memory",
+                "instance": "139.196.175.226:9100",
+            }
+        )
+
+    async def test_metrics_trend_uses_visualization_route(self) -> None:
+        grafana_link = AsyncMock(return_value="http://localhost:3000/explore")
+        resolve_instance = AsyncMock(
+            return_value=(
+                SimpleNamespace(name="web-01"),
+                "139.196.175.226:9100",
+                None,
+            )
+        )
+        with (
+            patch.object(
+                investigation,
+                "grafana_explore_link",
+                SimpleNamespace(ainvoke=grafana_link),
+            ),
+            patch.object(
+                investigation,
+                "resolve_server_metric_instance",
+                resolve_instance,
+            ),
+        ):
+            result = await investigation.investigate.ainvoke(
+                {
+                    "area": "visualization",
+                    "target": "web-01",
+                    "query": "memory",
+                    "parameters": {"kind": "metrics", "minutes": 60},
+                }
+            )
+
+        self.assertTrue(result.ok)
+        resolve_instance.assert_awaited_once_with("web-01")
+        grafana_link.assert_awaited_once_with(
+            {
+                "kind": "metrics",
+                "query": "memory",
+                "minutes": 60,
+                "instance": "139.196.175.226:9100",
+            }
+        )
+
+    async def test_metrics_trend_reports_instance_resolution_failure(self) -> None:
+        grafana_link = AsyncMock()
+        with (
+            patch.object(
+                investigation,
+                "grafana_explore_link",
+                SimpleNamespace(ainvoke=grafana_link),
+            ),
+            patch.object(
+                investigation,
+                "resolve_server_metric_instance",
+                AsyncMock(return_value=(None, None, "没有匹配的 node_exporter")),
+            ),
+        ):
+            result = await investigation.investigate.ainvoke(
+                {
+                    "area": "visualization",
+                    "target": "web-01",
+                    "query": "memory",
+                    "parameters": {"kind": "metrics", "minutes": 60},
+                }
+            )
+
+        self.assertFalse(result.ok)
+        self.assertIn("没有匹配的 node_exporter", result.message)
+        self.assertEqual(result.code, "investigation_metric_instance_unavailable")
+        grafana_link.assert_not_awaited()
+
+    async def test_metrics_trend_does_not_rewrite_raw_promql_for_server(self) -> None:
+        grafana_link = AsyncMock()
+        with patch.object(
+            investigation,
+            "grafana_explore_link",
+            SimpleNamespace(ainvoke=grafana_link),
+        ):
+            result = await investigation.investigate.ainvoke(
+                {
+                    "area": "visualization",
+                    "target": "web-01",
+                    "query": "node_memory_MemTotal_bytes",
+                    "parameters": {"kind": "metrics", "minutes": 60},
+                }
+            )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.code, "invalid_investigation_request")
+        self.assertIn("原始 PromQL 请自行写入 instance 选择器", result.message)
+        grafana_link.assert_not_awaited()
 
     async def test_service_area_hides_catalog_and_discovery_tools(self) -> None:
         catalog = AsyncMock(return_value="目录证据")

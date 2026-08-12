@@ -16,6 +16,13 @@ class _SessionContext:
 
 
 class QueryServerMetricsTest(unittest.IsolatedAsyncioTestCase):
+    def test_promql_template_can_be_scoped_to_exact_instance(self) -> None:
+        memory = metrics.promql_for_metric("memory", "10.0.0.8:9100")
+        cpu = metrics.promql_for_metric("cpu", "10.0.0.8:9100")
+
+        self.assertEqual(memory.count('instance="10.0.0.8:9100"'), 2)
+        self.assertIn('mode="idle",instance="10.0.0.8:9100"', cpu)
+
     async def test_uses_configured_instance_without_discovery(self) -> None:
         """服务器已有 instance 映射时，一次工具调用直接查询指标，不再枚举实例。"""
         server = SimpleNamespace(
