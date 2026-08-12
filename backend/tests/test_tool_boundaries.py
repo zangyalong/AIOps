@@ -4,8 +4,6 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from langchain_core.messages import HumanMessage
-
 from app.agents.graphs import chat_graph
 from app.agents.prompts import (
     SIMPLIFIED_CHINESE_REQUIREMENT,
@@ -64,11 +62,6 @@ class _ConnectionContext:
 class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
     def test_prompt_exposes_investigation_not_internal_executors(self) -> None:
         assembly = build_ops_system_prompt(
-            messages=[
-                HumanMessage(
-                    "修改 Docker Compose 的 .env SERVER_PORT，然后重建容器让配置生效"
-                )
-            ],
             tools=chat_graph._ops_tools(True),
             allow_write_tools=True,
             run_mode="interactive",
@@ -89,9 +82,11 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("普通 docker start/restart 不会应用新变量", prompt)
         self.assertIn("recreate_compose_service", prompt)
         self.assertIn("同一项目还有 PostgreSQL、Redis", prompt)
-        self.assertIn("active_skills", prompt)
+        self.assertIn("<available_skills>", prompt)
+        self.assertIn("read_skill", prompt)
         self.assertIn("docker-compose-operations", prompt)
         self.assertIn("configuration-changes", prompt)
+        self.assertNotIn("# Docker Compose 排障", prompt)
         self.assertIn("同一事实只出现一次", prompt)
         self.assertIn("禁止出现", prompt)
         self.assertNotIn("run_diagnostic_command", prompt)
@@ -99,8 +94,8 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Supervisor", prompt)
 
     def test_catalog_has_disjoint_read_and_write_tools(self) -> None:
-        """模型只看到统一调查入口；结构化变更仍逐项登记审批元数据。"""
-        self.assertEqual(set(catalog.READ_TOOLS_BY_NAME), {"investigate"})
+        """模型只看到调查和 Skill 读取；结构化变更仍逐项登记审批元数据。"""
+        self.assertEqual(set(catalog.READ_TOOLS_BY_NAME), {"investigate", "read_skill"})
         self.assertNotIn("run_diagnostic_command", catalog.WRITE_TOOLS_BY_NAME)
         self.assertNotIn("run_root_read_command", catalog.WRITE_TOOLS_BY_NAME)
         self.assertIn("restart_service", catalog.WRITE_TOOLS_BY_NAME)
@@ -123,6 +118,9 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(read_spec.effect, "read")
         self.assertEqual(read_spec.risk_level, "low")
         self.assertTrue(read_spec.audit_execution)
+        skill_spec = catalog.get_operation_spec("read_skill")
+        self.assertIsNotNone(skill_spec)
+        self.assertEqual(skill_spec.effect, "read")
         restart_spec = catalog.get_operation_spec("restart_service")
         self.assertIsNotNone(restart_spec)
         self.assertEqual(restart_spec.effect, "write")
@@ -138,7 +136,8 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(grant_spec.effect, "write")
         self.assertEqual(grant_spec.risk_level, "medium")
         self.assertEqual(
-            {tool.name for tool in chat_graph.OPS_READ_TOOLS}, {"investigate"}
+            {tool.name for tool in chat_graph.OPS_READ_TOOLS},
+            {"investigate", "read_skill"},
         )
         self.assertEqual(
             {tool.name for tool in chat_graph.OPS_WRITE_TOOLS},

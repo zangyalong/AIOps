@@ -35,7 +35,7 @@ Alertmanager webhook → PostgreSQL → Redis/arq → 同一 Ops Agent（禁用�
                                                └── incidents.diagnosis
 ```
 
-Agent 对外只认识“调查”和“变更”。`investigate` 是唯一模型可见的读工具，后端根据证据领域选择可观测性查询、运行时探针或宿主机文件沙箱；所有写能力仍是固定参数工具，不能退化成任意 root Shell。
+Agent 对外只认识“调查”和“变更”。`investigate` 是统一运维调查入口，后端根据证据领域选择可观测性查询、运行时探针或宿主机文件沙箱；`read_skill` 只按已安装名称读取教程型 Skill。所有写能力仍是固定参数工具，不能退化成任意 root Shell。
 
 聊天请求先创建数据库 `chat_runs` 记录并写入带 `run_id` 的用户消息，再返回 `run_id`；前端通过
 `GET /chat/runs/{run_id}/events` 订阅 SSE。LangGraph
@@ -256,7 +256,8 @@ tests/             # 不依赖外部服务的自动化测试
 
 ## 当前安全边界
 
-- `catalog.py` 是唯一的模型工具分类入口；模型可见的读能力只有 `investigate`，结构化写工具逐项登记风险和审批展示，两类不允许重叠。
+- `catalog.py` 是唯一的模型工具分类入口；模型可见的读能力是统一调查 `investigate` 与教程读取 `read_skill`，结构化写工具逐项登记风险和审批展示，两类不允许重叠。
+- Skill 使用 Pi 风格的渐进加载：system prompt 只拼入名称、描述和路径索引，模型判断匹配时调用 `read_skill(name)` 获取正文，用户也可用 `/skill:名称` 强制展开。Skill 不包含确定性触发词或关联工具，也不能承载安全边界和强制业务流程。
 - 每次图执行都有独立 `execution_id`：交互调查同时关联 `chat_run_id`，worker 调查不需要伪造聊天记录也会写入同一张操作审计表；写操作缺少真实 Chat Run 时继续 fail-closed。
 - `investigate` 按 `servers/services/runtime/host/metrics/logs/alerts/incident/visualization/change` 证据领域路由。`run_diagnostic_command` 等旧读工具仍作为后端内部执行器存在，不再由模型直接选择或向用户展示。
 - `runtime` 调查使用后端定义的结构化选择器查询主机资源、systemd、journal、Docker、socket 等实时状态；参数和输出继续受超时、长度及目标格式校验，但这些内部命令白名单不进入 Prompt。

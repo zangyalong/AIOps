@@ -34,6 +34,7 @@ from app.agents.tools.server_log_config import (
 from app.agents.tools.service_discovery import (
     register_server_services,
 )
+from app.agents.tools.skills import read_skill
 from app.operations.broker import OperationBroker
 from app.operations.registry import OperationRegistry, RegisteredOperation
 from app.operations.schemas import (
@@ -237,7 +238,7 @@ def _grant_server_file_write_access_action(args: dict[str, Any]) -> dict[str, An
     }
 
 
-READ_TOOLS: tuple[BaseTool, ...] = (investigate,)
+READ_TOOLS: tuple[BaseTool, ...] = (investigate, read_skill)
 
 _WRITE_SPECS = (
     WriteToolSpec(

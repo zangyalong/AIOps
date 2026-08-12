@@ -7,19 +7,13 @@ DiagnosticLevel = Literal["warning", "error"]
 
 @dataclass(frozen=True, slots=True)
 class SkillDefinition:
-    """一个通过校验、可以进入 Agent 运行时上下文的 Skill。"""
+    """一个通过校验、可以被 Agent 按需读取的教程型 Skill。"""
 
     name: str
     description: str
     body: str
     path: Path
     location: str
-    version: str
-    category: str
-    triggers: tuple[str, ...]
-    tools: tuple[str, ...]
-    enabled: bool
-    source: str = "builtin"
 
 
 @dataclass(frozen=True, slots=True)

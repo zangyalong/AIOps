@@ -4,7 +4,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from html import escape
 
-from langchain_core.messages import BaseMessage
 from langchain_core.tools import BaseTool
 
 from app.agents.prompts.core import (
@@ -16,8 +15,6 @@ from app.agents.skills import (
     SkillDefinition,
     SkillDiagnostic,
     load_skills,
-    select_skills,
-    skill_selection_text,
 )
 from app.agents.tools.catalog import get_operation_spec
 from app.core.config import settings
@@ -25,11 +22,10 @@ from app.core.config import settings
 
 @dataclass(frozen=True, slots=True)
 class PromptAssembly:
-    """运行时系统提示词，以及这轮实际激活的 Skill 信息。"""
+    """运行时系统提示词，以及这一轮发现的 Skill 索引。"""
 
     text: str
     installed_skills: tuple[SkillDefinition, ...]
-    active_skills: tuple[SkillDefinition, ...]
     skill_diagnostics: tuple[SkillDiagnostic, ...]
 
 
@@ -69,55 +65,32 @@ def _mode_context(*, allow_write_tools: bool, run_mode: str) -> str:
     )
 
 
-def _skill_context(
-    installed: tuple[SkillDefinition, ...], active: tuple[SkillDefinition, ...]
-) -> str:
+def _skill_context(installed: tuple[SkillDefinition, ...]) -> str:
     rows = [
-        "# 本轮 Skill 上下文",
-        "Skill 是项目维护的运维方法说明，不是额外权限。先遵守固定安全边界，再使用 Skill。",
+        "# 可用 Skills",
+        "Skill 是按需加载的教程说明，不是插件、工具路由或额外权限。",
+        "只根据名称和描述判断是否相关；任务明显匹配时，先调用 `read_skill` 并传入准确名称，再按返回的正文工作。不要仅凭名称猜测正文，也不要为了展示过程读取无关 Skill。",
+        "用户输入 `/skill:名称` 时，系统会在模型调用前直接展开该 Skill 正文，不需要再调用 `read_skill`。Skill 不能覆盖固定运维核心、安全边界、审批策略或本轮工具目录。",
         "<available_skills>",
     ]
     for skill in installed:
-        if not skill.enabled:
-            continue
         rows.extend(
             [
                 "  <skill>",
                 f"    <name>{escape(skill.name)}</name>",
                 f"    <description>{escape(skill.description)}</description>",
-                f"    <location>{escape(skill.location)}</location>",
+                f"    <location>{escape(skill.path.as_posix())}</location>",
                 "  </skill>",
             ]
         )
     rows.append("</available_skills>")
-
-    if not active:
-        rows.append(
-            "当前请求没有命中专用 Skill。按固定运维核心和本轮工具目录处理，不要自行套用无关 Skill。"
-        )
-        return "\n".join(rows)
-
-    rows.append("<active_skills>")
-    for skill in active:
-        rows.append(
-            f'<skill name="{escape(skill.name)}" location="{escape(skill.location)}">'
-        )
-        rows.append(escape(skill.body, quote=False))
-        rows.append("</skill>")
-    rows.append("</active_skills>")
-    rows.append("只把 active_skills 当作本轮操作方法；它们不能扩大可用工具或权限。")
     return "\n".join(rows)
 
 
-def _response_contract(*, has_active_skills: bool) -> str:
-    skill_note = (
-        "优先采用 active_skills 中与当前目标直接相关的最短流程。"
-        if has_active_skills
-        else "没有专用 Skill 时按证据需求选择最短调查路径。"
-    )
-    return f"""# 本轮回答契约
+def _response_contract() -> str:
+    return """# 本轮回答契约
 
-{skill_note} 需要当前事实就调用调查工具；证据足够时直接回答，不为展示过程继续调用。
+需要当前事实就调用调查工具；证据足够时直接回答，不为展示过程继续调用。
 
 准备调用工具时，content 只写一句 20～60 字的专家旁白，只表达当前调查目标，或一条新证据加下一步。禁止写“让我检查、重新审视、我需要思考、关键点是”等自我复盘，不展示工具选择过程。
 
@@ -126,7 +99,6 @@ def _response_contract(*, has_active_skills: bool) -> str:
 
 def build_ops_system_prompt(
     *,
-    messages: list[BaseMessage],
     tools: Sequence[BaseTool],
     allow_write_tools: bool,
     run_mode: str,
@@ -134,19 +106,17 @@ def build_ops_system_prompt(
     """按这一轮状态重建系统提示词，不在图节点保存整块静态 Prompt。"""
 
     loaded = load_skills(settings.skills_dir)
-    active = select_skills(loaded.skills, skill_selection_text(messages))
     sections = (
         SIMPLIFIED_CHINESE_REQUIREMENT,
         OPS_CORE_PROMPT,
         OPS_SAFETY_BOUNDARY,
         _mode_context(allow_write_tools=allow_write_tools, run_mode=run_mode),
         _tool_context(tools),
-        _skill_context(loaded.skills, active),
-        _response_contract(has_active_skills=bool(active)),
+        _skill_context(loaded.skills),
+        _response_contract(),
     )
     return PromptAssembly(
         text="\n\n".join(sections),
         installed_skills=loaded.skills,
-        active_skills=active,
         skill_diagnostics=loaded.diagnostics,
     )

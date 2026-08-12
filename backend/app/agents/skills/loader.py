@@ -60,25 +60,6 @@ def _required_text(metadata: Mapping[str, Any], field: str, maximum: int) -> str
     return normalized
 
 
-def _optional_text(
-    metadata: Mapping[str, Any], field: str, default: str, maximum: int
-) -> str:
-    value = metadata.get(field, default)
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"字段 `{field}` 必须是非空字符串")
-    normalized = value.strip()
-    if len(normalized) > maximum:
-        raise ValueError(f"字段 `{field}` 不能超过 {maximum} 个字符")
-    return normalized
-
-
-def _string_tuple(metadata: Mapping[str, Any], field: str) -> tuple[str, ...]:
-    value = metadata.get(field, [])
-    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        raise ValueError(f"字段 `{field}` 必须是字符串数组")
-    return tuple(dict.fromkeys(item.strip() for item in value if item.strip()))
-
-
 def _parse_skill(path: Path, root: Path) -> SkillDefinition:
     if path.stat().st_size > _MAX_SKILL_BYTES:
         raise ValueError(f"文件超过 {_MAX_SKILL_BYTES // 1024} KiB 上限")
@@ -88,9 +69,6 @@ def _parse_skill(path: Path, root: Path) -> SkillDefinition:
     if not _SKILL_NAME_PATTERN.fullmatch(name):
         raise ValueError("字段 `name` 只能使用小写字母、数字和单个连字符")
     description = _required_text(metadata, "description", 1024)
-    disabled = metadata.get("disable-model-invocation", False)
-    if not isinstance(disabled, bool):
-        raise ValueError("字段 `disable-model-invocation` 必须是布尔值")
 
     return SkillDefinition(
         name=name,
@@ -98,11 +76,6 @@ def _parse_skill(path: Path, root: Path) -> SkillDefinition:
         body=body,
         path=path,
         location=_location(path, root),
-        version=_optional_text(metadata, "version", "1.0.0", 32),
-        category=_optional_text(metadata, "category", "通用", 32),
-        triggers=_string_tuple(metadata, "triggers"),
-        tools=_string_tuple(metadata, "tools"),
-        enabled=not disabled,
     )
 
 

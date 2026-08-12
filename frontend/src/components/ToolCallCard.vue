@@ -25,6 +25,7 @@ const areaLabels: Record<string, string> = {
 }
 
 const legacyLabels: Record<string, string> = {
+  read_skill: '读取 Skill',
   query_servers: '查询服务器列表',
   query_server_metrics: '查询服务器指标',
   query_metrics: '查询 Prometheus 指标',
@@ -50,7 +51,7 @@ const summary = computed(() => {
     args.parameters && typeof args.parameters === 'object'
       ? (args.parameters as Record<string, unknown>)
       : {}
-  return [args.target, args.query, parameters.path, args.server_name, args.path]
+  return [args.name, args.target, args.query, parameters.path, args.server_name, args.path]
     .filter((value, index, values) => value && values.indexOf(value) === index)
     .map(String)
     .join(' · ')

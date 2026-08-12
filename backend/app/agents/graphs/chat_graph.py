@@ -22,6 +22,7 @@ from langgraph.types import interrupt
 
 from app.agents.presentation import compact_narration
 from app.agents.prompts import build_ops_system_prompt
+from app.agents.skills import expand_explicit_skill_invocation
 from app.agents.tools.catalog import (
     OPERATION_BROKER,
     READ_TOOLS_BY_NAME,
@@ -145,18 +146,26 @@ async def ops_agent_node(state: ChatState) -> dict:
     """单一 ReAct 节点：选择调查/变更工具，或直接给出最终回答。"""
     started_at = time.monotonic()
     protocol_repairs = _trailing_protocol_repairs(state.get("messages", []))
-    model_messages = [*state["messages"], *protocol_repairs]
     allow_write_tools = state.get("allow_write_tools", False)
     operation_context = state.get("operation_context") or {}
     assembly = build_ops_system_prompt(
-        messages=state["messages"],
         tools=_ops_tools(allow_write_tools),
         allow_write_tools=allow_write_tools,
         run_mode=str(operation_context.get("run_mode") or ""),
     )
+    model_messages, explicit_skill, invocation_error = expand_explicit_skill_invocation(
+        [*state["messages"], *protocol_repairs],
+        assembly.installed_skills,
+    )
+    system_prompt = assembly.text
+    if invocation_error is not None:
+        system_prompt = (
+            f"{system_prompt}\n\n# 显式 Skill 调用\n{invocation_error}\n"
+            "不要假定该 Skill 已加载；直接向用户说明可用名称。"
+        )
     response = await _ops_llm(allow_write_tools).ainvoke(
         [
-            SystemMessage(assembly.text),
+            SystemMessage(system_prompt),
             *model_messages,
         ]
     )
@@ -170,7 +179,7 @@ async def ops_agent_node(state: ChatState) -> dict:
         )
     print(
         f"[graph] ops_agent 耗时 {time.monotonic() - started_at:.1f}s，"
-        f"skills={[skill.name for skill in assembly.active_skills]!r}，"
+        f"explicit_skill={explicit_skill.name if explicit_skill else None!r}，"
         f"tool_calls={response.tool_calls!r}"
     )
     return {"messages": [*protocol_repairs, response]}

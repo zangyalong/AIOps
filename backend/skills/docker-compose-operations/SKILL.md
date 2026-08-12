@@ -1,43 +1,32 @@
 ---
 name: docker-compose-operations
-description: 处理 Docker Compose 的变量插值、端口映射和单服务受控重建，避免错误使用普通 docker start。
-version: 1.0.0
-category: 容器编排
-triggers:
-  - docker compose
-  - docker-compose
-  - compose
-  - recreate
-  - 重建容器
-  - 端口映射
-  - force-recreate
-  - SERVER_PORT
-tools:
-  - investigate
-  - recreate_compose_service
-  - patch_server_config
+description: 调查 Docker Compose 的项目归属、变量插值、端口映射、依赖和容器重建问题。
 ---
 
-# Docker Compose 单服务重建
+# Docker Compose 排障
 
-## 判断何时需要 recreate
+## 建立有效配置视图
 
-Compose 在创建容器时计算 `.env` 插值、`ports`、环境变量、挂载和镜像配置。容器创建完成后，`docker start` 只是启动旧容器，`docker restart` 也只重启旧配置。普通 docker start/restart 不会应用新变量，也不会重新读取 Compose 项目的 `.env`。
+先确定容器是否真的由 Compose 管理，再从容器标签核对 project、service、working directory 和配置文件。不要只凭目录名或容器名前缀判断项目归属。
 
-如果用户修改了 `${SERVER_PORT}:8080` 一类宿主机端口变量，要应用新映射，语义上需要执行 `docker compose up -d --no-deps --force-recreate <service>`。AIOMS 中不要运行这条原始命令，要调用高风险受控工具 `recreate_compose_service`。
+理解最终配置时，依次对照：
 
-## AIOMS 流程
+- Compose YAML 中的原始声明；
+- 项目 `.env` 和 shell 环境提供的插值；
+- `docker compose config` 展开的有效配置；
+- `docker inspect` 中既有容器的真实端口、环境变量和挂载。
 
-1. 用 `investigate(area="services", query="discover")` 或 `runtime.query="docker-all"` 查明准确容器名、状态和 Compose 身份。
-2. 修改配置前用 `investigate(area="change", query="config-patch-preview")` 生成结构化预览；dotenv 的 `selector` 是变量名。把预览返回的哈希和差异原样交给 `patch_server_config`。
-3. 文件写成功且用户明确要求配置生效时，单独调用 `recreate_compose_service(server_name=..., container_name=...)`。工具会从已授权容器的 Compose 标签反查项目、配置文件、工作目录和 service，只重建目标 service。
-4. 同一项目还有 PostgreSQL、Redis 等其他 service 不是拒绝单服务重建的理由；`--no-deps` 保证不会主动重建依赖。
-5. recreate 成功后重新调查 `docker-all`、`sockets`、容器日志和反向代理配置，只报告真实运行结果。
+这四层不一致时，以运行中容器事实解释当前行为，以展开后的有效配置解释下一次创建会得到什么。
 
-## 常见故障解释
+## 重建后的核验
 
-- `port is already allocated`：旧容器配置仍绑定冲突端口，或新端口也被占用；先用 `sockets` 核验，不要反复 `start_service`。
-- 缺少 Compose 标签：目标可能不是 Compose 容器，或容器元数据不完整；报告该事实，不猜项目路径。
-- 服务名重名或标签映射不唯一：停止执行并报告准确歧义，不扩大到整个项目重建。
+容器创建完成后，按顺序检查目标 service 的容器状态、宿主机端口、容器内部监听、最近日志、健康检查和反向代理上游。依赖容器存在不代表必须一起重建；先判断目标 service 的配置变化是否影响依赖契约。
 
-不得让用户提供路径来绕过标签反查，也不得建议 Agent 手工执行任意 `docker compose` 命令。
+常见现象：
+
+- `port is already allocated`：先定位哪个进程或容器占用宿主机端口，再确认冲突来自旧容器配置还是新配置。
+- `.env` 已修改但映射没变：既有容器仍保留创建时配置，需要比较有效配置与容器 inspect。
+- 缺少 Compose 标签：目标可能不是 Compose 创建的，或元数据不完整，应把归属不确定作为结论。
+- 单个 service 重建后启动失败：查看该 service 的日志和依赖可达性，不先扩大为整个项目重建。
+
+涉及实际重建时，以固定运维核心与安全边界规定的受控流程为准；本 Skill 不授予执行能力。

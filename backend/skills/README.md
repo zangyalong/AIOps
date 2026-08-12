@@ -14,25 +14,18 @@ backend/skills/
 ---
 name: docker-operations
 description: 说明这个 Skill 解决什么运维问题。
-version: 1.0.0
-category: 容器运行时
-triggers:
-  - docker
-  - 容器
-tools:
-  - investigate
-disable-model-invocation: false
 ---
 
 # 给 Agent 的完整方法说明
 ```
 
 - `name` 必须使用小写字母、数字和单个连字符，最长 64 个字符，并建议与目录名一致。
-- `description` 是设置页和运行时轻量目录中的摘要；`triggers` 用于从最近用户请求与本轮调查结果中确定性选择 Skill。
-- `tools` 只声明该 Skill 会指导使用哪些现有工具，方便阅读和检查；它不会注册工具或授予权限。
-- `disable-model-invocation: true` 会保留 Skill 的安装信息，但阻止它进入模型上下文。
-- YAML、正文、重名或越界符号链接校验失败时，Skill 不会加载，诊断会显示在设置页。
+- `description` 既是 SKILLS 页摘要，也是模型在运行时判断是否需要读取正文的依据，应写清适用任务。
+- 正文是一份教程或方法说明，可以引用同目录下的补充资料，但不会注册工具、设置触发词或授予权限。
+- YAML、正文、重名或越界符号链接校验失败时，Skill 不会加载，并在后端诊断中记录原因。
 
 ## 运行时边界
 
-固定运维核心与安全边界始终先于 Skill 注入。每轮最多激活三个匹配 Skill；其他已启用 Skill 只以名称、摘要和位置出现在轻量目录中。Skill 不能新增任意 Shell、绕过审批、扩大白名单或改变无人值守任务的只读模式。
+后端只把全部 Skill 的名称、描述和路径索引拼进 system prompt。模型判断任务明显匹配时调用 `read_skill(name)` 读取正文；用户也可以用 `/skill:docker-operations` 强制展开全文。
+
+这种自动匹配是模型的语义选择，不是确定性工作流。固定运维核心、安全边界和必须执行的审批流程不会放进普通 Skill，也不会被 Skill 覆盖；需要强制保证的流程仍由 LangGraph、Operation Broker 和策略层执行。

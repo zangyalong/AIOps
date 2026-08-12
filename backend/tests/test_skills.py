@@ -5,11 +5,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.messages import HumanMessage
 
 from app.agents.graphs import chat_graph
 from app.agents.prompts import build_ops_system_prompt
-from app.agents.skills import load_skills, select_skills, skill_selection_text
+from app.agents.skills import expand_explicit_skill_invocation, load_skills
+from app.agents.tools.skills import read_skill
 from app.api.skills import list_skills
 from app.core.config import settings
 
@@ -20,26 +21,18 @@ def _write_skill(
     *,
     name: str,
     description: str = "测试 Skill",
-    triggers: tuple[str, ...] = ("docker",),
+    body: str = "# 测试说明\n\n按证据顺序完成调查。",
 ) -> None:
     skill_dir = root / directory
     skill_dir.mkdir(parents=True)
-    trigger_yaml = "\n".join(f"  - {trigger}" for trigger in triggers)
     (skill_dir / "SKILL.md").write_text(
         "\n".join(
             [
                 "---",
                 f"name: {name}",
                 f"description: {description}",
-                "version: 1.0.0",
-                "category: 测试",
-                "triggers:",
-                trigger_yaml,
-                "tools:",
-                "  - investigate",
                 "---",
-                "# 测试说明",
-                "只执行测试范围内的方法。",
+                body,
             ]
         ),
         encoding="utf-8",
@@ -47,7 +40,7 @@ def _write_skill(
 
 
 class SkillLoaderTest(unittest.TestCase):
-    def test_loads_valid_skill_and_reports_duplicate_name(self) -> None:
+    def test_loads_tutorial_skill_and_reports_duplicate_name(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             _write_skill(root, "docker-operations", name="docker-operations")
@@ -56,6 +49,8 @@ class SkillLoaderTest(unittest.TestCase):
             result = load_skills(root)
 
         self.assertEqual([skill.name for skill in result.skills], ["docker-operations"])
+        self.assertEqual(result.skills[0].description, "测试 Skill")
+        self.assertIn("按证据顺序完成调查", result.skills[0].body)
         self.assertTrue(
             any("已由" in diagnostic.message for diagnostic in result.diagnostics)
         )
@@ -73,43 +68,47 @@ class SkillLoaderTest(unittest.TestCase):
         self.assertEqual(result.diagnostics[0].level, "error")
         self.assertIn("frontmatter", result.diagnostics[0].message)
 
-    def test_selects_only_matching_enabled_skills(self) -> None:
-        result = load_skills(settings.skills_dir)
+    def test_regular_request_does_not_deterministically_expand_a_skill(self) -> None:
+        installed = load_skills(settings.skills_dir).skills
+        original = HumanMessage("检查 Docker Compose 的端口映射")
 
-        selected = select_skills(result.skills, "检查 Docker Compose 的端口映射")
+        messages, skill, error = expand_explicit_skill_invocation([original], installed)
 
-        names = {skill.name for skill in selected}
-        self.assertIn("docker-operations", names)
-        self.assertIn("docker-compose-operations", names)
-        self.assertNotIn("systemd-operations", names)
+        self.assertIsNone(skill)
+        self.assertIsNone(error)
+        self.assertEqual(messages, [original])
 
-    def test_ascii_trigger_does_not_match_inside_another_word(self) -> None:
-        selected = select_skills(
-            load_skills(settings.skills_dir).skills,
-            "check the community health page",
+    def test_explicit_invocation_expands_full_skill_and_user_request(self) -> None:
+        installed = load_skills(settings.skills_dir).skills
+
+        messages, skill, error = expand_explicit_skill_invocation(
+            [HumanMessage("/skill:docker-operations 检查 orders-api 为什么退出")],
+            installed,
         )
 
-        self.assertNotIn("systemd-operations", {skill.name for skill in selected})
+        self.assertEqual(skill.name if skill else None, "docker-operations")
+        self.assertIsNone(error)
+        content = str(messages[0].content)
+        self.assertIn('<skill name="docker-operations"', content)
+        self.assertIn("# Docker 容器排障", content)
+        self.assertIn("检查 orders-api 为什么退出", content)
 
-    def test_tool_evidence_can_activate_skill_after_initial_investigation(self) -> None:
-        text = skill_selection_text(
-            [
-                HumanMessage("把 sub2api 的端口改成 8081 并生效"),
-                ToolMessage(
-                    "发现目标由 Docker Compose 管理，端口使用 SERVER_PORT 插值",
-                    tool_call_id="investigate-1",
-                ),
-            ]
+    def test_unknown_explicit_invocation_reports_available_names(self) -> None:
+        installed = load_skills(settings.skills_dir).skills
+
+        messages, skill, error = expand_explicit_skill_invocation(
+            [HumanMessage("/skill:not-installed 检查服务")], installed
         )
-        selected = select_skills(load_skills(settings.skills_dir).skills, text)
 
-        self.assertIn("docker-compose-operations", {skill.name for skill in selected})
+        self.assertIsNone(skill)
+        self.assertEqual(messages[0].content, "/skill:not-installed 检查服务")
+        self.assertIn("未安装", error or "")
+        self.assertIn("systemd-operations", error or "")
 
 
 class RuntimePromptTest(unittest.TestCase):
-    def test_runtime_prompt_keeps_core_and_safety_but_limits_tool_catalog(self) -> None:
+    def test_prompt_keeps_core_and_safety_but_only_indexes_skills(self) -> None:
         assembly = build_ops_system_prompt(
-            messages=[HumanMessage("查看 systemd 的 nginx.service 状态")],
             tools=chat_graph._ops_tools(False),
             allow_write_tools=False,
             run_mode="unattended",
@@ -119,48 +118,66 @@ class RuntimePromptTest(unittest.TestCase):
         self.assertIn("# 固定安全边界", assembly.text)
         self.assertIn("本轮是只读模式", assembly.text)
         self.assertIn('<tool name="investigate"', assembly.text)
+        self.assertIn('<tool name="read_skill"', assembly.text)
         self.assertNotIn('<tool name="restart_service"', assembly.text)
-        self.assertEqual(
-            [skill.name for skill in assembly.active_skills], ["systemd-operations"]
-        )
+        self.assertIn("<available_skills>", assembly.text)
+        self.assertIn("<name>systemd-operations</name>", assembly.text)
+        self.assertIn("先调用 `read_skill`", assembly.text)
+        self.assertNotIn("# systemd 服务排障", assembly.text)
+        self.assertNotIn("<active_skills>", assembly.text)
 
     def test_prompt_is_reassembled_from_current_skill_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
-            _write_skill(root, "custom-check", name="custom-check", triggers=("redis",))
+            _write_skill(root, "custom-check", name="custom-check")
             with patch.object(settings, "skills_dir", root):
                 first = build_ops_system_prompt(
-                    messages=[HumanMessage("检查 Redis")],
                     tools=chat_graph._ops_tools(False),
                     allow_write_tools=False,
                     run_mode="interactive",
                 )
-                _write_skill(
-                    root,
-                    "second-check",
-                    name="second-check",
-                    triggers=("postgres",),
-                )
+                _write_skill(root, "second-check", name="second-check")
                 second = build_ops_system_prompt(
-                    messages=[HumanMessage("检查 Postgres")],
                     tools=chat_graph._ops_tools(False),
                     allow_write_tools=False,
                     run_mode="interactive",
                 )
 
         self.assertEqual(
-            [skill.name for skill in first.active_skills], ["custom-check"]
+            [skill.name for skill in first.installed_skills], ["custom-check"]
         )
         self.assertEqual(
-            [skill.name for skill in second.active_skills], ["second-check"]
+            [skill.name for skill in second.installed_skills],
+            ["custom-check", "second-check"],
         )
+        self.assertNotIn("second-check", first.text)
         self.assertIn("second-check", second.text)
+        self.assertNotIn("# 测试说明", second.text)
+
+
+class ReadSkillToolTest(unittest.IsolatedAsyncioTestCase):
+    async def test_reads_full_content_by_registered_name(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _write_skill(root, "custom-check", name="custom-check")
+            with patch.object(settings, "skills_dir", root):
+                result = await read_skill.ainvoke({"name": "custom-check"})
+
+        self.assertIn('<skill name="custom-check"', result)
+        self.assertIn("# 测试说明", result)
+        self.assertIn("按证据顺序完成调查", result)
 
 
 class SkillApiTest(unittest.IsolatedAsyncioTestCase):
-    async def test_lists_the_same_installed_skills(self) -> None:
+    async def test_lists_only_name_description_and_content(self) -> None:
         response = await list_skills()
 
         self.assertGreaterEqual(len(response.skills), 4)
-        self.assertIn("docker-operations", {skill.name for skill in response.skills})
-        self.assertFalse(response.diagnostics)
+        docker = next(
+            skill for skill in response.skills if skill.name == "docker-operations"
+        )
+        self.assertIn("Docker", docker.description)
+        self.assertIn("# Docker 容器排障", docker.instructions)
+        self.assertEqual(
+            set(docker.model_dump()), {"name", "description", "instructions"}
+        )

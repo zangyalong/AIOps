@@ -1,42 +1,37 @@
 ---
 name: systemd-operations
-description: 调查 systemd unit 的活动状态、启用状态和 journal，并通过受控工具启停或重启已授权服务。
-version: 1.0.0
-category: Linux 服务
-triggers:
-  - systemd
-  - systemctl
-  - journalctl
-  - unit
-  - daemon-reload
-  - service 文件
-  - 服务启动
-  - 服务停止
-  - 服务重启
-tools:
-  - investigate
-  - start_service
-  - stop_service
-  - restart_service
+description: 按 unit 状态、依赖、退出原因、journal 和监听端口调查 systemd 服务故障。
 ---
 
-# systemd 运维
+# systemd 服务排障
 
 ## 调查顺序
 
-1. 不确定 unit 名时先用 `investigate(area="services", query="discover")` 发现准确运行对象，不凭应用名猜测 `.service` 名称。
-2. 总览使用 `runtime.query="services"`，失败单元使用 `failed-services`。
-3. 针对单元依次使用 `service:<完整 unit>`、`service-active:<完整 unit>`、`service-enabled:<完整 unit>`；日志使用 `journal:<完整 unit>`。
-4. 端口或 Unix socket 相关服务，再分别调查 `sockets` 或 `unix-sockets`。
+1. 确认完整 unit 名以及它是 service、socket、timer 还是模板实例，不凭应用名猜测。
+2. 分别检查 `LoadState`、`ActiveState`、`SubState`、主进程 PID 和最近退出状态。
+3. 查看 unit 定义来源、启动命令、环境文件、依赖和 ordering，区分“没有启用”和“当前没有运行”。
+4. 从本次启动时间附近读取 journal，优先看第一条根因错误，而不是最后一串连锁失败。
+5. 对监听型服务再核对 TCP/UDP 或 Unix socket，避免只凭 systemd 的 active 状态判断可用。
 
-这些选择器对应常见只读方法 `systemctl status`、`systemctl is-active`、`systemctl is-enabled`、`systemctl --failed` 与 `journalctl -u <unit> -n 100 --no-pager`。在 AIOMS 对话中通过 `investigate` 使用，避免暴露内部执行器。
+常用只读命令包括：
 
-## 受控变更
+```bash
+systemctl status <unit> --no-pager
+systemctl show <unit>
+systemctl is-active <unit>
+systemctl is-enabled <unit>
+systemctl list-dependencies <unit>
+journalctl -u <unit> -n 100 --no-pager
+```
 
-- 用户明确要求后，使用 `start_service`、`stop_service` 或 `restart_service`，参数 `runtime_type="systemd"`，并传服务目录中已授权的完整 unit 名。
-- 每个写操作单独审批。批准只代表允许尝试，必须以工具返回和随后的状态复核判断是否真正成功。
-- 修改 unit 文件与加载 unit 是两件独立操作。当前没有登记 `daemon-reload` 写能力时，不得假装通过重启工具完成了 `systemctl daemon-reload`，应准确说明缺少该受控动作。
+在 AIOMS 对话里，应把这些命令映射为当前可用的只读调查能力，不假定存在任意 systemctl Shell。
 
-## 禁区
+## 常见现象
 
-不要使用或建议任意 `systemctl` 写命令、`systemctl edit`、修改 `/etc/systemd/system`、`enable/disable/mask`，也不要通过 shell、sudo 或替代 unit 名绕过服务目录和目标机白名单。
+- `active (exited)` 可能表示一次性任务成功完成，不等价于守护进程仍在运行。
+- `activating (auto-restart)` 通常需要结合退出码和重启节流日志判断崩溃循环。
+- unit 文件已修改但行为没变时，要确认 systemd 是否重新加载了定义，以及进程是否重新启动。
+- socket activation 场景里 service 未运行可能是正常状态，应同时检查对应 socket unit。
+- `is-enabled` 和 `is-active` 回答的是不同问题，不应互相替代。
+
+涉及启停、重启、reload 或 unit 修改时，以固定运维核心与安全边界为准；本 Skill 只提供调查方法。

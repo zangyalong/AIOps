@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     ssh_key_dir: Path = REPO_ROOT / "ssh"
     # 前端“生成环境部署包”调用这里的固定脚本；可在测试环境覆盖为临时目录。
     target_server_scripts_dir: Path = REPO_ROOT / "scripts" / "target-server"
-    # AIOMS 自身的运维 Skill 目录；SKILL.md 在每轮提示词组装时动态发现。
+    # AIOMS 自身的运维 Skill 目录；每轮只拼装索引，正文由 read_skill 按需读取。
     skills_dir: Path = REPO_ROOT / "backend" / "skills"
     # UI 管理的 Prometheus 告警规则输出文件；Docker 挂载整个目录，以便原子替换后仍可见。
     prometheus_rules_path: Path = (
