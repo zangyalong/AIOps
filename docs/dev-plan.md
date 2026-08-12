@@ -8,6 +8,7 @@
   - `parameters` 从任意字典改为字段化 schema，明确 `target_type=server|instance` 及每个字段适用的 area
   - 明确当前指标值走 metrics、时间趋势走 visualization，禁止猜测 time/instance/monitor_labels
   - visualization 指标趋势按 target 自动解析并限定 Prometheus instance，避免生成全实例图表
+  - 同一 IP 存在多个 exporter 时统一优先选择标准 `IP:9100` node_exporter
 - [ ] **失败后提供确定的纠正路径**
   - metrics 参数错误返回服务器当前值、instance 当前值与最近 60 分钟趋势的可复制调用示例
   - Prompt 限制同类协议错误只能按纠正结构重试一次，不再连续发明新字段

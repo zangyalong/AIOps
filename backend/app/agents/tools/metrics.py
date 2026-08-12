@@ -14,7 +14,11 @@ from langchain_core.tools import tool
 from app.db.session import AsyncSessionLocal
 from app.models.server import Server
 from app.services import server_service
-from app.services.observability_service import prom_label_values, prom_query
+from app.services.observability_service import (
+    prom_label_values,
+    prom_query,
+    select_server_metric_instance,
+)
 
 # 常用指标的 PromQL 模板。用 node_exporter 的标准查法：
 # - cpu：100 减去 idle 占比 = 使用率。avg by(instance) 会把 job 等其它标签聚合掉，
@@ -198,17 +202,18 @@ async def _resolve_metric_instance(server: Server) -> tuple[str | None, str | No
         )
 
     ip = server.ip_address.strip()
-    matches = [item for item in instances if item == ip or item.startswith(f"{ip}:")]
-    if len(matches) == 1:
-        return matches[0], None
+    selected, matches = select_server_metric_instance(ip, instances)
+    if selected is not None:
+        return selected, None
     if not matches:
         return None, (
             f"服务器 {server.name} 未配置 monitor_labels.instance，Prometheus 中也没有与 IP "
             f"{ip} 匹配的实例。请先配置监控标签。"
         )
     return None, (
-        f"服务器 {server.name} 的 IP {ip} 匹配到多个 Prometheus 实例："
-        f"{', '.join(sorted(matches))}。请配置 monitor_labels.instance 明确指定。"
+        f"服务器 {server.name} 的 IP {ip} 匹配到多个 Prometheus 实例，但没有标准的 "
+        f"node_exporter {ip}:9100：{', '.join(matches)}。请配置 "
+        "monitor_labels.instance 明确指定主机指标实例。"
     )
 
 

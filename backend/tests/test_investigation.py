@@ -8,6 +8,14 @@ from app.agents.tools import investigation
 from app.operations.schemas import OperationResult
 
 
+class _SessionContext:
+    async def __aenter__(self) -> object:
+        return object()
+
+    async def __aexit__(self, *args: object) -> None:
+        del args
+
+
 class InvestigationFacadeTest(unittest.IsolatedAsyncioTestCase):
     def test_parameters_schema_is_closed_and_describes_metrics_protocol(self) -> None:
         schema = investigation.InvestigationInput.model_json_schema()
@@ -240,6 +248,61 @@ class InvestigationFacadeTest(unittest.IsolatedAsyncioTestCase):
                 "kind": "metrics",
                 "query": "memory",
                 "minutes": 60,
+                "instance": "139.196.175.226:9100",
+            }
+        )
+
+    async def test_metrics_trend_selects_node_exporter_among_server_targets(
+        self,
+    ) -> None:
+        server = SimpleNamespace(
+            name="web-01",
+            ip_address="139.196.175.226",
+            monitor_labels=None,
+        )
+        grafana_link = AsyncMock(return_value="scoped Grafana link")
+        with (
+            patch(
+                "app.agents.tools.metrics.AsyncSessionLocal",
+                return_value=_SessionContext(),
+            ),
+            patch(
+                "app.agents.tools.metrics.server_service.get_server_by_name_or_ip",
+                AsyncMock(return_value=server),
+            ),
+            patch(
+                "app.agents.tools.metrics.prom_label_values",
+                AsyncMock(
+                    return_value=[
+                        "139.196.175.226:8080",
+                        "139.196.175.226:9100",
+                        "139.196.175.226:9104",
+                        "139.196.175.226:9121",
+                        "139.196.175.226:9187",
+                    ]
+                ),
+            ),
+            patch.object(
+                investigation,
+                "grafana_explore_link",
+                SimpleNamespace(ainvoke=grafana_link),
+            ),
+        ):
+            result = await investigation.investigate.ainvoke(
+                {
+                    "area": "visualization",
+                    "target": "web-01",
+                    "query": "memory",
+                    "parameters": {"kind": "metrics", "minutes": 1440},
+                }
+            )
+
+        self.assertTrue(result.ok)
+        grafana_link.assert_awaited_once_with(
+            {
+                "kind": "metrics",
+                "query": "memory",
+                "minutes": 1440,
                 "instance": "139.196.175.226:9100",
             }
         )

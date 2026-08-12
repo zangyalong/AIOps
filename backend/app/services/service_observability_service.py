@@ -26,6 +26,7 @@ from app.services.observability_service import (
     prom_label_values,
     prom_query,
     prom_query_range,
+    select_server_metric_instance,
 )
 
 _LOG_LIMIT = 40
@@ -280,16 +281,9 @@ async def _resolve_server_metric_instance(
         return None, f"自动发现 Prometheus instance 失败：{exc}"
 
     ip_address = server.ip_address.strip()
-    matches = [
-        item
-        for item in instances
-        if item == ip_address or item.startswith(f"{ip_address}:")
-    ]
-    node_exporter_instance = f"{ip_address}:9100"
-    if node_exporter_instance in matches:
-        return node_exporter_instance, None
-    if len(matches) == 1:
-        return matches[0], None
+    selected, matches = select_server_metric_instance(ip_address, instances)
+    if selected is not None:
+        return selected, None
     if not matches:
         return None, (
             "Prometheus 中没有与该服务器 IP 匹配的 node_exporter Target，"
@@ -297,7 +291,7 @@ async def _resolve_server_metric_instance(
         )
     return None, (
         "该服务器匹配到多个 Prometheus Target，但没有标准的 9100 node_exporter："
-        f"{', '.join(sorted(matches))}"
+        f"{', '.join(matches)}"
     )
 
 
