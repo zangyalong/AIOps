@@ -83,9 +83,7 @@ async def update_alert_rule(
 
 
 @router.delete("/{rule_id}", response_model=AlertRuleMutationRead)
-async def delete_alert_rule(
-    rule_id: uuid.UUID, db: DBSession
-) -> AlertRuleMutationRead:
+async def delete_alert_rule(rule_id: uuid.UUID, db: DBSession) -> AlertRuleMutationRead:
     rule = await _get_rule_or_404(db, rule_id)
     name = rule.name
     try:

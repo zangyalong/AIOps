@@ -72,9 +72,7 @@ async def recreate_compose_service(
             code="ssh_key_missing",
         )
 
-    command = shlex.join(
-        ("sudo", "-n", "--", COMPOSE_RECREATE_GATEWAY, container)
-    )
+    command = shlex.join(("sudo", "-n", "--", COMPOSE_RECREATE_GATEWAY, container))
     try:
         async with asyncssh.connect(
             params.host,

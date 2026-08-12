@@ -78,9 +78,7 @@ async def triage_incident(ctx: dict, incident_id: str) -> dict:
                 },
             },
             # 同一事件的作业重试也要用新线程；否则 MemorySaver 会把上一次已完成状态叠进来。
-            config=graph_run_config(
-                f"triage-{incident_id}-{uuid.uuid4().hex}"
-            ),
+            config=graph_run_config(f"triage-{incident_id}-{uuid.uuid4().hex}"),
         )
         final = state["messages"][-1]
         diagnosis = (

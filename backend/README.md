@@ -222,11 +222,11 @@ uv run python -m unittest discover -s tests -v
 uv run python -m compileall -q app tests
 ```
 
-Ruff 没有写入项目运行依赖，可按需通过 `uvx` 执行：
+Ruff 已作为项目开发依赖写入锁文件，以下命令始终使用项目锁定的版本：
 
 ```bash
-uvx ruff format --check app tests
-uvx ruff check app tests
+uv run ruff format --check app tests
+uv run ruff check app tests
 ```
 
 已有开发数据库升级到统一调查审计结构：

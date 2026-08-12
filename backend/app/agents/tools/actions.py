@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from langchain_core.tools import tool
 
-from app.operations.executors import compose_recreate
-from app.operations.executors import service_control
+from app.operations.executors import compose_recreate, service_control
 from app.operations.executors.service_control import RuntimeType
 from app.operations.schemas import OperationResult
 
@@ -66,6 +65,4 @@ async def recreate_compose_service(
     这是高风险写操作：必须经过审批卡片和详情弹窗两步确认。工具不接受
     Compose 路径或附加参数；目标机固定网关从容器标签反查准确项目。
     """
-    return await compose_recreate.recreate_compose_service(
-        server_name, container_name
-    )
+    return await compose_recreate.recreate_compose_service(server_name, container_name)

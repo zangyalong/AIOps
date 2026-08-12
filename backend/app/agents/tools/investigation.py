@@ -99,9 +99,7 @@ _CHANGE_QUERY_PARAMETERS: dict[str, frozenset[str]] = {
     "find-files": frozenset({"root_path", "filename_pattern"}),
     "read-file": frozenset({"path"}),
     "file-update-preview": frozenset({"path", "new_content"}),
-    "config-patch-preview": frozenset(
-        {"path", "config_format", "selector", "value"}
-    ),
+    "config-patch-preview": frozenset({"path", "config_format", "selector", "value"}),
 }
 
 

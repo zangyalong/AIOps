@@ -5,9 +5,10 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from pydantic import ValidationError
+
 from app.agents.tools import root_read
 from app.operations.schemas import OperationResult
-from pydantic import ValidationError
 
 
 class _SessionContext:

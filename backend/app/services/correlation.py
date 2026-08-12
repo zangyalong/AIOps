@@ -44,7 +44,9 @@ def compute_group_key(labels: dict | None) -> str | None:
         try:
             matched = bool(prog.evaluate(activation))
         except celpy.CELEvalError:
-            matched = False  # 表达式对这条告警求值失败（如引用了不存在的字段），视为不匹配
+            matched = (
+                False  # 表达式对这条告警求值失败（如引用了不存在的字段），视为不匹配
+            )
         if matched:
             parts = ",".join(f"{k}={labels.get(k, '')}" for k in group_by)
             return f"{name}:{parts}"

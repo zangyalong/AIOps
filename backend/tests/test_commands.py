@@ -123,9 +123,7 @@ class DiagnosticCommandValidationTest(unittest.TestCase):
             "sudo -n -- /usr/local/sbin/aioms-service-read unix-sockets",
         )
         self.assertEqual(
-            commands._validated_command(
-                "ps -p 12345 -o pid,ppid,user,lstart,cmd"
-            ),
+            commands._validated_command("ps -p 12345 -o pid,ppid,user,lstart,cmd"),
             "sudo -n -- /usr/local/sbin/aioms-service-read process 12345",
         )
         self.assertEqual(

@@ -234,8 +234,5 @@ class ServiceControlPolicyTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             connection.commands,
-            [
-                "sudo -n -- /usr/local/sbin/aioms-service-policy "
-                "add docker orders-api"
-            ],
+            ["sudo -n -- /usr/local/sbin/aioms-service-policy add docker orders-api"],
         )

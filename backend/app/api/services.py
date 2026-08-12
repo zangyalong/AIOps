@@ -10,9 +10,9 @@ from app.models.server import Server
 from app.models.service_catalog import Service, ServiceFileAccess, ServiceInstance
 from app.schemas.service_catalog import (
     ServiceControlAuthorizationUpdate,
+    ServiceCreate,
     ServiceFileAccessCreate,
     ServiceFileAccessRead,
-    ServiceCreate,
     ServiceInstanceCreate,
     ServiceInstanceRead,
     ServiceInstanceUpdate,
@@ -24,12 +24,12 @@ from app.schemas.service_observability import (
     ServiceObservabilityRead,
 )
 from app.services import (
+    server_file_policy_service,
     server_service,
     service_catalog_service,
     service_control_policy_service,
     service_observability_service,
     service_runtime_service,
-    server_file_policy_service,
 )
 
 router = APIRouter(tags=["service-catalog"])

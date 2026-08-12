@@ -49,7 +49,9 @@ async def query_alerts(severity: str = "", instance: str = "") -> str:
         scope = f"匹配（{('、'.join(cond))}）的" if cond else ""
         return f"当前没有{scope}正在触发的告警。"
 
-    alerts.sort(key=lambda a: _SEVERITY_ORDER.get(a.get("labels", {}).get("severity"), 9))
+    alerts.sort(
+        key=lambda a: _SEVERITY_ORDER.get(a.get("labels", {}).get("severity"), 9)
+    )
 
     lines: list[str] = []
     for a in alerts:
@@ -62,7 +64,9 @@ async def query_alerts(severity: str = "", instance: str = "") -> str:
         where = f" @ {inst}" if inst else ""
         lines.append(f"- [{sev}] {name}{where}（起始 {started}）：{summary}")
 
-    return f"当前正在触发的告警（{len(alerts)} 条，来自 Alertmanager）：\n" + "\n".join(lines)
+    return f"当前正在触发的告警（{len(alerts)} 条，来自 Alertmanager）：\n" + "\n".join(
+        lines
+    )
 
 
 def _fmt_time(ts: str | None) -> str:

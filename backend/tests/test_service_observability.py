@@ -204,10 +204,11 @@ class ServerMetricResolutionTests(unittest.IsolatedAsyncioTestCase):
                 ]
             ),
         ):
-            instance, message = (
-                await service_observability_service._resolve_server_metric_instance(
-                    server
-                )
+            (
+                instance,
+                message,
+            ) = await service_observability_service._resolve_server_metric_instance(
+                server
             )
 
         self.assertEqual(instance, "139.196.175.226:9100")

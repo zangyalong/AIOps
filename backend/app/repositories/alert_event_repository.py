@@ -28,7 +28,9 @@ async def upsert_by_fingerprint(
     （重复推送的同一条 firing、或 resolved，都不算，避免反复诊断）。
     不在这里 commit——由 service 批量处理完一次性 commit（一个 webhook 可能带多条告警）。
     """
-    existing = await db.scalar(select(AlertEvent).where(AlertEvent.fingerprint == fingerprint))
+    existing = await db.scalar(
+        select(AlertEvent).where(AlertEvent.fingerprint == fingerprint)
+    )
     if existing is not None:
         was_firing = existing.status == "firing"
         existing.alertname = alertname
@@ -60,7 +62,9 @@ async def upsert_by_fingerprint(
 
 
 async def get_by_fingerprint(db: AsyncSession, fingerprint: str) -> AlertEvent | None:
-    return await db.scalar(select(AlertEvent).where(AlertEvent.fingerprint == fingerprint))
+    return await db.scalar(
+        select(AlertEvent).where(AlertEvent.fingerprint == fingerprint)
+    )
 
 
 async def list_recent(

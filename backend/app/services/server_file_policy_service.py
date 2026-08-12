@@ -12,7 +12,11 @@ from app.models.server import Server
 from app.models.service_catalog import ServiceFileAccess, ServiceInstance
 from app.repositories import service_catalog_repository
 from app.services import server_service, service_catalog_service
-from app.services.ssh_service import SSHKeyMissing, SSHNotConfigured, build_connect_params
+from app.services.ssh_service import (
+    SSHKeyMissing,
+    SSHNotConfigured,
+    build_connect_params,
+)
 
 POLICY_GATEWAY = "/usr/local/sbin/aioms-file-policy"
 PolicyAction = Literal["add", "remove"]
@@ -40,9 +44,7 @@ async def _apply_remote_policy(
     except SSHKeyMissing as exc:
         raise ServerFilePolicySyncError(str(exc)) from exc
 
-    command = (
-        f"sudo -n -- {POLICY_GATEWAY} {action} {access_level} {shlex.quote(path)}"
-    )
+    command = f"sudo -n -- {POLICY_GATEWAY} {action} {access_level} {shlex.quote(path)}"
     try:
         async with asyncssh.connect(
             params.host,
@@ -70,9 +72,7 @@ async def _apply_remote_policy(
     return match.group(1)
 
 
-async def _instance_server(
-    db: AsyncSession, instance: ServiceInstance
-) -> Server:
+async def _instance_server(db: AsyncSession, instance: ServiceInstance) -> Server:
     if instance.server_id is None:
         raise service_catalog_service.DirectoryNotFound("服务实例尚未绑定服务器")
     server = await server_service.get_server(db, instance.server_id)

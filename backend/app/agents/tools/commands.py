@@ -274,9 +274,7 @@ def _validated_command(command: str) -> str | None:
         and tokens[:2] == ("docker", "top")
         and _SAFE_CONTAINER_NAME.fullmatch(tokens[2])
     ):
-        return shlex.join(
-            ("sudo", "-n", "--", _DOCKER_READ_WRAPPER, "top", tokens[2])
-        )
+        return shlex.join(("sudo", "-n", "--", _DOCKER_READ_WRAPPER, "top", tokens[2]))
 
     if (
         len(tokens) == 5
@@ -284,9 +282,7 @@ def _validated_command(command: str) -> str | None:
         and tokens[3] == "100"
         and _SAFE_CONTAINER_NAME.fullmatch(tokens[4])
     ):
-        return shlex.join(
-            ("sudo", "-n", "--", _DOCKER_READ_WRAPPER, "logs", tokens[4])
-        )
+        return shlex.join(("sudo", "-n", "--", _DOCKER_READ_WRAPPER, "logs", tokens[4]))
 
     if (
         len(tokens) == 5
@@ -352,7 +348,9 @@ async def run_diagnostic_command(server_name: str, command: str) -> str:
     """
     safe_command = _validated_command(command)
     if safe_command is None:
-        return f'命令 "{command}" 不在只读白名单内，已拒绝执行。当前允许：{_COMMAND_HELP}'
+        return (
+            f'命令 "{command}" 不在只读白名单内，已拒绝执行。当前允许：{_COMMAND_HELP}'
+        )
 
     async with AsyncSessionLocal() as db:
         servers = await server_service.list_servers(db)
@@ -381,9 +379,7 @@ async def run_diagnostic_command(server_name: str, command: str) -> str:
                 safe_command, check=False, timeout=_COMMAND_TIMEOUT_SECONDS
             )
     except TimeoutError:
-        return (
-            f"执行 {server_name} 上的命令超过 {_COMMAND_TIMEOUT_SECONDS} 秒，已停止等待。"
-        )
+        return f"执行 {server_name} 上的命令超过 {_COMMAND_TIMEOUT_SECONDS} 秒，已停止等待。"
     except (asyncssh.Error, OSError) as exc:
         return f"连接或执行 {server_name} 失败：{exc}"
 

@@ -99,10 +99,8 @@ class RootReadSandboxContractTest(unittest.TestCase):
         )
         self.assertIn("stdin=subprocess.PIPE", entrypoint)
         self.assertNotIn("stdin=subprocess.DEVNULL", entrypoint)
-        self.assertIn(
-            'type=bind,src=$MASKED_DEV_DIR,dst=/host/dev,readonly', launcher
-        )
-        self.assertIn('type=bind,src=/dev/null,dst=/host/dev/null', launcher)
+        self.assertIn("type=bind,src=$MASKED_DEV_DIR,dst=/host/dev,readonly", launcher)
+        self.assertIn("type=bind,src=/dev/null,dst=/host/dev/null", launcher)
         self.assertIn('"$MASKED_DEV_DIR/null"', installer)
         self.assertIn("2>/dev/null", installer)
 

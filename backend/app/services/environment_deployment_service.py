@@ -52,15 +52,11 @@ def _secret_value(secret: SecretStr | None, label: str) -> str | None:
     if "\n" in value or "\r" in value or "\0" in value:
         raise EnvironmentDeploymentError(f"{label}不能包含换行或空字符")
     if len(value) > _SECRET_MAX_LENGTH:
-        raise EnvironmentDeploymentError(
-            f"{label}不能超过 {_SECRET_MAX_LENGTH} 个字符"
-        )
+        raise EnvironmentDeploymentError(f"{label}不能超过 {_SECRET_MAX_LENGTH} 个字符")
     return value
 
 
-async def service_control_allowlist_for_server(
-    db: AsyncSession, server: Server
-) -> str:
+async def service_control_allowlist_for_server(db: AsyncSession, server: Server) -> str:
     instances = await service_catalog_service.list_instances(db, server_id=server.id)
     return ",".join(
         sorted(
@@ -83,9 +79,7 @@ def build_deployment_payload(
     service_control_allowlist: str,
 ) -> DeploymentPayload:
     mysql_password = _secret_value(secrets.mysql_password, "MySQL 监控密码")
-    postgres_password = _secret_value(
-        secrets.postgres_password, "PostgreSQL 监控密码"
-    )
+    postgres_password = _secret_value(secrets.postgres_password, "PostgreSQL 监控密码")
     redis_password = _secret_value(secrets.redis_password, "Redis 监控密码")
 
     actions: dict[str, str] = {}
@@ -106,9 +100,7 @@ def build_deployment_payload(
         actions["MYSQL_SECRET"] = "delete"
 
     if config.enable_postgres_exporter:
-        actions["POSTGRES_SECRET"] = (
-            "replace" if postgres_password else "preserve"
-        )
+        actions["POSTGRES_SECRET"] = "replace" if postgres_password else "preserve"
         if postgres_password:
             secret_files["POSTGRES_SECRET"] = f"{postgres_password}\n"
     else:
@@ -154,9 +146,7 @@ async def apply_saved_environment(
     try:
         config = TargetDeploymentConfig.model_validate(server.deployment_config or {})
     except ValidationError as exc:
-        raise EnvironmentDeploymentError(
-            f"服务器环境部署配置不合法：{exc}"
-        ) from exc
+        raise EnvironmentDeploymentError(f"服务器环境部署配置不合法：{exc}") from exc
 
     allowlist = await service_control_allowlist_for_server(db, server)
     try:
@@ -207,7 +197,6 @@ async def apply_saved_environment(
     detail = f"{result.stdout or ''}{result.stderr or ''}".strip()
     if result.exit_status != 0:
         raise EnvironmentDeploymentError(
-            f"目标服务器自动部署失败（exit={result.exit_status}）："
-            f"{detail or '无输出'}"
+            f"目标服务器自动部署失败（exit={result.exit_status}）：{detail or '无输出'}"
         )
     return detail or f"{server.name} 的环境配置已自动部署完成。"

@@ -21,20 +21,32 @@ class AlertEvent(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "alert_events"
 
     # Alertmanager 的稳定指纹：同一组 label 恒为同一值。唯一约束 + 索引，upsert 就靠它。
-    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    fingerprint: Mapped[str] = mapped_column(
+        String(64), nullable=False, unique=True, index=True
+    )
 
     alertname: Mapped[str] = mapped_column(String(200), nullable=False)
-    severity: Mapped[str] = mapped_column(String(20), nullable=False)  # critical / warning / info
+    severity: Mapped[str] = mapped_column(
+        String(20), nullable=False
+    )  # critical / warning / info
     # firing / resolved。后续状态机会再加 acked（谁认领了）等。
     status: Mapped[str] = mapped_column(String(20), nullable=False)
 
-    summary: Mapped[str | None] = mapped_column(Text, nullable=True)  # annotations.summary
-    labels: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # 全部标签，留着灵活查
+    summary: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # annotations.summary
+    labels: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True
+    )  # 全部标签，留着灵活查
     # 从 labels 里抽出来的常用维度，方便直接过滤 / 和任务5 的实体（monitor_labels.instance）对齐。
     instance: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    starts_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    ends_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     # 可空，先不自动解析——以后可按 instance 反查 servers.monitor_labels 关联到具体服务器。
     server_id: Mapped[uuid.UUID | None] = mapped_column(

@@ -129,7 +129,7 @@ class ComposeRecreateGatewayContractTest(unittest.TestCase):
     def test_gateway_is_fixed_and_does_not_accept_paths_or_flags(self) -> None:
         gateway = (ACTIONS_DIR / "aioms-compose-recreate").read_text()
         sudoers = (ACTIONS_DIR / "aioms-service-control.sudoers").read_text()
-        self.assertIn('[[ $# -eq 1 ]]', gateway)
+        self.assertIn("[[ $# -eq 1 ]]", gateway)
         self.assertIn('grep -Fxq -- "docker:$CONTAINER_NAME"', gateway)
         self.assertIn("com.docker.compose.project.working_dir", gateway)
         self.assertIn("com.docker.compose.project.config_files", gateway)

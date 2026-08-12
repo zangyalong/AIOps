@@ -58,7 +58,8 @@ class EnvironmentDeploymentServiceTests(unittest.IsolatedAsyncioTestCase):
             AsyncMock(return_value=instances),
         ) as list_instances:
             result = await environment_deployment_service.service_control_allowlist_for_server(
-                db, server  # type: ignore[arg-type]
+                db,
+                server,  # type: ignore[arg-type]
             )
 
         self.assertEqual(
@@ -74,17 +75,13 @@ class EnvironmentDeploymentServiceTests(unittest.IsolatedAsyncioTestCase):
             enable_redis_exporter=True,
             redis_use_password=True,
         )
-        secrets = DeploymentBundleSecrets(
-            mysql_password=SecretStr('my"sql\\secret')
-        )
+        secrets = DeploymentBundleSecrets(mysql_password=SecretStr('my"sql\\secret'))
 
         payload = environment_deployment_service.build_deployment_payload(
             server,
             config,
             secrets,
-            service_control_allowlist=(
-                "systemd:bt.service,systemd:mysqld.service"
-            ),
+            service_control_allowlist=("systemd:bt.service,systemd:mysqld.service"),
         )
 
         self.assertIn("MYSQL_SECRET=replace\n", payload.manifest)
@@ -108,9 +105,7 @@ class EnvironmentDeploymentServiceTests(unittest.IsolatedAsyncioTestCase):
             environment_deployment_service.build_deployment_payload(
                 make_server(),
                 TargetDeploymentConfig(enable_mysql_exporter=True),
-                DeploymentBundleSecrets(
-                    mysql_password=SecretStr("unsafe\npassword")
-                ),
+                DeploymentBundleSecrets(mysql_password=SecretStr("unsafe\npassword")),
                 service_control_allowlist="",
             )
 
@@ -159,7 +154,8 @@ class EnvironmentDeploymentServiceTests(unittest.IsolatedAsyncioTestCase):
             ) as upload,
         ):
             detail = await environment_deployment_service.apply_saved_environment(
-                object(), server  # type: ignore[arg-type]
+                object(),
+                server,  # type: ignore[arg-type]
             )
 
         self.assertEqual(detail, "部署完成")

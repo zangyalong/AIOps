@@ -16,7 +16,9 @@ from app.schemas.alert import AlertmanagerAlert
 from app.services import correlation
 
 
-async def ingest_alerts(db: AsyncSession, alerts: list[AlertmanagerAlert]) -> list[uuid.UUID]:
+async def ingest_alerts(
+    db: AsyncSession, alerts: list[AlertmanagerAlert]
+) -> list[uuid.UUID]:
     """upsert 告警并把它们挂到「事件（incidents）」上。返回本次**新建**、需要自动诊断的 incident_id 列表。
 
     - firing 告警：算 group_key（规则没命中就用 fingerprint 兜底、独立成事件）→ 找该 group 的活跃事件；
@@ -81,7 +83,10 @@ async def ingest_alerts(db: AsyncSession, alerts: list[AlertmanagerAlert]) -> li
             )
             await db.flush()
             # resolved：若所属事件下的告警都不再 firing，事件自动 resolve
-            if await incident_repository.count_firing_alerts(db, alert.incident_id) == 0:
+            if (
+                await incident_repository.count_firing_alerts(db, alert.incident_id)
+                == 0
+            ):
                 incident = await incident_repository.get(db, alert.incident_id)
                 if incident is not None and incident.status != RESOLVED:
                     incident.status = RESOLVED

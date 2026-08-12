@@ -82,7 +82,11 @@ def _build_explore_url(uid: str, ds_type: str, expr: str, minutes: int) -> str:
         "aioms": {
             "datasource": uid,
             "queries": [
-                {"refId": "A", "expr": expr, "datasource": {"type": ds_type, "uid": uid}}
+                {
+                    "refId": "A",
+                    "expr": expr,
+                    "datasource": {"type": ds_type, "uid": uid},
+                }
             ],
             "range": {"from": f"now-{minutes}m", "to": "now"},
         }

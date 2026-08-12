@@ -227,15 +227,12 @@ def _server_metric_definitions(metric_instance: str) -> list[_MetricDefinition]:
         'mountpoint!~"/run($|/)|/var/lib/docker($|/)"}'
     )
     return [
-        _MetricDefinition(
-            "target_up", "指标采集", "state", f"max(up{selector})"
-        ),
+        _MetricDefinition("target_up", "指标采集", "state", f"max(up{selector})"),
         _MetricDefinition(
             "cpu_usage",
             "CPU 使用率",
             "percent",
-            "100 - (avg(rate(node_cpu_seconds_total"
-            f"{cpu_selector}[5m])) * 100)",
+            f"100 - (avg(rate(node_cpu_seconds_total{cpu_selector}[5m])) * 100)",
         ),
         _MetricDefinition(
             "memory_usage",

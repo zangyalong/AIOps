@@ -37,9 +37,15 @@ class Incident(Base, UUIDMixin, TimestampMixin):
 
     # 自动诊断（triage 回填，现在挂在「事件」级而不是单条告警上）
     diagnosis: Mapped[str | None] = mapped_column(Text, nullable=True)
-    triaged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    triaged_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     # 生命周期：谁认领的、何时认领、何时恢复。acked_by 现在是自由文本（还没接鉴权，方向三再接真身份）。
     acked_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    acked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    acked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

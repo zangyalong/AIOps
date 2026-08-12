@@ -77,25 +77,21 @@ def _normalize_service_control_allowlist(raw_allowlist: str) -> str:
         else:
             runtime_type, runtime_name = "systemd", entry
         valid = (
-            runtime_type == "systemd"
-            and SERVICE_UNIT_PATTERN.fullmatch(runtime_name)
+            runtime_type == "systemd" and SERVICE_UNIT_PATTERN.fullmatch(runtime_name)
         ) or (
             runtime_type == "docker"
             and DOCKER_CONTAINER_PATTERN.fullmatch(runtime_name)
         )
         if not valid:
             raise DeploymentBundleError(
-                "SSH_SERVICE_CONTROL_ALLOWLIST 中的运行时身份不合法："
-                f"{entry}"
+                f"SSH_SERVICE_CONTROL_ALLOWLIST 中的运行时身份不合法：{entry}"
             )
         targets.append(f"{runtime_type}:{runtime_name}")
     return ",".join(sorted(set(targets)))
 
 
 def _service_control_allowlist() -> str:
-    return _normalize_service_control_allowlist(
-        settings.service_control_allowlist
-    )
+    return _normalize_service_control_allowlist(settings.service_control_allowlist)
 
 
 def validate_bundle_secrets(
@@ -114,7 +110,9 @@ def validate_bundle_secrets(
         and config.redis_use_password
         and redis_password is None
     ):
-        raise DeploymentBundleError("启用 Redis exporter 密码认证时必须填写本次打包密码")
+        raise DeploymentBundleError(
+            "启用 Redis exporter 密码认证时必须填写本次打包密码"
+        )
     return mysql_password, postgres_password, redis_password
 
 
@@ -261,9 +259,7 @@ def remove_deployment_ssh_key_pair(server: Server) -> _SSHKeyPairBackup:
     return backup
 
 
-def restore_deployment_ssh_key_pair(
-    server: Server, backup: _SSHKeyPairBackup
-) -> None:
+def restore_deployment_ssh_key_pair(server: Server, backup: _SSHKeyPairBackup) -> None:
     """删除本次可能生成的新密钥，并恢复打包前的原密钥对。"""
     private_key_path, public_key_path = _deployment_ssh_key_paths(server)
     for path, saved in (
@@ -274,7 +270,9 @@ def restore_deployment_ssh_key_pair(
             if path.is_symlink() or path.is_file():
                 path.unlink()
             else:
-                raise DeploymentBundleError(f"无法安全恢复 SSH 密钥，路径不是文件：{path}")
+                raise DeploymentBundleError(
+                    f"无法安全恢复 SSH 密钥，路径不是文件：{path}"
+                )
         if saved is not None:
             path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             path.write_bytes(saved.content)

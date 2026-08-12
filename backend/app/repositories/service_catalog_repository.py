@@ -144,9 +144,7 @@ async def list_file_accesses(
         ServiceFileAccess.path,
     )
     if service_instance_id is not None:
-        stmt = stmt.where(
-            ServiceFileAccess.service_instance_id == service_instance_id
-        )
+        stmt = stmt.where(ServiceFileAccess.service_instance_id == service_instance_id)
     return list(await db.scalars(stmt))
 
 

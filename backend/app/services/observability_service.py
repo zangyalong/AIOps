@@ -48,7 +48,9 @@ async def prom_query(promql: str) -> list[dict]:
         body = resp.json()
     except ValueError:
         # 不是 JSON（如网关返回的 502 HTML 页），退回用 HTTP 状态码报错
-        raise RuntimeError(f"Prometheus 返回了非 JSON 响应：HTTP {resp.status_code}") from None
+        raise RuntimeError(
+            f"Prometheus 返回了非 JSON 响应：HTTP {resp.status_code}"
+        ) from None
     if body.get("status") != "success":
         raise RuntimeError(
             f"Prometheus 查询失败：{body.get('errorType')} - {body.get('error')}"
@@ -74,7 +76,9 @@ async def prom_query_range(
     try:
         body = resp.json()
     except ValueError:
-        raise RuntimeError(f"Prometheus 返回了非 JSON 响应：HTTP {resp.status_code}") from None
+        raise RuntimeError(
+            f"Prometheus 返回了非 JSON 响应：HTTP {resp.status_code}"
+        ) from None
     if body.get("status") != "success":
         raise RuntimeError(
             f"Prometheus 范围查询失败：{body.get('errorType')} - {body.get('error')}"
@@ -96,7 +100,9 @@ async def prom_label_values(label: str) -> list[str]:
     try:
         body = resp.json()
     except ValueError:
-        raise RuntimeError(f"Prometheus 返回了非 JSON 响应：HTTP {resp.status_code}") from None
+        raise RuntimeError(
+            f"Prometheus 返回了非 JSON 响应：HTTP {resp.status_code}"
+        ) from None
     if body.get("status") != "success":
         raise RuntimeError(
             f"Prometheus 查询失败：{body.get('errorType')} - {body.get('error')}"

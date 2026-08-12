@@ -22,7 +22,9 @@ async def list_conversations(db: AsyncSession) -> list[Conversation]:
     return await conversation_repository.list_all(db)
 
 
-async def get_conversation(db: AsyncSession, conversation_id: uuid.UUID) -> Conversation | None:
+async def get_conversation(
+    db: AsyncSession, conversation_id: uuid.UUID
+) -> Conversation | None:
     return await conversation_repository.get_by_id(db, conversation_id)
 
 

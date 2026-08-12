@@ -32,7 +32,9 @@ async def _get_arq_pool(request: Request):
 
 
 @router.post("/webhook")
-async def receive_webhook(payload: AlertmanagerWebhook, db: DBSession, request: Request) -> dict:
+async def receive_webhook(
+    payload: AlertmanagerWebhook, db: DBSession, request: Request
+) -> dict:
     """Alertmanager 的 webhook 目标：收下告警 upsert 落库，并把「新触发」的告警塞进队列做自动诊断。"""
     new_incidents = await alert_event_service.ingest_alerts(db, payload.alerts)
 
