@@ -13,6 +13,7 @@ export interface ChatMessage {
   tool_calls?: ToolCall[] | null
   tool_call_id?: string | null
   tool_status?: 'completed' | 'failed' | null
+  approval_args?: Record<string, unknown> | null
 }
 
 export interface ChatRunHistory {

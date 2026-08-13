@@ -7,11 +7,14 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
-from app.operations.schemas import OperationCall, OperationSpec
+from app.operations.schemas import OperationCall, OperationContext, OperationSpec
 
 OperationExecutor = Callable[[OperationCall], Awaitable[Any]]
 ApprovalViewBuilder = Callable[[OperationCall], Mapping[str, Any]]
 OperationCallNormalizer = Callable[[OperationCall], OperationCall]
+OperationCallResolver = Callable[
+    [OperationCall, OperationContext], Awaitable[OperationCall]
+]
 
 
 @dataclass(frozen=True)
@@ -20,6 +23,7 @@ class RegisteredOperation:
     executor: OperationExecutor
     build_approval_view: ApprovalViewBuilder | None = None
     normalize_call: OperationCallNormalizer | None = None
+    resolve_call: OperationCallResolver | None = None
 
 
 class OperationRegistry:

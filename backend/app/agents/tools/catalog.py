@@ -37,6 +37,7 @@ from app.agents.tools.service_discovery import (
 )
 from app.agents.tools.skills import read_skill
 from app.operations.broker import OperationBroker
+from app.operations.executors import service_control
 from app.operations.registry import OperationRegistry, RegisteredOperation
 from app.operations.schemas import (
     OperationCall,
@@ -73,17 +74,28 @@ def _service_control_action(
 ) -> dict[str, Any]:
     server = str(args.get("server_name") or "?")
     service = str(args.get("service_name") or "?")
-    runtime_type = str(args.get("runtime_type") or "systemd")
+    environment = str(args.get("environment") or "?")
+    instance_name = str(args.get("instance_name") or "?")
+    runtime_type = str(args.get("runtime_type") or "?")
+    runtime_name = str(args.get("runtime_name") or "?")
     label = {"start": "启动", "stop": "停止", "restart": "重启"}[action]
     return {
         "kind": f"service_{action}",
-        "title": f"{label} {server} 上的 {runtime_type} 服务 {service}",
+        "title": f"{label} {server} 上的 {runtime_type} 服务 {runtime_name}",
         "server_name": server,
-        "service_name": service,
+        "service_name": runtime_name,
         "runtime_type": runtime_type,
+        "args": {
+            "server_name": server,
+            "service_name": service,
+            "environment": environment,
+            "instance_name": instance_name,
+            "runtime_type": runtime_type,
+            "runtime_name": runtime_name,
+        },
         "command": (
             "sudo -n -- /usr/local/sbin/aioms-service-control "
-            f"{action} {shlex.quote(runtime_type)} {shlex.quote(service)}"
+            f"{action} {shlex.quote(runtime_type)} {shlex.quote(runtime_name)}"
         ),
     }
 
@@ -378,13 +390,25 @@ def _registered_write_operation(write_spec: WriteToolSpec) -> RegisteredOperatio
             risk_level=write_spec.risk_level,
             environment_arg=(
                 "environment"
-                if write_spec.tool.name == register_server_services.name
+                if write_spec.tool.name
+                in {
+                    register_server_services.name,
+                    start_service.name,
+                    stop_service.name,
+                    restart_service.name,
+                }
                 else None
             ),
         ),
         executor=execute,
         build_approval_view=build_approval_view,
         normalize_call=lambda call: _normalize_tool_call(write_spec.tool, call),
+        resolve_call=(
+            service_control.resolve_service_control_call
+            if write_spec.tool.name
+            in {start_service.name, stop_service.name, restart_service.name}
+            else None
+        ),
     )
 
 
@@ -415,7 +439,16 @@ def build_scoped_operation_broker(tools: Iterable[BaseTool]) -> OperationBroker:
                 spec=registered.spec,
                 executor=execute,
                 build_approval_view=registered.build_approval_view,
-                normalize_call=registered.normalize_call,
+                normalize_call=lambda call, current_tool=tool: _normalize_tool_call(
+                    current_tool, call
+                ),
+                # 测试或受控替身可以复用同名操作的安全属性，但不能继承与自身 schema
+                # 不兼容的生产语义解析器。真实运行时传入的就是中央目录中的同一工具对象。
+                resolve_call=(
+                    registered.resolve_call
+                    if tool is TOOLS_BY_NAME.get(tool.name)
+                    else None
+                ),
             )
         )
     return OperationBroker(OperationRegistry(scoped))

@@ -58,6 +58,7 @@ class ChatMessageOut(BaseModel):
     tool_calls: list[dict] | None = None
     tool_call_id: str | None = None
     tool_status: Literal["completed", "failed"] | None = None
+    approval_args: dict | None = None
 
 
 class ChatRunHistoryOut(BaseModel):

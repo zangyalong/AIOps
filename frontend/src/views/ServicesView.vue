@@ -479,8 +479,8 @@ function requestRuntimeAction(instance: ServiceInstance, action: 'start' | 'stop
   const server = instance.server_id ? serverMap.value.get(instance.server_id) : null
   const verb = action === 'start' ? '启动' : '停止'
   const prompt = [
-    `请在 ${server?.name ?? '目标服务器'} 上${verb}服务 ${instance.runtime_name}。`,
-    `运行类型是 ${instance.runtime_type}。`,
+    `请在 ${server?.name ?? '目标服务器'} 上${verb}业务服务 ${selectedService.value?.name ?? instance.name}。`,
+    `环境是 ${selectedService.value?.environment ?? '未指定'}，目录实例名是 ${instance.name}。`,
     '请先检测当前状态并核对目标；如果已有受控写工具就发起人工审批，未配置写网关时不要直接执行。',
   ].join('')
   void router.push({ name: 'chat', query: { prompt } })

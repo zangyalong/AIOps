@@ -165,6 +165,100 @@ class ServiceInstanceResolutionTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(saved.control_enabled)
 
+    async def test_control_target_resolves_unique_authorized_runtime(self) -> None:
+        server_id = uuid.uuid4()
+        service = _service("pixel-forge-frontend")
+        instance = SimpleNamespace(
+            id=uuid.uuid4(),
+            service_id=service.id,
+            server_id=server_id,
+            name="pixel-forge-frontend",
+            runtime_type="systemd",
+            runtime_name="pixel-forge-frontend.service",
+            control_enabled=True,
+        )
+        with (
+            patch.object(
+                service_catalog_service,
+                "resolve_service",
+                AsyncMock(return_value=service),
+            ),
+            patch.object(
+                service_catalog_service,
+                "list_instances",
+                AsyncMock(return_value=[instance]),
+            ),
+        ):
+            resolved = await service_catalog_service.resolve_control_target(
+                object(),
+                server_id=server_id,
+                service_name="pixel-forge-frontend",
+                environment="prod",
+            )
+
+        self.assertEqual(resolved.instance.runtime_name, "pixel-forge-frontend.service")
+
+    async def test_control_target_requires_instance_name_when_ambiguous(self) -> None:
+        server_id = uuid.uuid4()
+        service = _service("orders")
+        instances = [
+            SimpleNamespace(name="blue"),
+            SimpleNamespace(name="green"),
+        ]
+        with (
+            patch.object(
+                service_catalog_service,
+                "resolve_service",
+                AsyncMock(return_value=service),
+            ),
+            patch.object(
+                service_catalog_service,
+                "list_instances",
+                AsyncMock(return_value=instances),
+            ),
+        ):
+            with self.assertRaisesRegex(
+                service_catalog_service.AmbiguousService,
+                "请指定 instance_name",
+            ):
+                await service_catalog_service.resolve_control_target(
+                    object(),
+                    server_id=server_id,
+                    service_name="orders",
+                )
+
+    async def test_control_target_rejects_disabled_authorization(self) -> None:
+        server_id = uuid.uuid4()
+        service = _service("orders")
+        instance = SimpleNamespace(
+            name="orders-main",
+            server_id=server_id,
+            runtime_type="systemd",
+            runtime_name="orders.service",
+            control_enabled=False,
+        )
+        with (
+            patch.object(
+                service_catalog_service,
+                "resolve_service",
+                AsyncMock(return_value=service),
+            ),
+            patch.object(
+                service_catalog_service,
+                "list_instances",
+                AsyncMock(return_value=[instance]),
+            ),
+        ):
+            with self.assertRaisesRegex(
+                service_catalog_service.ControlAuthorizationUnavailable,
+                "未开启控制授权",
+            ):
+                await service_catalog_service.resolve_control_target(
+                    object(),
+                    server_id=server_id,
+                    service_name="orders",
+                )
+
     async def test_authorized_instance_must_be_disabled_before_delete(self) -> None:
         instance = SimpleNamespace(control_enabled=True)
         with (

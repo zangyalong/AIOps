@@ -180,6 +180,50 @@ async def get_instance_by_runtime_identity(
     )
 
 
+async def resolve_control_target(
+    db: AsyncSession,
+    *,
+    server_id: uuid.UUID,
+    service_name: str,
+    environment: str = "",
+    instance_name: str = "",
+) -> ResolvedServiceInstance:
+    """把业务服务选择条件解析成唯一且已授权的真实运行对象。"""
+    service = await resolve_service(db, service_name, environment or None)
+    if service is None:
+        suffix = f"/{environment}" if environment else ""
+        raise DirectoryNotFound(f"服务目录中没有找到 {service_name}{suffix}")
+
+    candidates = [
+        instance
+        for instance in await list_instances(
+            db,
+            service_id=service.id,
+            server_id=server_id,
+        )
+        if not instance_name or instance.name == instance_name
+    ]
+    if not candidates:
+        detail = f"的实例 {instance_name}" if instance_name else "的部署实例"
+        raise DirectoryNotFound(
+            f"该服务器上没有登记 {service.name}/{service.environment}{detail}"
+        )
+    if len(candidates) > 1:
+        names = "、".join(instance.name for instance in candidates)
+        raise AmbiguousService(
+            f"该服务器上的 {service.name}/{service.environment} 存在多个实例：{names}，"
+            "请指定 instance_name"
+        )
+
+    instance = candidates[0]
+    validate_control_target(instance)
+    if not instance.control_enabled:
+        raise ControlAuthorizationUnavailable(
+            f"实例 {instance.name} 未开启控制授权，请先在服务目录开启"
+        )
+    return ResolvedServiceInstance(service=service, instance=instance)
+
+
 async def _validate_instance_references(
     db: AsyncSession, service_id: uuid.UUID, server_id: uuid.UUID | None
 ) -> None:

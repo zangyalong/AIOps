@@ -46,6 +46,12 @@ async def get_conversation(
         (record.chat_run_id, record.tool_call_id): record.status
         for record in operation_records
     }
+    operation_approval_args = {
+        (record.chat_run_id, record.tool_call_id): record.approval_view.get("args")
+        for record in operation_records
+        if isinstance(record.approval_view, dict)
+        and isinstance(record.approval_view.get("args"), dict)
+    }
 
     return ConversationDetail(
         conversation=ConversationSummary.model_validate(conversation),
@@ -65,6 +71,7 @@ async def get_conversation(
                     if operation_status.get((m.run_id, m.tool_call_id)) == "completed"
                     else None
                 ),
+                approval_args=operation_approval_args.get((m.run_id, m.tool_call_id)),
             )
             for m in messages
         ],

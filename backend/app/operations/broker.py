@@ -26,40 +26,71 @@ class OperationBroker:
     def __init__(self, registry: OperationRegistry) -> None:
         self._registry = registry
 
-    def prepare(
+    def _prepare_resolved(
         self,
         call: OperationCall,
         context: OperationContext,
     ) -> PreparedOperation:
-        operation = self._registry.require(call.name)
-        if operation.normalize_call is not None:
-            call = operation.normalize_call(call)
+        registered = self._registry.require(call.name)
         resolved_context = context.for_call(
             call,
-            environment_arg=operation.spec.environment_arg,
+            environment_arg=registered.spec.environment_arg,
         )
-        decision = evaluate_operation(operation.spec, resolved_context)
+        decision = evaluate_operation(registered.spec, resolved_context)
         approval_view = None
-        if operation.spec.effect == "write":
-            builder = operation.build_approval_view
+        if registered.spec.effect == "write":
+            builder = registered.build_approval_view
             if builder is None:
                 raise RuntimeError(f"写操作缺少审批展示构造器：{call.name}")
             approval_view = dict(builder(call))
         return PreparedOperation(
             call=call,
-            spec=operation.spec,
+            spec=registered.spec,
             context=resolved_context,
             decision=decision,
             approval_view=approval_view,
         )
+
+    def prepare(
+        self,
+        call: OperationCall,
+        context: OperationContext,
+    ) -> PreparedOperation:
+        """同步准备无语义解析器的操作；主要供纯 schema 单元测试和静态预览使用。"""
+        operation = self._registry.require(call.name)
+        if operation.normalize_call is not None:
+            call = operation.normalize_call(call)
+        if operation.resolve_call is not None:
+            raise RuntimeError(f"操作 {call.name} 需要异步语义解析，请使用 aprepare")
+        return self._prepare_resolved(call, context)
+
+    async def aprepare(
+        self,
+        call: OperationCall,
+        context: OperationContext,
+    ) -> PreparedOperation:
+        """在审批前完成 schema 规范化和数据库语义解析，再构造冻结操作。"""
+        operation = self._registry.require(call.name)
+        if operation.normalize_call is not None:
+            call = operation.normalize_call(call)
+        if operation.resolve_call is not None:
+            call = await operation.resolve_call(call, context)
+        return self._prepare_resolved(call, context)
 
     async def execute(
         self,
         call: OperationCall,
         context: OperationContext,
     ) -> Any:
-        prepared = self.prepare(call, context)
+        prepared = await self.aprepare(call, context)
         if prepared.decision.result != "allow":
             raise OperationNotAllowed(prepared.decision)
         operation = self._registry.require(call.name)
+        return await operation.executor(prepared.call)
+
+    async def execute_prepared(self, prepared: PreparedOperation) -> Any:
+        """执行已经完成策略判断和审批绑定的冻结调用，不再重新解析模型参数。"""
+        if prepared.decision.result != "allow":
+            raise OperationNotAllowed(prepared.decision)
+        operation = self._registry.require(prepared.call.name)
         return await operation.executor(prepared.call)

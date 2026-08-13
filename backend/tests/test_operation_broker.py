@@ -93,7 +93,7 @@ class OperationBrokerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, {"ok": True, "name": "server.query"})
         self.assertEqual(self.executed, [call])
 
-    def test_broker_classifies_explicit_environment_before_policy(self) -> None:
+    async def test_broker_classifies_explicit_environment_before_policy(self) -> None:
         prepared = self.broker.prepare(
             OperationCall(
                 id="register-1",
@@ -112,7 +112,9 @@ class OperationBrokerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(prepared.decision.result, "allow")
         self.assertEqual(prepared.approval_view["tool_call_id"], "register-1")
 
-    def test_undeclared_environment_argument_cannot_change_policy_context(self) -> None:
+    async def test_undeclared_environment_argument_cannot_change_policy_context(
+        self,
+    ) -> None:
         prepared = self.broker.prepare(
             OperationCall(
                 id="restart-1",
@@ -165,6 +167,75 @@ class OperationBrokerTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(self.executed, [call])
+
+    async def test_execute_prepared_dispatches_the_frozen_call(self) -> None:
+        call = OperationCall(id="query-1", name="server.query", args={"frozen": True})
+        prepared = self.broker.prepare(
+            call,
+            OperationContext(
+                actor_id="worker",
+                actor_role="system",
+                run_mode="unattended",
+            ),
+        )
+
+        result = await self.broker.execute_prepared(prepared)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(self.executed, [call])
+
+    async def test_resolves_business_arguments_before_building_approval(self) -> None:
+        async def resolve(
+            call: OperationCall, context: OperationContext
+        ) -> OperationCall:
+            del context
+            args = call.normalized_args()
+            args["runtime_name"] = f"{args['service']}.service"
+            return OperationCall(id=call.id, name=call.name, args=args)
+
+        async def execute(call: OperationCall) -> Any:
+            return call.normalized_args()
+
+        broker = OperationBroker(
+            OperationRegistry(
+                [
+                    RegisteredOperation(
+                        spec=OperationSpec(
+                            name="service.start",
+                            effect="write",
+                            risk_level="medium",
+                        ),
+                        executor=execute,
+                        resolve_call=resolve,
+                        build_approval_view=lambda call: {
+                            "runtime_name": call.normalized_args()["runtime_name"]
+                        },
+                    )
+                ]
+            )
+        )
+
+        prepared = await broker.aprepare(
+            OperationCall(
+                id="start-1",
+                name="service.start",
+                args={"service": "pixel-forge-frontend"},
+            ),
+            OperationContext(
+                actor_id="operator-1",
+                actor_role="operator",
+                run_mode="interactive",
+            ),
+        )
+
+        self.assertEqual(
+            prepared.call.normalized_args()["runtime_name"],
+            "pixel-forge-frontend.service",
+        )
+        self.assertEqual(
+            prepared.approval_view,
+            {"runtime_name": "pixel-forge-frontend.service"},
+        )
 
     def test_registry_rejects_write_operation_without_approval_builder(self) -> None:
         async def execute(call: OperationCall) -> Any:

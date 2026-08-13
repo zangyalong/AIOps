@@ -128,7 +128,7 @@ function historyApprovalCommand(name: string, args: Record<string, unknown>): st
   }
   if (name === 'start_service' || name === 'stop_service' || name === 'restart_service') {
     const action = { start_service: '启动', stop_service: '停止', restart_service: '重启' }[name]
-    return `${action} ${String(args.runtime_type ?? 'systemd')} 服务 ${String(args.service_name ?? '?')}`
+    return `${action} ${String(args.runtime_type ?? '?')} 服务 ${String(args.runtime_name ?? args.service_name ?? '?')}`
   }
   if (name === 'create_alert_rule') {
     return `创建预警规则 ${String(args.name ?? '?')}：${String(args.expression ?? '?')}`
@@ -527,7 +527,7 @@ function buildTimeline(
   )
   const toolResultById = new Map<
     string,
-    { content: string; failed: boolean }
+    { content: string; failed: boolean; approvalArgs?: Record<string, unknown> }
   >()
   const resultKey = (runId: string | null | undefined, toolCallId: string) =>
     `${runId ?? 'legacy'}:${toolCallId}`
@@ -540,6 +540,7 @@ function buildTimeline(
       toolResultById.set(resultKey(message.run_id, message.tool_call_id), {
         content: message.content,
         failed: message.tool_status === 'failed',
+        approvalArgs: message.approval_args ?? undefined,
       })
     }
   }
@@ -557,7 +558,9 @@ function buildTimeline(
           : ''
         if (WRITE_TOOLS.has(toolCall.name)) {
           const result = toolResultKey ? toolResultById.get(toolResultKey) : undefined
-          const args = (toolCall.args ?? {}) as Record<string, unknown>
+          const args = (
+            result?.approvalArgs ?? toolCall.args ?? {}
+          ) as Record<string, unknown>
           items.push({
             kind: 'approval',
             key: uid(),

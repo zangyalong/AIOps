@@ -26,7 +26,6 @@ from app.agents.presentation import compact_narration, restore_truncated_tool_li
 from app.agents.prompts import build_ops_system_prompt
 from app.agents.skills import expand_explicit_skill_invocation
 from app.agents.tools.catalog import (
-    OPERATION_BROKER,
     READ_TOOLS_BY_NAME,
     WRITE_TOOLS_BY_NAME,
     build_scoped_operation_broker,
@@ -354,10 +353,11 @@ async def tools_node(state: ChatState) -> dict:
                 str(tool_call.get("id") or ""),
             )
             operation_context = _operation_context_from_state(state, approval)
-            prepared = operation_broker.prepare(operation_call, operation_context)
-
-            if prepared.spec.effect == "write" and (
-                execution_id is None or chat_run_id is None
+            spec = get_operation_spec(name)
+            if (
+                spec is not None
+                and spec.effect == "write"
+                and (execution_id is None or chat_run_id is None)
             ):
                 result = _tool_message(
                     tool_call=tool_call,
@@ -366,6 +366,10 @@ async def tools_node(state: ChatState) -> dict:
                 )
                 results.append(result)
                 continue
+            prepared = await operation_broker.aprepare(
+                operation_call, operation_context
+            )
+
             if (
                 prepared.spec.effect == "write"
                 and execution_id is not None
@@ -412,10 +416,7 @@ async def tools_node(state: ChatState) -> dict:
                 results.append(result)
                 continue
 
-            raw_result = await operation_broker.execute(
-                operation_call,
-                operation_context,
-            )
+            raw_result = await operation_broker.execute_prepared(prepared)
             if isinstance(raw_result, OperationResult):
                 content = raw_result.message
                 status = "success" if raw_result.ok else "error"
@@ -476,6 +477,9 @@ async def approval_node(state: ChatState) -> dict:
     last = state["messages"][-1]
     assert isinstance(last, AIMessage)
     context = _operation_context_from_state(state, None)
+    operation_broker = build_scoped_operation_broker(
+        _assigned_tools(state.get("allow_write_tools", False))
+    )
     pending: list[dict] = []
     raw_execution_id = state.get("operation_execution_id")
     execution_id = uuid.UUID(raw_execution_id) if raw_execution_id else None
@@ -484,7 +488,7 @@ async def approval_node(state: ChatState) -> dict:
     for tool_call in last.tool_calls:
         if not is_write_tool(tool_call["name"]):
             continue
-        prepared = OPERATION_BROKER.prepare(
+        prepared = await operation_broker.aprepare(
             OperationCall.from_tool_call(tool_call),
             context,
         )
@@ -511,16 +515,21 @@ async def approval_node(state: ChatState) -> dict:
     return {"approval": decision}
 
 
-def route_after_agent(state: ChatState) -> Literal["approval", "tools", "__end__"]:
+async def route_after_agent(
+    state: ChatState,
+) -> Literal["approval", "tools", "__end__"]:
     last = state["messages"][-1]
     if not isinstance(last, AIMessage) or not last.tool_calls:
         return END
     context = _operation_context_from_state(state, None)
+    operation_broker = build_scoped_operation_broker(
+        _assigned_tools(state.get("allow_write_tools", False))
+    )
     for tool_call in last.tool_calls:
         if get_operation_spec(tool_call["name"]) is None:
             continue
         try:
-            prepared = OPERATION_BROKER.prepare(
+            prepared = await operation_broker.aprepare(
                 OperationCall.from_tool_call(tool_call),
                 context,
             )

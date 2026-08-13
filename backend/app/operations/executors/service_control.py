@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import re
 import shlex
+import uuid
 from typing import Literal
 
 import asyncssh
 
 from app.db.session import AsyncSessionLocal
-from app.operations.schemas import OperationResult
+from app.operations.schemas import OperationCall, OperationContext, OperationResult
 from app.services import server_service, service_catalog_service
 from app.services.ssh_service import (
     SSHKeyMissing,
@@ -24,13 +25,50 @@ ServiceAction = Literal["start", "stop", "restart"]
 RuntimeType = Literal["systemd", "docker"]
 
 
-async def control_service(
+async def resolve_service_control_call(
+    call: OperationCall,
+    context: OperationContext,
+) -> OperationCall:
+    """审批前把模型的业务服务条件解析成唯一目录实例和真实运行时身份。"""
+    del context
+    args = call.normalized_args()
+    async with AsyncSessionLocal() as db:
+        server = await server_service.get_server_by_name_or_ip(db, args["server_name"])
+        if server is None:
+            raise ValueError(
+                f"没有找到名称或 IP 为 {args['server_name']} 的已纳管服务器"
+            )
+        resolved = await service_catalog_service.resolve_control_target(
+            db,
+            server_id=server.id,
+            service_name=args["service_name"],
+            environment=args.get("environment") or "",
+            instance_name=args.get("instance_name") or "",
+        )
+
+    instance = resolved.instance
+    args.update(
+        {
+            "server_name": server.name,
+            "service_name": resolved.service.name,
+            "environment": resolved.service.environment,
+            "instance_name": instance.name,
+            "service_instance_id": str(instance.id),
+            "runtime_type": instance.runtime_type,
+            "runtime_name": instance.runtime_name,
+        }
+    )
+    return OperationCall(id=call.id, name=call.name, args=args)
+
+
+async def control_resolved_service(
     action: ServiceAction,
     server_name: str,
-    service_name: str,
+    service_instance_id: str,
     runtime_type: RuntimeType,
+    runtime_name: str,
 ) -> OperationResult:
-    service = service_name.strip()
+    service = runtime_name.strip()
     action_label = {"start": "启动", "stop": "停止", "restart": "重启"}[action]
     if runtime_type == "systemd" and not SERVICE_UNIT_PATTERN.fullmatch(service):
         return OperationResult.failure(
@@ -50,17 +88,23 @@ async def control_service(
                 f"没有找到名称或 IP 为 {server_name} 的服务器，请先确认服务器。",
                 code="server_not_found",
             )
-        instance = await service_catalog_service.get_instance_by_runtime_identity(
-            db,
-            server_id=server.id,
-            runtime_type=runtime_type,
-            runtime_name=service,
-        )
-        if instance is None:
+        try:
+            instance_id = uuid.UUID(service_instance_id)
+        except ValueError:
             return OperationResult.failure(
-                f'{server.name} 上的 {runtime_type} 服务 "{service}" '
-                "尚未登记到服务目录，已拒绝执行。",
-                code="service_not_registered",
+                "冻结的服务实例标识无效，已拒绝执行；请重新发起操作。",
+                code="invalid_service_instance_id",
+            )
+        instance = await service_catalog_service.get_instance(db, instance_id)
+        if (
+            instance is None
+            or instance.server_id != server.id
+            or instance.runtime_type != runtime_type
+            or instance.runtime_name != service
+        ):
+            return OperationResult.failure(
+                "服务目录实例或运行时身份在审批后发生变化，已拒绝执行；请重新发起操作。",
+                code="service_target_changed",
             )
         if not instance.control_enabled:
             return OperationResult.failure(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -193,20 +194,13 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("必须使用简体中文", SIMPLIFIED_CHINESE_REQUIREMENT)
 
-        action = catalog.describe_write_action(
-            {
-                "id": "restart-1",
-                "name": "restart_service",
-                "args": {"server_name": "demo", "service_name": "nginx.service"},
-            }
+        service_schema = actions.restart_service.tool_call_schema.model_json_schema()
+        self.assertEqual(
+            set(service_schema["properties"]),
+            {"server_name", "service_name", "environment", "instance_name"},
         )
-        self.assertEqual(action["risk_level"], "high")
-        self.assertEqual(action["kind"], "service_restart")
-        self.assertEqual(action["server_name"], "demo")
-        self.assertIn(
-            "aioms-service-control restart systemd nginx.service",
-            action["command"],
-        )
+        self.assertNotIn("runtime_type", service_schema["properties"])
+        self.assertNotIn("runtime_name", service_schema["properties"])
 
         grant_action = catalog.describe_write_action(
             {
@@ -225,44 +219,13 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(grant_action["kind"], "server_file_write_access_grant")
         self.assertIn("精确文件写白名单", grant_action["command"])
 
-        start_action = catalog.describe_write_action(
-            {
-                "id": "start-1",
-                "name": "start_service",
-                "args": {"server_name": "demo", "service_name": "bt.service"},
-            }
+        self.assertEqual(
+            catalog.get_operation_spec("start_service").risk_level,
+            "medium",
         )
-        self.assertEqual(start_action["risk_level"], "medium")
-
-        stop_action = catalog.describe_write_action(
-            {
-                "id": "stop-1",
-                "name": "stop_service",
-                "args": {"server_name": "demo", "service_name": "bt.service"},
-            }
-        )
-        self.assertEqual(stop_action["risk_level"], "high")
-        self.assertEqual(stop_action["kind"], "service_stop")
-        self.assertIn(
-            "aioms-service-control stop systemd bt.service", stop_action["command"]
-        )
-
-        docker_stop_action = catalog.describe_write_action(
-            {
-                "id": "docker-stop-1",
-                "name": "stop_service",
-                "args": {
-                    "server_name": "demo",
-                    "service_name": "orders-api",
-                    "runtime_type": "docker",
-                },
-            }
-        )
-        self.assertEqual(docker_stop_action["risk_level"], "high")
-        self.assertEqual(docker_stop_action["runtime_type"], "docker")
-        self.assertIn(
-            "aioms-service-control stop docker orders-api",
-            docker_stop_action["command"],
+        self.assertEqual(
+            catalog.get_operation_spec("stop_service").risk_level,
+            "high",
         )
 
         recreate_action = catalog.describe_write_action(
@@ -406,14 +369,29 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
             raw_diff.rstrip("\n"),
         )
 
-    async def test_restart_service_rejects_unregistered_instance_before_ssh(
-        self,
-    ) -> None:
-        """服务未登记时，即使审批层误放行，工具自身也不能连接 SSH。"""
-        server = SimpleNamespace(id="server-id", name="demo", ip_address="127.0.0.1")
+    async def test_service_control_is_resolved_before_approval(self) -> None:
+        server_id = uuid.uuid4()
+        instance_id = uuid.uuid4()
+        server = SimpleNamespace(
+            id=server_id,
+            name="web-01",
+            ip_address="127.0.0.1",
+        )
+        resolved = SimpleNamespace(
+            service=SimpleNamespace(name="pixel-forge-frontend", environment="prod"),
+            instance=SimpleNamespace(
+                id=instance_id,
+                name="pixel-forge-frontend",
+                runtime_type="systemd",
+                runtime_name="pixel-forge-frontend.service",
+                control_enabled=True,
+            ),
+        )
         with (
             patch.object(
-                service_control, "AsyncSessionLocal", return_value=_SessionContext()
+                service_control,
+                "AsyncSessionLocal",
+                return_value=_SessionContext(),
             ),
             patch.object(
                 service_control.server_service,
@@ -422,27 +400,67 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(
                 service_control.service_catalog_service,
-                "get_instance_by_runtime_identity",
-                AsyncMock(return_value=None),
+                "resolve_control_target",
+                AsyncMock(return_value=resolved),
             ),
-            patch.object(service_control.asyncssh, "connect") as connect,
         ):
+            prepared = await catalog.OPERATION_BROKER.aprepare(
+                OperationCall(
+                    id="start-pixel-forge",
+                    name="start_service",
+                    args={
+                        "server_name": "web-01",
+                        "service_name": "pixel-forge-frontend",
+                        "environment": "prod",
+                    },
+                ),
+                OperationContext(
+                    actor_id="admin-1",
+                    actor_role="admin",
+                    run_mode="interactive",
+                ),
+            )
+
+        frozen = prepared.call.normalized_args()
+        self.assertEqual(frozen["service_instance_id"], str(instance_id))
+        self.assertEqual(frozen["runtime_type"], "systemd")
+        self.assertEqual(frozen["runtime_name"], "pixel-forge-frontend.service")
+        self.assertIn("pixel-forge-frontend.service", prepared.approval_view["title"])
+        self.assertNotIn("service_instance_id", prepared.approval_view["args"])
+        self.assertEqual(
+            prepared.approval_view["args"]["service_name"],
+            "pixel-forge-frontend",
+        )
+
+    async def test_restart_service_rejects_unresolved_direct_call_before_ssh(
+        self,
+    ) -> None:
+        """绕过 Broker 的工具直调拿不到内部实例字段，必须失败关闭。"""
+        with patch.object(service_control.asyncssh, "connect") as connect:
             result = await actions.restart_service.ainvoke(
-                {"server_name": "demo", "service_name": "nginx.service"}
+                {"server_name": "demo", "service_name": "nginx"}
             )
 
         self.assertFalse(result.ok)
-        self.assertIn("尚未登记到服务目录", result.message)
+        self.assertIn("缺少审批前解析", result.message)
         connect.assert_not_called()
 
-    async def test_restart_service_rejects_disabled_control_authorization(
-        self,
-    ) -> None:
-        server = SimpleNamespace(id="server-id", name="demo", ip_address="127.0.0.1")
-        instance = SimpleNamespace(control_enabled=False)
+    async def test_service_control_rejects_runtime_changed_after_approval(self) -> None:
+        server_id = uuid.uuid4()
+        instance_id = uuid.uuid4()
+        server = SimpleNamespace(id=server_id, name="demo", ip_address="127.0.0.1")
+        changed = SimpleNamespace(
+            id=instance_id,
+            server_id=server_id,
+            runtime_type="systemd",
+            runtime_name="changed.service",
+            control_enabled=True,
+        )
         with (
             patch.object(
-                service_control, "AsyncSessionLocal", return_value=_SessionContext()
+                service_control,
+                "AsyncSessionLocal",
+                return_value=_SessionContext(),
             ),
             patch.object(
                 service_control.server_service,
@@ -451,25 +469,47 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(
                 service_control.service_catalog_service,
-                "get_instance_by_runtime_identity",
-                AsyncMock(return_value=instance),
+                "get_instance",
+                AsyncMock(return_value=changed),
             ),
             patch.object(service_control.asyncssh, "connect") as connect,
         ):
-            result = await actions.restart_service.ainvoke(
-                {"server_name": "demo", "service_name": "nginx.service"}
+            result = await actions.start_service.ainvoke(
+                {
+                    "server_name": "demo",
+                    "service_name": "orders",
+                    "service_instance_id": str(instance_id),
+                    "runtime_type": "systemd",
+                    "runtime_name": "orders.service",
+                }
             )
 
         self.assertFalse(result.ok)
-        self.assertIn("未开启控制授权", result.message)
+        self.assertEqual(result.code, "service_target_changed")
         connect.assert_not_called()
 
     async def test_service_control_executes_fixed_gateway_with_shared_aioms_identity(
         self,
     ) -> None:
         """三种动作都通过同一个非 root AIOMS 身份调用固定网关。"""
-        server = SimpleNamespace(id="server-id", name="demo", ip_address="127.0.0.1")
-        instance = SimpleNamespace(control_enabled=True)
+        server_id = uuid.uuid4()
+        server = SimpleNamespace(id=server_id, name="demo", ip_address="127.0.0.1")
+        instances = {
+            "nginx.service": SimpleNamespace(
+                id=uuid.uuid4(),
+                server_id=server_id,
+                runtime_type="systemd",
+                runtime_name="nginx.service",
+                control_enabled=True,
+            ),
+            "bt.service": SimpleNamespace(
+                id=uuid.uuid4(),
+                server_id=server_id,
+                runtime_type="systemd",
+                runtime_name="bt.service",
+                control_enabled=True,
+            ),
+        }
         params = SimpleNamespace(
             host="127.0.0.1",
             port=22,
@@ -489,8 +529,12 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(
                 service_control.service_catalog_service,
-                "get_instance_by_runtime_identity",
-                AsyncMock(return_value=instance),
+                "get_instance",
+                AsyncMock(
+                    side_effect=lambda _db, instance_id: next(
+                        item for item in instances.values() if item.id == instance_id
+                    )
+                ),
             ),
             patch.object(service_control, "build_connect_params", return_value=params),
             patch.object(
@@ -500,13 +544,31 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             restart_result = await actions.restart_service.ainvoke(
-                {"server_name": "demo", "service_name": "nginx.service"}
+                {
+                    "server_name": "demo",
+                    "service_name": "nginx",
+                    "service_instance_id": str(instances["nginx.service"].id),
+                    "runtime_type": "systemd",
+                    "runtime_name": "nginx.service",
+                }
             )
             start_result = await actions.start_service.ainvoke(
-                {"server_name": "demo", "service_name": "bt.service"}
+                {
+                    "server_name": "demo",
+                    "service_name": "bt",
+                    "service_instance_id": str(instances["bt.service"].id),
+                    "runtime_type": "systemd",
+                    "runtime_name": "bt.service",
+                }
             )
             stop_result = await actions.stop_service.ainvoke(
-                {"server_name": "demo", "service_name": "bt.service"}
+                {
+                    "server_name": "demo",
+                    "service_name": "bt",
+                    "service_instance_id": str(instances["bt.service"].id),
+                    "runtime_type": "systemd",
+                    "runtime_name": "bt.service",
+                }
             )
 
         self.assertEqual(
@@ -525,8 +587,15 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("当前状态：inactive", stop_result.message)
 
     async def test_docker_control_reuses_service_tools_and_gateway(self) -> None:
-        server = SimpleNamespace(id="server-id", name="demo", ip_address="127.0.0.1")
-        instance = SimpleNamespace(control_enabled=True)
+        server_id = uuid.uuid4()
+        server = SimpleNamespace(id=server_id, name="demo", ip_address="127.0.0.1")
+        instance = SimpleNamespace(
+            id=uuid.uuid4(),
+            server_id=server_id,
+            runtime_type="docker",
+            runtime_name="orders-api",
+            control_enabled=True,
+        )
         connection = _FakeConnection()
 
         with (
@@ -540,9 +609,9 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(
                 service_control.service_catalog_service,
-                "get_instance_by_runtime_identity",
+                "get_instance",
                 AsyncMock(return_value=instance),
-            ) as get_instance,
+            ),
             patch.object(
                 service_control,
                 "build_connect_params",
@@ -563,12 +632,12 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
                 {
                     "server_name": "demo",
                     "service_name": "orders-api",
+                    "service_instance_id": str(instance.id),
                     "runtime_type": "docker",
+                    "runtime_name": "orders-api",
                 }
             )
 
-        self.assertEqual(get_instance.await_args.kwargs["runtime_type"], "docker")
-        self.assertEqual(get_instance.await_args.kwargs["runtime_name"], "orders-api")
         self.assertEqual(
             connection.commands,
             ["sudo -n -- /usr/local/sbin/aioms-service-control stop docker orders-api"],
