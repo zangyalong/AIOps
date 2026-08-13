@@ -334,6 +334,20 @@ function appendToken(content: string) {
   if (last.kind === 'message') last.content += content
 }
 
+function replaceOpenAssistant(content: string) {
+  const last = timeline.value[timeline.value.length - 1]
+  if (assistantOpen && last?.kind === 'message' && last.role === 'assistant') {
+    if (content) {
+      last.content = content
+    } else {
+      timeline.value.pop()
+    }
+  } else if (content) {
+    timeline.value.push({ kind: 'message', key: uid(), role: 'assistant', content })
+  }
+  assistantOpen = Boolean(content)
+}
+
 // 最终回答开始输出前显示等待状态。工具正在执行时已有动态工具行，不重复显示。
 const showThinking = computed(() => {
   if (!sending.value || pendingApproval.value) return false
@@ -350,6 +364,8 @@ async function consume(stream: AsyncGenerator<ChatStreamEvent>) {
     lastEventSequence.value = Math.max(lastEventSequence.value, event.seq)
     if (event.type === 'token') {
       appendToken(event.content)
+    } else if (event.type === 'token_replace') {
+      replaceOpenAssistant(event.content)
     } else if (event.type === 'narration') {
       assistantOpen = false
       timeline.value.push({ kind: 'narration', key: uid(), content: event.content })

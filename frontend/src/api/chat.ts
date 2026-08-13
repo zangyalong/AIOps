@@ -10,6 +10,7 @@ export interface ChatRun {
 export type ChatStreamEvent =
   | { type: 'narration'; seq: number; content: string }
   | { type: 'token'; seq: number; content: string }
+  | { type: 'token_replace'; seq: number; content: string }
   | {
       type: 'tool_start'
       seq: number

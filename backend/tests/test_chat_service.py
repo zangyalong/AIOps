@@ -84,7 +84,14 @@ class _FakeGraph:
                 "name": "ops-model",
                 "run_id": "ops-final",
                 "metadata": {"langgraph_node": "ops_agent"},
-                "data": {"chunk": AIMessage("一次生成的最终回答")},
+                "data": {"chunk": AIMessage("分段生成的")},
+            },
+            {
+                "event": "on_chat_model_stream",
+                "name": "ops-model",
+                "run_id": "ops-final",
+                "metadata": {"langgraph_node": "ops_agent"},
+                "data": {"chunk": AIMessage("最终回答")},
             },
             {
                 "event": "on_chat_model_end",
@@ -163,6 +170,7 @@ class _TruncatedToolLinkGraph(_FakeGraph):
             "(http://localhost:3000/explore?schemaVersion=1&panes=%7B...orgId=1)"
         )
         self.events[4]["data"]["chunk"] = AIMessage(truncated)
+        self.events.pop(5)
         self.events[5]["data"]["output"] = AIMessage(truncated)
 
 
@@ -245,13 +253,27 @@ class ChatStreamTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             [event["type"] for event in events],
-            ["narration", "tool_start", "tool_end", "token", "done"],
+            [
+                "token",
+                "token_replace",
+                "narration",
+                "tool_start",
+                "tool_end",
+                "token",
+                "token",
+                "done",
+            ],
         )
         self.assertEqual(events[0]["content"], "我先查询服务器的实时指标。")
-        self.assertEqual(events[1]["args"], {"area": "metrics", "query": "cpu"})
-        self.assertEqual(events[2]["result"], "CPU 使用率为 12%")
-        self.assertFalse(events[2]["failed"])
-        self.assertEqual(events[3]["content"], "一次生成的最终回答")
+        self.assertEqual(events[1]["content"], "")
+        self.assertEqual(events[2]["content"], "我先查询服务器的实时指标。")
+        self.assertEqual(events[3]["args"], {"area": "metrics", "query": "cpu"})
+        self.assertEqual(events[4]["result"], "CPU 使用率为 12%")
+        self.assertFalse(events[4]["failed"])
+        self.assertEqual(
+            [events[5]["content"], events[6]["content"]],
+            ["分段生成的", "最终回答"],
+        )
         self.assertIsNotNone(graph.run_config)
         assert graph.run_config is not None
         self.assertEqual(
@@ -286,7 +308,11 @@ class ChatStreamTest(unittest.IsolatedAsyncioTestCase):
                 )
             ]
 
-        final_event = next(event for event in events if event["type"] == "token")
+        final_event = next(
+            event
+            for event in events
+            if event["type"] == "token_replace" and event["content"]
+        )
         self.assertEqual(
             final_event["content"],
             f"已生成图表：[打开原始链接]({graph.original})",

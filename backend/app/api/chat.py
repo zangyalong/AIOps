@@ -117,7 +117,14 @@ async def chat_run_events(
         async for event in manager.subscribe(run_id, after=after):
             yield _sse(event)
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post(

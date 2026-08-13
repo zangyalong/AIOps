@@ -30,7 +30,7 @@ from app.services import (
 
 
 class ChatStreamEvent(TypedDict, total=False):
-    type: str  # narration/token/tool/approval/done/error
+    type: str  # narration/token/token_replace/tool/approval/done/error
     seq: int  # ChatRunManager 写入的运行内事件序号，重连和审批续传使用
     content: str
     conversation_id: str  # 要经 json.dumps 发给前端，uuid.UUID 必须转成字符串
@@ -350,7 +350,8 @@ async def _drive_graph(
     """
     config = graph_run_config(thread_id)
     # 同一个 Ops Agent 既生成工具旁白，也生成最终回答。模型流开始时无法确定本次是否会带
-    # tool_call，因此按 run_id 暂存；结束后有工具调用就发送 narration，否则发送最终答案。
+    # tool_call，因此先把文本增量实时发给前端，同时按 run_id 暂存。模型结束后若确认是工具
+    # 调用，就撤回临时助手气泡并改成 narration；否则这些增量就是最终回答，无需再次整段发送。
     pending_narration: dict[str, list[str]] = {}
     final_answer_chunks: list[str] = []
     current_tool_outputs: list[str] = []
@@ -414,17 +415,20 @@ async def _drive_graph(
                     "result": result,
                     "failed": failed,
                 }
-            elif kind == "on_chat_model_stream":
+            elif kind == "on_chat_model_stream" and node == "ops_agent":
                 chunk = event["data"]["chunk"]
                 content = chunk.content if isinstance(chunk.content, str) else ""
                 model_run_id = event["run_id"]
                 if content:
                     pending_narration.setdefault(model_run_id, []).append(content)
+                    yield {"type": "token", "content": content}
             elif kind == "on_chat_model_end" and node == "ops_agent":
                 model_run_id = event["run_id"]
                 output = event.get("data", {}).get("output")
                 buffered = "".join(pending_narration.pop(model_run_id, []))
                 if _business_tool_names(output):
+                    if buffered:
+                        yield {"type": "token_replace", "content": ""}
                     narration = _compact_narration(buffered)
                     if narration:
                         yield {"type": "narration", "content": narration}
@@ -440,7 +444,12 @@ async def _drive_graph(
                             current_tool_outputs,
                         )
                         final_answer_chunks.append(final_content)
-                        yield {"type": "token", "content": final_content}
+                        if not buffered:
+                            # 某些兼容模型只在 model_end 给完整内容，保留非流式兜底。
+                            yield {"type": "token", "content": final_content}
+                        elif final_content != buffered:
+                            # 链接修复等后处理改变了正文时，替换当前气泡而不是重复追加整段。
+                            yield {"type": "token_replace", "content": final_content}
 
         # 图停下来了：先看是不是停在审批门。带了 checkpointer，挂起状态能被 aget_state 读出来；
         # snapshot.interrupts 非空即为挂起，其 value 就是 approval_node 里 interrupt(...) 的入参。
