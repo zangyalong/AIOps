@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.graphs.chat_graph import graph_run_config
 from app.agents.presentation import compact_narration as _compact_narration
+from app.agents.presentation import restore_truncated_tool_links
 from app.agents.tools.catalog import TOOLS_BY_NAME, WRITE_TOOL_NAMES
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
@@ -351,6 +352,7 @@ async def _drive_graph(
     # tool_call，因此按 run_id 暂存；结束后有工具调用就发送 narration，否则发送最终答案。
     pending_narration: dict[str, list[str]] = {}
     final_answer_chunks: list[str] = []
+    current_tool_outputs: list[str] = []
     try:
         await _set_run_status(run_id, "running")
         async for event in graph.astream_events(
@@ -404,6 +406,7 @@ async def _drive_graph(
                 result, failed = _stream_tool_result(
                     event.get("data", {}).get("output")
                 )
+                current_tool_outputs.append(result)
                 yield {
                     "type": "tool_end",
                     "id": event["run_id"],
@@ -431,6 +434,10 @@ async def _drive_graph(
                             output.content if isinstance(output.content, str) else ""
                         )
                     if final_content:
+                        final_content = restore_truncated_tool_links(
+                            final_content,
+                            current_tool_outputs,
+                        )
                         final_answer_chunks.append(final_content)
                         yield {"type": "token", "content": final_content}
 

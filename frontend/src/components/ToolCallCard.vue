@@ -90,6 +90,29 @@ const formattedResult = computed(() => {
     ? JSON.stringify(structuredResult.value, null, 2)
     : props.result
 })
+
+const resultLinks = computed(() => {
+  if (props.tool !== 'investigate' || props.args?.area !== 'visualization') return []
+  const matches = props.result?.match(/https?:\/\/[^\s<>"'`]+/g) ?? []
+  return [...new Set(matches.map((url) => url.replace(/[.,;!?，。；！？]+$/u, '')))]
+    .filter((url) => {
+      try {
+        return ['http:', 'https:'].includes(new URL(url).protocol)
+      } catch {
+        return false
+      }
+    })
+})
+
+function linkLabel(url: string): string {
+  try {
+    const parsed = new URL(url)
+    if (parsed.pathname.startsWith('/explore')) return '打开 Grafana Explore'
+  } catch {
+    // resultLinks 已过滤无效 URL；这里保留通用文案作为防御性兜底。
+  }
+  return '打开原始链接'
+}
 </script>
 
 <template>
@@ -109,6 +132,19 @@ const formattedResult = computed(() => {
       <span class="tool-status">{{ statusText }}</span>
       <span class="expand-label">{{ expanded ? '收起' : '展开' }}</span>
     </button>
+
+    <div v-if="status === 'completed' && resultLinks.length" class="tool-links">
+      <a
+        v-for="url in resultLinks"
+        :key="url"
+        :href="url"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        {{ linkLabel(url) }}
+        <span aria-hidden="true">↗</span>
+      </a>
+    </div>
 
     <div v-if="expanded" class="tool-details">
       <section>
@@ -213,6 +249,31 @@ const formattedResult = computed(() => {
 
 .failed .tool-status {
   color: var(--color-status-unreachable);
+}
+
+.tool-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  padding: 0 0.7rem 0.6rem 2rem;
+}
+
+.tool-links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.28rem 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 28%, var(--color-border));
+  border-radius: 6px;
+  color: var(--color-accent);
+  font-size: 0.72rem;
+  font-weight: 620;
+  text-decoration: none;
+}
+
+.tool-links a:hover {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 7%, transparent);
 }
 
 .tool-details {

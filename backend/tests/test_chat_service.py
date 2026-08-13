@@ -146,6 +146,26 @@ class _ApprovalGraph:
         return self.snapshot
 
 
+class _TruncatedToolLinkGraph(_FakeGraph):
+    def __init__(self) -> None:
+        super().__init__()
+        original = (
+            "http://localhost:3000/explore?schemaVersion=1&"
+            "panes=%7B%22aioms%22%3A%7B%22datasource%22%3A%22prometheus%22%7D%7D"
+            "&orgId=1"
+        )
+        self.original = original
+        self.events[3]["data"]["output"] = OperationResult.success(
+            f"已生成 Grafana 指标走势图链接：\n{original}"
+        )
+        truncated = (
+            "已生成图表：[查看入口]"
+            "(http://localhost:3000/explore?schemaVersion=1&panes=%7B...orgId=1)"
+        )
+        self.events[4]["data"]["chunk"] = AIMessage(truncated)
+        self.events[5]["data"]["output"] = AIMessage(truncated)
+
+
 class ChatStreamTest(unittest.IsolatedAsyncioTestCase):
     async def test_streams_tool_narration_and_single_agent_answer(self) -> None:
         """单 Agent 的工具旁白、调查状态和最终回答按真实顺序发送。"""
@@ -194,6 +214,34 @@ class ChatStreamTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [call.args[1] for call in set_status.await_args_list],
             ["running", "completed"],
+        )
+
+    async def test_stream_restores_truncated_link_from_tool_result(self) -> None:
+        graph = _TruncatedToolLinkGraph()
+        with (
+            patch.object(
+                chat_service,
+                "_persist_checkpoint_messages",
+                AsyncMock(return_value=graph.snapshot),
+            ),
+            patch.object(chat_service, "_persist_node_output", AsyncMock()),
+            patch.object(chat_service, "_set_run_status", AsyncMock()),
+        ):
+            events = [
+                event
+                async for event in chat_service._drive_graph(
+                    graph,  # type: ignore[arg-type]
+                    uuid.uuid4(),
+                    graph_input={},
+                    thread_id="restore-tool-link",
+                    run_id=uuid.uuid4(),
+                )
+            ]
+
+        final_event = next(event for event in events if event["type"] == "token")
+        self.assertEqual(
+            final_event["content"],
+            f"已生成图表：[打开原始链接]({graph.original})",
         )
 
     def test_compact_narration_keeps_only_first_progress_sentence(self) -> None:

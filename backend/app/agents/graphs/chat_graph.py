@@ -9,6 +9,7 @@ from typing import Annotated, Literal, TypedDict
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
+    HumanMessage,
     SystemMessage,
     ToolMessage,
 )
@@ -21,7 +22,7 @@ from langgraph.graph.message import add_messages
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import interrupt
 
-from app.agents.presentation import compact_narration
+from app.agents.presentation import compact_narration, restore_truncated_tool_links
 from app.agents.prompts import build_ops_system_prompt
 from app.agents.skills import expand_explicit_skill_invocation
 from app.agents.tools.catalog import (
@@ -204,6 +205,23 @@ def _trailing_protocol_repairs(messages: list[BaseMessage]) -> list[ToolMessage]
     ]
 
 
+def _current_turn_tool_outputs(messages: list[BaseMessage]) -> tuple[str, ...]:
+    """只取最后一条用户消息之后的工具结果，避免旧轮链接参与恢复。"""
+    last_human = max(
+        (
+            index
+            for index, message in enumerate(messages)
+            if isinstance(message, HumanMessage)
+        ),
+        default=-1,
+    )
+    return tuple(
+        message.content
+        for message in messages[last_human + 1 :]
+        if isinstance(message, ToolMessage) and isinstance(message.content, str)
+    )
+
+
 async def ops_agent_node(state: ChatState) -> dict:
     """单一 ReAct 节点：选择调查/变更工具，或直接给出最终回答。"""
     started_at = time.monotonic()
@@ -239,6 +257,15 @@ async def ops_agent_node(state: ChatState) -> dict:
         raw_narration = response.content if isinstance(response.content, str) else ""
         response = response.model_copy(
             update={"content": compact_narration(raw_narration)}
+        )
+    elif isinstance(response.content, str):
+        response = response.model_copy(
+            update={
+                "content": restore_truncated_tool_links(
+                    response.content,
+                    _current_turn_tool_outputs(model_messages),
+                )
+            }
         )
     print(
         f"[graph] ops_agent 耗时 {time.monotonic() - started_at:.1f}s，"

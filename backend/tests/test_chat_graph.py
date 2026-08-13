@@ -298,6 +298,55 @@ class OpsAgentGraphTest(unittest.IsolatedAsyncioTestCase):
             )
         )
 
+    async def test_final_answer_restores_current_turn_tool_url_before_persistence(
+        self,
+    ) -> None:
+        original = (
+            "http://localhost:3000/explore?schemaVersion=1&"
+            "panes=%7B%22aioms%22%3A%7B%22datasource%22%3A%22prometheus%22%7D%7D"
+            "&orgId=1"
+        )
+        chat_graph._ops_llm = _fake_ops_factory(
+            [
+                AIMessage(
+                    "图表入口：[查看]"
+                    "(http://localhost:3000/explore?schemaVersion=1&panes=%7B...orgId=1)"
+                )
+            ]
+        )
+        state = _initial_state(allow_write_tools=False)
+        state["messages"].extend(
+            [
+                AIMessage(
+                    "生成观测链接。",
+                    tool_calls=[
+                        {
+                            "name": "investigate",
+                            "args": {
+                                "area": "visualization",
+                                "target": "web-01",
+                                "query": "memory",
+                            },
+                            "id": "visualization-link",
+                            "type": "tool_call",
+                        }
+                    ],
+                ),
+                ToolMessage(
+                    f"已生成 Grafana 指标走势图链接：\n{original}",
+                    tool_call_id="visualization-link",
+                    name="investigate",
+                ),
+            ]
+        )
+
+        result = await chat_graph.ops_agent_node(state)
+
+        self.assertEqual(
+            result["messages"][-1].content,
+            f"图表入口：[打开原始链接]({original})",
+        )
+
     async def test_investigation_never_interrupts_and_is_audited(self) -> None:
         state = _initial_state(allow_write_tools=True, with_run_id=True)
         state["messages"].append(
