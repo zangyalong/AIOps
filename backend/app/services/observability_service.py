@@ -20,36 +20,6 @@ from app.core.config import settings
 _client: httpx.AsyncClient | None = None
 
 
-def select_server_metric_instance(
-    ip_address: str,
-    instances: list[str],
-) -> tuple[str | None, tuple[str, ...]]:
-    """从同一服务器的 Prometheus targets 中确定主机指标实例。
-
-    标准 node_exporter 使用 9100 端口；同一 IP 同时存在数据库、Redis 等 exporter 时，
-    必须优先选择 ``IP:9100``。只有一个匹配项时兼容自定义 node_exporter 端口；其余情况
-    返回候选项，让调用方报告缺失或真实歧义。
-    """
-    ip = ip_address.strip()
-    if not ip:
-        return None, ()
-    matches = tuple(
-        sorted(
-            {
-                item.strip()
-                for item in instances
-                if item.strip() == ip or item.strip().startswith(f"{ip}:")
-            }
-        )
-    )
-    standard_node_exporter = f"{ip}:9100"
-    if standard_node_exporter in matches:
-        return standard_node_exporter, matches
-    if len(matches) == 1:
-        return matches[0], matches
-    return None, matches
-
-
 def get_client() -> httpx.AsyncClient:
     global _client
     if _client is None:

@@ -13,12 +13,8 @@ from langchain_core.tools import tool
 
 from app.db.session import AsyncSessionLocal
 from app.models.server import Server
-from app.services import server_service
-from app.services.observability_service import (
-    prom_label_values,
-    prom_query,
-    select_server_metric_instance,
-)
+from app.services import server_metric_resolution_service, server_service
+from app.services.observability_service import prom_label_values, prom_query
 
 # 常用指标的 PromQL 模板。用 node_exporter 的标准查法：
 # - cpu：100 减去 idle 占比 = 使用率。avg by(instance) 会把 job 等其它标签聚合掉，
@@ -157,8 +153,9 @@ async def query_server_metrics(server: str, metric: str) -> str:
     - server：servers 表里的服务器名称或 IP，例如 "docker-test-01" 或 "127.0.0.1"
     - metric：cpu / memory / disk / up
 
-    工具会优先使用 servers.monitor_labels.instance；未配置时自动按服务器 IP 匹配 Prometheus
-    instance。因此查询业务服务器时直接调用本工具，不需要先调用 list_metric_instances。
+    工具会依次使用 servers.monitor_labels.instance、服务目录中的 node-exporter metric_instance、
+    Prometheus node_uname_info 来确认主机指标实例。因此查询业务服务器时直接调用本工具，不需要
+    先列出实例或按 9100 等端口猜测 exporter。
     """
     srv, instance, error = await resolve_server_metric_instance(server)
     if srv is None:
@@ -188,32 +185,9 @@ async def resolve_server_metric_instance(
 
 
 async def _resolve_metric_instance(server: Server) -> tuple[str | None, str | None]:
-    """优先读显式标签；缺失时在一次工具调用内部按服务器 IP 完成实例发现。"""
-    configured = str((server.monitor_labels or {}).get("instance") or "").strip()
-    if configured:
-        return configured, None
-
-    try:
-        instances = await prom_label_values("instance")
-    except Exception as exc:  # noqa: BLE001 —— 工具要把数据源错误转成 Agent 可读文本
-        return (
-            None,
-            f"服务器 {server.name} 未配置 instance，自动查询 Prometheus 实例失败：{exc}。",
-        )
-
-    ip = server.ip_address.strip()
-    selected, matches = select_server_metric_instance(ip, instances)
-    if selected is not None:
-        return selected, None
-    if not matches:
-        return None, (
-            f"服务器 {server.name} 未配置 monitor_labels.instance，Prometheus 中也没有与 IP "
-            f"{ip} 匹配的实例。请先配置监控标签。"
-        )
-    return None, (
-        f"服务器 {server.name} 的 IP {ip} 匹配到多个 Prometheus 实例，但没有标准的 "
-        f"node_exporter {ip}:9100：{', '.join(matches)}。请配置 "
-        "monitor_labels.instance 明确指定主机指标实例。"
+    """通过服务目录和 Prometheus 主机指标证据解析 instance，不按端口猜测。"""
+    return await server_metric_resolution_service.resolve_server_host_metric_instance(
+        server
     )
 
 

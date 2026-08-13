@@ -205,7 +205,8 @@ class InvestigationInput(BaseModel):
         description=(
             "调查目标。metrics 查服务器当前值时填服务器名称/IP；只有 target_type=instance "
             "时才直接填 Prometheus instance。visualization 指标趋势填服务器名称/IP，后端"
-            "自动限定对应 instance；日志或告警图通常留空。"
+            "会查询服务目录和 Prometheus 主机指标来限定 instance；不要自行按端口猜测 exporter。"
+            "日志或告警图通常留空。"
         ),
     )
     query: str = Field(
@@ -475,7 +476,7 @@ async def _invoke(
                     error or f"无法确定服务器 {target} 对应的 Prometheus instance。",
                     code="metric_instance_unavailable",
                 )
-        return await grafana_explore_link.ainvoke(
+        link = await grafana_explore_link.ainvoke(
             {
                 "kind": kind,
                 "query": query,
@@ -483,6 +484,12 @@ async def _invoke(
                 "instance": instance,
             }
         )
+        if instance:
+            return (
+                f"服务器主机指标实例已由后端根据服务目录与 Prometheus 证据确认："
+                f"{target} → {instance}\n{link}"
+            )
+        return link
 
     if area == "change":
         server = _required(target, "target（服务器名称或 IP）")
@@ -583,8 +590,10 @@ async def investigate(
     指标协议：查询服务器当前值使用 area="metrics", target="web-01", query="memory",
     parameters={}，后端自动解析 instance。最近 60 分钟趋势图使用 area="visualization",
     target="web-01", query="memory", parameters={"kind":"metrics","minutes":60}，后端同样
-    自动限定对应 instance。metrics 不接受 time、minutes、instance 或 monitor_labels；直接查
-    instance 当前值时将 instance 放在 target，并设置 parameters.target_type="instance"。
+    通过服务目录与 Prometheus 主机指标证据限定 instance。不要先查 up、按 9100 等端口猜测
+    exporter，也不要在服务器解析失败后改用手写 instance 绕过。metrics 不接受 time、minutes、
+    instance 或 monitor_labels；只有用户明确给出 instance 时，才将它放在 target 并设置
+    parameters.target_type="instance"。
 
     - servers：列出已纳管服务器。
     - services：target 填服务器；query=\"catalog\" 查登记关系，query=\"discover\" 查实时运行资产。

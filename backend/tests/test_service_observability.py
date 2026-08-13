@@ -188,22 +188,16 @@ class ServiceMetricDefinitionTests(unittest.TestCase):
 
 
 class ServerMetricResolutionTests(unittest.IsolatedAsyncioTestCase):
-    async def test_standard_node_exporter_wins_over_database_exporters(self) -> None:
+    async def test_server_page_reuses_shared_host_metric_resolution(self) -> None:
         server = SimpleNamespace(
             ip_address="139.196.175.226",
             monitor_labels=None,
         )
         with patch.object(
             service_observability_service,
-            "prom_label_values",
-            AsyncMock(
-                return_value=[
-                    "139.196.175.226:9104",
-                    "139.196.175.226:9100",
-                    "139.196.175.226:9187",
-                ]
-            ),
-        ):
+            "resolve_server_host_metric_instance",
+            AsyncMock(return_value=("139.196.175.226:19100", None)),
+        ) as resolve:
             (
                 instance,
                 message,
@@ -211,8 +205,9 @@ class ServerMetricResolutionTests(unittest.IsolatedAsyncioTestCase):
                 server
             )
 
-        self.assertEqual(instance, "139.196.175.226:9100")
+        self.assertEqual(instance, "139.196.175.226:19100")
         self.assertIsNone(message)
+        resolve.assert_awaited_once_with(server)
 
 
 if __name__ == "__main__":

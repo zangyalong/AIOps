@@ -135,6 +135,8 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("禁止出现", prompt)
         self.assertIn("禁止继续猜测字段", prompt)
         self.assertIn("严格照抄工具给出的正确调用结构重试一次", prompt)
+        self.assertIn("不得根据常见端口猜测 exporter", prompt)
+        self.assertIn("服务目录和 Prometheus 主机指标证据", prompt)
         self.assertNotIn("run_diagnostic_command", prompt)
         self.assertNotIn("run_root_read_command", prompt)
         self.assertNotIn("Supervisor", prompt)

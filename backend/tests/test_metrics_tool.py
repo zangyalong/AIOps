@@ -16,15 +16,6 @@ class _SessionContext:
 
 
 class QueryServerMetricsTest(unittest.IsolatedAsyncioTestCase):
-    def test_empty_server_ip_does_not_match_arbitrary_instances(self) -> None:
-        selected, matches = metrics.select_server_metric_instance(
-            "",
-            ["10.0.0.8:9100"],
-        )
-
-        self.assertIsNone(selected)
-        self.assertEqual(matches, ())
-
     def test_promql_template_can_be_scoped_to_exact_instance(self) -> None:
         memory = metrics.promql_for_metric("memory", "10.0.0.8:9100")
         cpu = metrics.promql_for_metric("cpu", "10.0.0.8:9100")
@@ -64,7 +55,7 @@ class QueryServerMetricsTest(unittest.IsolatedAsyncioTestCase):
         discover.assert_not_awaited()
 
     async def test_discovers_instance_by_ip_when_mapping_is_missing(self) -> None:
-        """未配置 monitor_labels 时，在同一次工具调用内部按 IP 补全 instance。"""
+        """未配置 monitor_labels 时，在同一次工具调用内部解析主机指标 instance。"""
         server = SimpleNamespace(
             name="demo",
             ip_address="10.0.0.8",
@@ -81,9 +72,9 @@ class QueryServerMetricsTest(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(metrics, "_query_metrics_text", query),
             patch.object(
-                metrics,
-                "prom_label_values",
-                AsyncMock(return_value=["10.0.0.8:9100", "10.0.0.9:9100"]),
+                metrics.server_metric_resolution_service,
+                "resolve_server_host_metric_instance",
+                AsyncMock(return_value=("10.0.0.8:9100", None)),
             ),
         ):
             result = await metrics.query_server_metrics.ainvoke(
@@ -92,49 +83,3 @@ class QueryServerMetricsTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("instance=10.0.0.8:9100", result)
         query.assert_awaited_once_with("cpu", "10.0.0.8:9100")
-
-    async def test_standard_node_exporter_wins_over_other_exporters(self) -> None:
-        """同一服务器有多个 exporter 时，主机指标必须确定性选择标准 9100。"""
-        server = SimpleNamespace(
-            name="web-01",
-            ip_address="139.196.175.226",
-            monitor_labels=None,
-        )
-        with patch.object(
-            metrics,
-            "prom_label_values",
-            AsyncMock(
-                return_value=[
-                    "139.196.175.226:8080",
-                    "139.196.175.226:9100",
-                    "139.196.175.226:9104",
-                    "139.196.175.226:9121",
-                    "139.196.175.226:9187",
-                ]
-            ),
-        ):
-            instance, error = await metrics._resolve_metric_instance(server)
-
-        self.assertEqual(instance, "139.196.175.226:9100")
-        self.assertIsNone(error)
-
-    async def test_multiple_nonstandard_exporters_remain_ambiguous(self) -> None:
-        server = SimpleNamespace(
-            name="web-01",
-            ip_address="139.196.175.226",
-            monitor_labels=None,
-        )
-        with patch.object(
-            metrics,
-            "prom_label_values",
-            AsyncMock(
-                return_value=[
-                    "139.196.175.226:9104",
-                    "139.196.175.226:9187",
-                ]
-            ),
-        ):
-            instance, error = await metrics._resolve_metric_instance(server)
-
-        self.assertIsNone(instance)
-        self.assertIn("没有标准的 node_exporter", error)

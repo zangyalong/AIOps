@@ -23,10 +23,11 @@ from app.schemas.service_observability import (
 )
 from app.services.observability_service import (
     loki_query_range,
-    prom_label_values,
     prom_query,
     prom_query_range,
-    select_server_metric_instance,
+)
+from app.services.server_metric_resolution_service import (
+    resolve_server_host_metric_instance,
 )
 
 _LOG_LIMIT = 40
@@ -271,28 +272,7 @@ def _server_trend_definitions(metric_instance: str) -> list[_MetricDefinition]:
 async def _resolve_server_metric_instance(
     server: Server,
 ) -> tuple[str | None, str | None]:
-    configured = str((server.monitor_labels or {}).get("instance") or "").strip()
-    if configured:
-        return configured, None
-
-    try:
-        instances = await prom_label_values("instance")
-    except Exception as exc:  # noqa: BLE001 - 转成页面可展示的数据源错误
-        return None, f"自动发现 Prometheus instance 失败：{exc}"
-
-    ip_address = server.ip_address.strip()
-    selected, matches = select_server_metric_instance(ip_address, instances)
-    if selected is not None:
-        return selected, None
-    if not matches:
-        return None, (
-            "Prometheus 中没有与该服务器 IP 匹配的 node_exporter Target，"
-            "请确认中央 Prometheus 已采集该服务器的 9100 端口"
-        )
-    return None, (
-        "该服务器匹配到多个 Prometheus Target，但没有标准的 9100 node_exporter："
-        f"{', '.join(matches)}"
-    )
+    return await resolve_server_host_metric_instance(server)
 
 
 def _first_finite_value(rows: list[dict]) -> float | None:
