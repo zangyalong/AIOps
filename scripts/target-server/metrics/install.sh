@@ -579,16 +579,33 @@ pull_exporter_image() {
     local mirrored_image
 
     if [[ -z "$IMAGE_MIRROR_PREFIX" ]]; then
-        docker pull "$original_image"
-        return
+        echo "拉取 exporter 镜像：$original_image"
+        if docker pull "$original_image"; then
+            return
+        fi
+        if docker image inspect "$original_image" >/dev/null 2>&1; then
+            echo "警告：原仓库拉取失败，复用目标机已有镜像：$original_image" >&2
+            return
+        fi
+        fail "原仓库拉取失败，且目标机不存在可复用镜像：$original_image"
     fi
     if [[ "$original_image" == *@* ]]; then
-        fail "镜像代理暂不支持 digest 引用，请传空 --image-mirror-prefix 后直连：$original_image"
+        if docker image inspect "$original_image" >/dev/null 2>&1; then
+            echo "警告：镜像代理不支持 digest 引用，复用目标机已有镜像：$original_image" >&2
+            return
+        fi
+        fail "镜像代理不支持 digest 引用，且目标机不存在可复用镜像；请传空 --image-mirror-prefix 后直连：$original_image"
     fi
 
     mirrored_image="$IMAGE_MIRROR_PREFIX/$(canonical_image_name "$original_image")"
     echo "临时拉取 exporter 镜像：$mirrored_image"
-    docker pull "$mirrored_image"
+    if ! docker pull "$mirrored_image"; then
+        if docker image inspect "$original_image" >/dev/null 2>&1; then
+            echo "警告：镜像代理拉取失败，复用目标机已有镜像：$original_image" >&2
+            return
+        fi
+        fail "镜像代理拉取失败，且目标机不存在可复用镜像：$original_image"
+    fi
     if ! docker tag "$mirrored_image" "$original_image"; then
         docker image rm "$mirrored_image" >/dev/null 2>&1 || true
         fail "无法把代理镜像标记为原始名称：$original_image"

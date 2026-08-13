@@ -260,7 +260,8 @@ START_EXPORTERS=true
 
 Exporter 默认通过 DaoCloud 前缀代理临时拉取 Quay、GHCR 和 Docker Hub 镜像，然后标记回原始
 镜像名并删除代理别名。这个过程不会修改 `/etc/docker/daemon.json` 或重启 Docker；如果已配置
-企业内部镜像仓库，可以直接把各 `*_IMAGE` 改成内部完整镜像名，并将
+的代理拉取失败，但目标机已经存在完全相同的原始镜像引用，部署会明确警告并复用；本地也没有
+精确匹配时仍然失败。如果已配置企业内部镜像仓库，可以直接把各 `*_IMAGE` 改成内部完整镜像名，并将
 `EXPORTER_IMAGE_MIRROR_PREFIX=` 留空。
 
 ### Alloy 内网源和下载代理
