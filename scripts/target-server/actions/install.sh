@@ -61,15 +61,20 @@ for raw in "${targets[@]}"; do
     target="${raw#"${raw%%[![:space:]]*}"}"
     target="${target%"${target##*[![:space:]]}"}"
     [[ -z "$target" ]] && continue
-    if [[ "$target" =~ ^[A-Za-z0-9][A-Za-z0-9_.@:-]*\.service$ ]]; then
-        target="systemd:$target"
-    fi
     if [[ "$target" =~ ^systemd:(.+)$ ]]; then
-        [[ "${BASH_REMATCH[1]}" =~ ^[A-Za-z0-9][A-Za-z0-9_.@:-]*\.service$ ]] ||
+        runtime_name="${BASH_REMATCH[1]}"
+        # 兼容并清理旧版本错误生成的 systemd:systemd:... 配置。
+        while [[ "$runtime_name" =~ ^systemd:(.+)$ ]]; do
+            runtime_name="${BASH_REMATCH[1]}"
+        done
+        [[ "$runtime_name" =~ ^[A-Za-z0-9][A-Za-z0-9_.@:-]*\.service$ ]] ||
             fail "systemd 白名单格式不合法：$target"
+        target="systemd:$runtime_name"
     elif [[ "$target" =~ ^docker:(.+)$ ]]; then
         [[ "${BASH_REMATCH[1]}" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$ ]] ||
             fail "Docker 白名单格式不合法：$target"
+    elif [[ "$target" =~ ^[A-Za-z0-9][A-Za-z0-9_.@:-]*\.service$ ]]; then
+        target="systemd:$target"
     else
         fail "白名单运行时身份格式不合法：$target"
     fi

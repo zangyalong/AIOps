@@ -58,15 +58,21 @@ while IFS= read -r raw || [[ -n "$raw" ]]; do
     line="${line#"${line%%[![:space:]]*}"}"
     line="${line%"${line##*[![:space:]]}"}"
     [[ -z "$line" ]] && continue
-    if [[ "$line" =~ $SERVICE_PATTERN ]]; then
-        line="systemd:$line"
-    fi
     if [[ "$line" =~ ^systemd:(.+)$ ]]; then
-        [[ "${BASH_REMATCH[1]}" =~ $SERVICE_PATTERN ]] ||
+        runtime_name="${BASH_REMATCH[1]}"
+        # 修复旧版本错误解析产生的 systemd:systemd:... 条目。
+        while [[ "$runtime_name" =~ ^systemd:(.+)$ ]]; do
+            runtime_name="${BASH_REMATCH[1]}"
+        done
+        [[ "$runtime_name" =~ $SERVICE_PATTERN ]] ||
             fail "现有白名单包含不合法条目：$line"
+        line="systemd:$runtime_name"
     elif [[ "$line" =~ ^docker:(.+)$ ]]; then
         [[ "${BASH_REMATCH[1]}" =~ $CONTAINER_PATTERN ]] ||
             fail "现有白名单包含不合法条目：$line"
+    elif [[ "$line" =~ $SERVICE_PATTERN ]]; then
+        # 兼容旧版白名单中的裸 systemd 单元名。
+        line="systemd:$line"
     else
         fail "现有白名单包含不合法条目：$line"
     fi

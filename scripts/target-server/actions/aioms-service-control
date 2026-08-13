@@ -48,10 +48,13 @@ while IFS= read -r raw || [[ -n "$raw" ]]; do
     line="${line#"${line%%[![:space:]]*}"}"
     line="${line%"${line##*[![:space:]]}"}"
     [[ -z "$line" ]] && continue
-    if [[ "$line" =~ $SERVICE_PATTERN ]]; then
-        line="systemd:$line"
-    fi
     if [[ "$line" == "$TARGET" ]]; then
+        allowed=true
+        break
+    fi
+    # 兼容旧版白名单中的裸 systemd 单元名。必须先比较规范的带类型条目，
+    # 否则 SERVICE_PATTERN 允许的冒号会把 systemd:foo.service 再次加前缀。
+    if [[ "$line" =~ $SERVICE_PATTERN && "systemd:$line" == "$TARGET" ]]; then
         allowed=true
         break
     fi
