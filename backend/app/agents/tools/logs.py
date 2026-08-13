@@ -146,23 +146,28 @@ async def list_log_services() -> str:
     不确定要查哪个服务、或用户报的名字拿不准时，先调这个看有哪些服务，再去 search_logs 查。
     """
     try:
-        label_groups = await asyncio.gather(
-            loki_label_values("service"),
-            loki_label_values("service_name"),
-            loki_label_values("container"),
-        )
+        services = await discover_log_services()
     except Exception as exc:  # noqa: BLE001 —— 转成给 LLM 读的文本
         return (
             f"查询 Loki 服务列表失败：{exc}。"
             "请确认 Loki 在跑（默认 http://localhost:3100）。"
         )
-    services = {value for group in label_groups for value in group if value}
     if not services:
         return "Loki 里当前没有任何服务的日志（可能采集还没上来，或近期窗口内无日志）。"
     lines = "\n".join(f"- {s}" for s in sorted(services))
     return (
         "当前 Loki 里有日志可查的服务（可作为 search_logs 的 service 参数）：\n" + lines
     )
+
+
+async def discover_log_services() -> set[str]:
+    """读取 Loki 的真实服务标签，供工具展示和统一调查入口消歧。"""
+    label_groups = await asyncio.gather(
+        loki_label_values("service"),
+        loki_label_values("service_name"),
+        loki_label_values("container"),
+    )
+    return {value for group in label_groups for value in group if value}
 
 
 def _escape_label(value: str) -> str:

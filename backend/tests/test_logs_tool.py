@@ -76,3 +76,20 @@ class LogsToolCompatibilityTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.count("- orders-api"), 1)
         self.assertIn("- legacy-worker", result)
         self.assertIn("- aioms-fake-app", result)
+
+    async def test_discover_log_services_returns_raw_service_names(self) -> None:
+        label_values = AsyncMock(
+            side_effect=[
+                ["orders-api"],
+                ["orders-api", "legacy-worker"],
+                ["aioms-fake-app"],
+            ]
+        )
+
+        with patch.object(logs, "loki_label_values", label_values):
+            services = await logs.discover_log_services()
+
+        self.assertEqual(
+            services,
+            {"orders-api", "legacy-worker", "aioms-fake-app"},
+        )

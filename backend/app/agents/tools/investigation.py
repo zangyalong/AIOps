@@ -14,7 +14,7 @@ from app.agents.tools.alerts import query_alerts
 from app.agents.tools.commands import run_diagnostic_command
 from app.agents.tools.correlate import correlate_incident
 from app.agents.tools.grafana import grafana_explore_link
-from app.agents.tools.logs import list_log_services, search_logs
+from app.agents.tools.logs import discover_log_services, list_log_services, search_logs
 from app.agents.tools.metrics import (
     list_metric_instances,
     query_metrics,
@@ -472,6 +472,16 @@ async def _invoke(
                 "logs.query 不接受任意 LogQL；请将 target 填服务器名称、"
                 "parameters.service 填业务服务名，query 只填可选的日志正文关键词"
             )
+        elif not service and query:
+            # 兼容模型把服务名误放进 query 的旧调用：只有 Loki 当前真实标签精确命中时才
+            # 转成服务过滤；发现失败或未命中都保留为正文关键词，避免扩大失败面或误判。
+            try:
+                known_services = await discover_log_services()
+            except Exception:  # noqa: BLE001 —— 服务发现只是消歧兜底，日志查询仍应继续
+                known_services = set()
+            if query in known_services:
+                service = query
+                keyword = ""
         return await search_logs.ainvoke(
             {
                 "server": target,

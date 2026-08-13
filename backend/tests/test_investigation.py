@@ -118,6 +118,70 @@ class InvestigationFacadeTest(unittest.IsolatedAsyncioTestCase):
             }
         )
 
+    async def test_logs_resolves_bare_query_from_real_loki_service_labels(
+        self,
+    ) -> None:
+        search = AsyncMock(return_value="日志结果")
+        discover = AsyncMock(return_value={"pixel-forge-backend", "nginx"})
+        with (
+            patch.object(investigation, "discover_log_services", discover),
+            patch.object(
+                investigation,
+                "search_logs",
+                SimpleNamespace(ainvoke=search),
+            ),
+        ):
+            result = await investigation.investigate.ainvoke(
+                {
+                    "area": "logs",
+                    "target": "web-01",
+                    "query": "pixel-forge-backend",
+                    "parameters": {"minutes": 60},
+                }
+            )
+
+        self.assertTrue(result.ok)
+        discover.assert_awaited_once_with()
+        search.assert_awaited_once_with(
+            {
+                "server": "web-01",
+                "service": "pixel-forge-backend",
+                "keyword": "",
+                "level": "",
+                "minutes": 60,
+            }
+        )
+
+    async def test_logs_keeps_unmatched_bare_query_as_body_keyword(self) -> None:
+        search = AsyncMock(return_value="日志结果")
+        discover = AsyncMock(return_value={"pixel-forge-backend"})
+        with (
+            patch.object(investigation, "discover_log_services", discover),
+            patch.object(
+                investigation,
+                "search_logs",
+                SimpleNamespace(ainvoke=search),
+            ),
+        ):
+            result = await investigation.investigate.ainvoke(
+                {
+                    "area": "logs",
+                    "target": "web-01",
+                    "query": "connection refused",
+                }
+            )
+
+        self.assertTrue(result.ok)
+        search.assert_awaited_once_with(
+            {
+                "server": "web-01",
+                "service": "",
+                "keyword": "connection refused",
+                "level": "",
+                "minutes": 60,
+            }
+        )
+
     async def test_runtime_selector_builds_internal_canonical_probe(self) -> None:
         run_probe = AsyncMock(return_value="active (running)")
         with patch.object(
