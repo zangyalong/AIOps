@@ -27,6 +27,10 @@ class InvestigationFacadeTest(unittest.IsolatedAsyncioTestCase):
             "area=visualization",
             schema["properties"]["query"]["description"],
         )
+        self.assertIn(
+            "具体服务放 parameters.service",
+            schema["properties"]["target"]["description"],
+        )
 
     async def test_host_area_uses_real_host_inspector_and_labels_source(self) -> None:
         inspect = AsyncMock(
@@ -54,6 +58,65 @@ class InvestigationFacadeTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Python 3.6.8", result.message)
         self.assertEqual(result.metadata["evidence_source"], "目标服务器宿主机只读调查")
         inspect.assert_awaited_once_with("web-01", "python --version")
+
+    async def test_logs_routes_server_service_and_keyword_separately(self) -> None:
+        search = AsyncMock(return_value="日志结果")
+        with patch.object(
+            investigation,
+            "search_logs",
+            SimpleNamespace(ainvoke=search),
+        ):
+            result = await investigation.investigate.ainvoke(
+                {
+                    "area": "logs",
+                    "target": "web-01",
+                    "query": "connection refused",
+                    "parameters": {
+                        "service": "pixel-forge-backend",
+                        "minutes": 60,
+                    },
+                }
+            )
+
+        self.assertTrue(result.ok)
+        search.assert_awaited_once_with(
+            {
+                "server": "web-01",
+                "service": "pixel-forge-backend",
+                "keyword": "connection refused",
+                "level": "",
+                "minutes": 60,
+            }
+        )
+
+    async def test_logs_extracts_simple_service_selector_instead_of_keyword(
+        self,
+    ) -> None:
+        search = AsyncMock(return_value="日志结果")
+        with patch.object(
+            investigation,
+            "search_logs",
+            SimpleNamespace(ainvoke=search),
+        ):
+            result = await investigation.investigate.ainvoke(
+                {
+                    "area": "logs",
+                    "target": "web-01",
+                    "query": '{service="pixel-forge-backend"}',
+                    "parameters": {"minutes": 60},
+                }
+            )
+
+        self.assertTrue(result.ok)
+        search.assert_awaited_once_with(
+            {
+                "server": "web-01",
+                "service": "pixel-forge-backend",
+                "keyword": "",
+                "level": "",
+                "minutes": 60,
+            }
+        )
 
     async def test_runtime_selector_builds_internal_canonical_probe(self) -> None:
         run_probe = AsyncMock(return_value="active (running)")

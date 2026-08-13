@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from datetime import UTC, datetime
 
 from langchain_core.tools import tool
@@ -19,10 +18,12 @@ from app.services.observability_service import loki_label_values, loki_query_ran
 _LINE_LIMIT = 200
 # 单行最长展示多少字符，超长截断——防超长行，也顺带收敛日志里可能夹带的 prompt 注入内容。
 _MAX_LINE_LEN = 500
+_REGEX_META = frozenset(r"\.+*?()|[]{}^$")
 
 
 @tool
 async def search_logs(
+    server: str = "",
     service: str = "",
     keyword: str = "",
     level: str = "",
@@ -30,7 +31,8 @@ async def search_logs(
 ) -> str:
     """搜索最近 N 分钟的日志，数据来自 Loki。
 
-    - service：按服务名过滤（如 "aioms-fake-app"）。不传则查所有服务的日志。
+    - server：按 AIOMS 服务器标签过滤（如 "web-01"）。
+    - service：按服务名过滤（如 "aioms-fake-app"）。不传则查该服务器所有服务的日志。
     - keyword：只保留包含该关键词的行（大小写不敏感）。
     - level：只看某个级别，取 error / warn / info 之一（按日志文本匹配）。
     - minutes：往前查多少分钟，默认 60。
@@ -40,23 +42,25 @@ async def search_logs(
     if service:
         escaped_service = _escape_label(service)
         selectors = [
-            f'{{service="{escaped_service}"}}',
-            f'{{service_name="{escaped_service}"}}',
-            f'{{container="{escaped_service}"}}',
+            _selector(server, "service", escaped_service, regex=False),
+            _selector(server, "service_name", escaped_service, regex=False),
+            _selector(server, "container", escaped_service, regex=False),
         ]
     else:
         selectors = [
-            '{service=~".+"}',
-            '{service_name=~".+"}',
-            '{container=~".+"}',
+            _selector(server, "service", ".+", regex=True),
+            _selector(server, "service_name", ".+", regex=True),
+            _selector(server, "container", ".+", regex=True),
         ]
 
     # 2. 行过滤：级别 + 关键词都用 |~ 正则（大小写不敏感）。关键词转义，防用户输入里的正则元字符。
     suffix = ""
     if level:
-        suffix += f' |~ "(?i){re.escape(level)}"'
+        suffix += f' |~ "{_escape_logql_string(f"(?i){_escape_regex_literal(level)}")}"'
     if keyword:
-        suffix += f' |~ "(?i){re.escape(keyword)}"'
+        suffix += (
+            f' |~ "{_escape_logql_string(f"(?i){_escape_regex_literal(keyword)}")}"'
+        )
     logql_queries = [selector + suffix for selector in selectors]
 
     # 3. 时间窗：最近 minutes 分钟。Loki 时间戳用纳秒。查询边界用带时区的 UTC（正确），
@@ -103,7 +107,10 @@ async def search_logs(
     rows.sort(key=lambda r: r[0], reverse=True)
 
     if not rows:
-        parts = [f"最近 {minutes} 分钟", f"服务 {service}" if service else "所有服务"]
+        parts = [f"最近 {minutes} 分钟"]
+        if server:
+            parts.append(f"服务器 {server}")
+        parts.append(f"服务 {service}" if service else "所有服务")
         if level:
             parts.append(f"级别 {level}")
         if keyword:
@@ -124,6 +131,8 @@ async def search_logs(
         lines.append(f"[{clock}] {svc} | {text}" if show_svc else f"[{clock}] {text}")
 
     scope = f"服务 {service}" if service else "所有服务"
+    if server:
+        scope = f"服务器 {server} 的{scope}"
     header = f"{scope}最近 {minutes} 分钟日志（按时间倒序，来自 Loki）："
     if truncated:
         header += f"\n（命中较多，只显示最近 {_LINE_LIMIT} 条）"
@@ -159,6 +168,25 @@ async def list_log_services() -> str:
 def _escape_label(value: str) -> str:
     """转义标签值里的反斜杠/双引号，避免拼进 LogQL 选择器时破坏语法。"""
     return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _escape_logql_string(value: str) -> str:
+    """把正则写入 LogQL 双引号字符串；正则反斜杠必须再经过一层字符串转义。"""
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _escape_regex_literal(value: str) -> str:
+    """按 Go/RE2 QuoteMeta 的字符集合转义，避免 Python re.escape 过度转义连字符。"""
+    return "".join(f"\\{char}" if char in _REGEX_META else char for char in value)
+
+
+def _selector(server: str, label: str, value: str, *, regex: bool) -> str:
+    match = "=~" if regex else "="
+    labels = []
+    if server:
+        labels.append(f'server="{_escape_label(server)}"')
+    labels.append(f'{label}{match}"{value}"')
+    return "{" + ",".join(labels) + "}"
 
 
 def _clean(line: str) -> str:

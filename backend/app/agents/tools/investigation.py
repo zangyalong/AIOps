@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 from collections.abc import Mapping
 from typing import Any, Literal
 
@@ -78,7 +80,7 @@ _ALLOWED_PARAMETERS: dict[InvestigationArea, frozenset[str]] = {
     "runtime": frozenset(),
     "host": frozenset(),
     "metrics": frozenset({"target_type"}),
-    "logs": frozenset({"level", "minutes"}),
+    "logs": frozenset({"service", "level", "minutes"}),
     "alerts": frozenset({"severity"}),
     "incident": frozenset({"at", "window_minutes", "service", "environment"}),
     "visualization": frozenset({"kind", "minutes"}),
@@ -150,7 +152,10 @@ class InvestigationParameters(BaseModel):
     )
     service: str | None = Field(
         default=None,
-        description="仅 area=incident 使用的服务筛选。",
+        description=(
+            "area=logs 或 incident 使用的业务服务名。查日志时 target 填服务器名称，"
+            "service 填服务名，query 只填可选的日志正文关键词。"
+        ),
     )
     environment: str | None = Field(
         default=None,
@@ -206,7 +211,8 @@ class InvestigationInput(BaseModel):
             "调查目标。metrics 查服务器当前值时填服务器名称/IP；只有 target_type=instance "
             "时才直接填 Prometheus instance。visualization 指标趋势填服务器名称/IP，后端"
             "会查询服务目录和 Prometheus 主机指标来限定 instance；不要自行按端口猜测 exporter。"
-            "日志或告警图通常留空。"
+            "logs 查询单台服务器日志时填服务器名称/IP，具体服务放 parameters.service。"
+            "告警或不限定服务器的查询可以留空。"
         ),
     )
     query: str = Field(
@@ -215,7 +221,8 @@ class InvestigationInput(BaseModel):
         description=(
             "调查内容。metrics 当前值优先填 cpu/memory/disk/up；最近 N 分钟指标趋势不要"
             "使用 metrics，改用 area=visualization、query=指标或 PromQL、parameters.kind="
-            "metrics、parameters.minutes=N。area=change "
+            "metrics、parameters.minutes=N。logs 的 query 只填日志正文关键词或留空，服务名"
+            "放 parameters.service；不要把完整 LogQL 当关键词。area=change "
             "时只能使用 log-config-preview/find-files/read-file/file-update-preview/"
             "config-patch-preview；修改 dotenv、JSON 或 YAML 已有单个标量必须使用 "
             "config-patch-preview，完整替换普通文本才使用 file-update-preview"
@@ -225,7 +232,8 @@ class InvestigationInput(BaseModel):
         default_factory=InvestigationParameters,
         description=(
             "只填写 schema 中列出的字段，并遵守各字段的 area 说明。metrics 只允许 "
-            "target_type，不能传 time、minutes、instance 或 monitor_labels。"
+            "target_type，不能传 time、minutes、instance 或 monitor_labels。logs 可填写 "
+            "service、level、minutes。"
         ),
     )
 
@@ -286,6 +294,26 @@ def _required(value: str, label: str) -> str:
     if not value:
         raise InvestigationRequestError(f"{label}不能为空")
     return value
+
+
+_SIMPLE_LOG_SELECTOR = re.compile(
+    r"^\{\s*(?:service|service_name|container)\s*=\s*"
+    r'("(?:\\.|[^"\\])*")\s*\}$'
+)
+
+
+def _simple_log_selector_service(query: str) -> str:
+    """兼容模型常写的单服务 LogQL，但不开放任意 LogQL 透传。"""
+    match = _SIMPLE_LOG_SELECTOR.fullmatch(query.strip())
+    if match is None:
+        return ""
+    try:
+        value = json.loads(match.group(1))
+    except json.JSONDecodeError as exc:
+        raise InvestigationRequestError("logs.query 中的服务选择器字符串无效") from exc
+    if not isinstance(value, str) or not value.strip():
+        raise InvestigationRequestError("logs.query 中的服务名不能为空")
+    return value.strip()
 
 
 def _validate_parameters(
@@ -429,10 +457,26 @@ async def _invoke(
     if area == "logs":
         if query in {"services", "list-services"} and not target:
             return await list_log_services.ainvoke({})
+        service = _text_parameter(parameters, "service")
+        keyword = query
+        selector_service = _simple_log_selector_service(query)
+        if selector_service:
+            if service and service != selector_service:
+                raise InvestigationRequestError(
+                    "logs.query 选择器与 parameters.service 指向不同服务"
+                )
+            service = selector_service
+            keyword = ""
+        elif query.lstrip().startswith("{"):
+            raise InvestigationRequestError(
+                "logs.query 不接受任意 LogQL；请将 target 填服务器名称、"
+                "parameters.service 填业务服务名，query 只填可选的日志正文关键词"
+            )
         return await search_logs.ainvoke(
             {
-                "service": target,
-                "keyword": query,
+                "server": target,
+                "service": service,
+                "keyword": keyword,
                 "level": _text_parameter(parameters, "level"),
                 "minutes": _int_parameter(parameters, "minutes", default=60),
             }
@@ -604,7 +648,8 @@ async def investigate(
     - host：target 填服务器；query 是按目标服务器真实 `/`、PATH 和程序执行的通用只读命令。
       可以使用管道和组合查询；宿主文件系统由内核强制只读，敏感路径会被遮蔽。
     - metrics/logs/alerts/incident/visualization：分别查询 Prometheus、Loki、Alertmanager、
-      关联证据或 Grafana 链接；时间窗、级别和服务等筛选放入 parameters。
+      关联证据或 Grafana 链接。logs 的 target 填服务器名称，parameters.service 填业务服务名，
+      query 只填可选的日志正文关键词；也兼容 query 为单个 service/service_name/container 等值选择器。
     - change：只准备受控变更所需证据；query 可为 log-config-preview、find-files、read-file、
       file-update-preview、config-patch-preview。dotenv/JSON 已有单个标量必须用
       config-patch-preview；完整替换普通文本才用 file-update-preview。它不会执行变更，真正变更
