@@ -10,11 +10,14 @@ import {
   type OperationApprovalDecision,
 } from '../api/chat'
 import { fetchConversationDetail } from '../api/conversations'
+import { fetchServers } from '../api/servers'
+import ChatComposer from '../components/ChatComposer.vue'
 import ConversationList from '../components/ConversationList.vue'
 import MarkdownContent from '../components/MarkdownContent.vue'
 import OperationCard from '../components/OperationCard.vue'
 import ToolCallCard from '../components/ToolCallCard.vue'
 import type { ChatMessage, ChatRunHistory } from '../types/chat'
+import type { Server } from '../types/server'
 
 // 会话时间线：消息、工具行、写操作审批行按发生顺序混在一个数组里，这样它们能显示在实际
 // 发生的那个位置（夹在文本流中间）。工具行和审批行都会随历史重建：工具行来自 assistant 的
@@ -70,7 +73,10 @@ const route = useRoute()
 const router = useRouter()
 const conversationListRef = ref<InstanceType<typeof ConversationList> | null>(null)
 const messagesEl = ref<HTMLElement | null>(null)
-const inputEl = ref<HTMLTextAreaElement | null>(null)
+const servers = ref<Server[]>([])
+const serversLoading = ref(false)
+const serversError = ref<string | null>(null)
+const selectedServerId = ref<string | null>(null)
 // 当前是否有一个写操作挂在审批门上等裁决。非空时输入框禁用（先处理确认再继续对话），
 // 记住要恢复哪条挂起（threadId）——裁决时按 threadId 把这次挂起的所有待批行一起翻状态。
 const pendingApproval = ref<{
@@ -84,6 +90,7 @@ const activeRunId = ref<string | null>(null)
 const lastEventSequence = ref(0)
 let subscriptionController: AbortController | null = null
 let loadVersion = 0
+const SERVER_CONTEXT_STORAGE_KEY = 'aioms.chat.default-server-by-conversation'
 
 let uidCounter = 0
 function uid(): string {
@@ -226,24 +233,79 @@ function scrollToBottom() {
   if (el) el.scrollTop = el.scrollHeight
 }
 
-function resizeInput() {
-  nextTick(() => {
-    const element = inputEl.value
-    if (!element) return
-    element.style.height = 'auto'
-    const height = Math.min(element.scrollHeight, 144)
-    element.style.height = `${Math.max(height, 42)}px`
-    element.style.overflowY = element.scrollHeight > 144 ? 'auto' : 'hidden'
-  })
+function readServerContextStorage(): Record<string, string> {
+  try {
+    const value = JSON.parse(localStorage.getItem(SERVER_CONTEXT_STORAGE_KEY) ?? '{}')
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+    return Object.fromEntries(
+      Object.entries(value).filter(
+        (entry): entry is [string, string] => typeof entry[1] === 'string',
+      ),
+    )
+  } catch {
+    return {}
+  }
 }
 
-function onComposerKeydown(event: KeyboardEvent) {
-  if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return
-  event.preventDefault()
-  void send()
+function writeServerContextStorage(value: Record<string, string>) {
+  try {
+    localStorage.setItem(SERVER_CONTEXT_STORAGE_KEY, JSON.stringify(value))
+  } catch {
+    // 浏览器禁用持久化时仍允许本次页面内选择；只是不跨刷新保存。
+  }
 }
 
-watch(input, resizeInput)
+function serverContextKey(id: string | null = conversationId.value): string {
+  return id ?? 'draft'
+}
+
+function restoreServerSelection(id: string | null) {
+  selectedServerId.value = readServerContextStorage()[serverContextKey(id)] ?? null
+  if (
+    selectedServerId.value &&
+    servers.value.length > 0 &&
+    !servers.value.some((server) => server.id === selectedServerId.value)
+  ) {
+    rememberServerSelection(null, id)
+    return
+  }
+  void loadServers()
+}
+
+function rememberServerSelection(serverId: string | null, id = conversationId.value) {
+  selectedServerId.value = serverId
+  const stored = readServerContextStorage()
+  const key = serverContextKey(id)
+  if (serverId) stored[key] = serverId
+  else delete stored[key]
+  writeServerContextStorage(stored)
+}
+
+function moveDraftServerSelection(conversation: string, serverId: string | null) {
+  const stored = readServerContextStorage()
+  delete stored.draft
+  if (serverId) stored[conversation] = serverId
+  writeServerContextStorage(stored)
+}
+
+async function loadServers(force = false) {
+  if (serversLoading.value || (!force && servers.value.length > 0)) return
+  serversLoading.value = true
+  serversError.value = null
+  try {
+    servers.value = await fetchServers()
+    if (
+      selectedServerId.value &&
+      !servers.value.some((server) => server.id === selectedServerId.value)
+    ) {
+      rememberServerSelection(null)
+    }
+  } catch (e) {
+    serversError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    serversLoading.value = false
+  }
+}
 
 // 时间线变化（新消息、流式 token、工具卡片）时自动滚到底部；但只在用户本来就贴着底部
 // 时才滚，避免用户向上翻看历史时被强行拽回来。默认 flush:'pre'，回调里读到的是更新前的
@@ -413,16 +475,20 @@ async function send() {
 
   timeline.value.push({ kind: 'message', key: uid(), role: 'user', content: text })
   input.value = ''
-  resizeInput()
   sending.value = true
   error.value = null
   assistantOpen = false
   nextTick(scrollToBottom)
 
   try {
-    const run = await startChatMessage(text, conversationId.value)
+    const previousConversationId = conversationId.value
+    const defaultServerId = selectedServerId.value
+    const run = await startChatMessage(text, conversationId.value, defaultServerId)
     activeRunId.value = run.run_id
     conversationId.value = run.conversation_id
+    if (previousConversationId === null) {
+      moveDraftServerSelection(run.conversation_id, defaultServerId)
+    }
     conversationListRef.value?.refresh()
 
     if (route.params.conversationId !== run.conversation_id) {
@@ -499,9 +565,14 @@ function resetConversation() {
   sending.value = false
   error.value = null
   assistantOpen = false
+  restoreServerSelection(null)
 }
 
 async function newConversation() {
+  const stored = readServerContextStorage()
+  delete stored.draft
+  writeServerContextStorage(stored)
+  selectedServerId.value = null
   if (route.name === 'chat') {
     resetConversation()
   } else {
@@ -633,6 +704,7 @@ async function loadConversation(id: string) {
   sending.value = false
   error.value = null
   assistantOpen = false
+  restoreServerSelection(id)
 
   try {
     let detail = await fetchConversationDetail(id)
@@ -776,19 +848,18 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="input-panel">
-        <form class="input-row" @submit.prevent="send">
-          <textarea
-            ref="inputEl"
-            v-model="input"
-            rows="1"
-            :placeholder="pendingApproval ? '请先处理上面的确认…' : '描述目标、服务器或异常现象…'"
-            :disabled="sending || !!pendingApproval"
-            aria-label="给运维助手发送消息"
-            @keydown="onComposerKeydown"
-          />
-          <button type="submit" :disabled="sending || !!pendingApproval">发送</button>
-        </form>
-        <p class="input-hint">Enter 发送 · Shift + Enter 换行</p>
+        <ChatComposer
+          v-model="input"
+          :disabled="sending || !!pendingApproval"
+          :pending-approval="!!pendingApproval"
+          :servers="servers"
+          :servers-loading="serversLoading"
+          :servers-error="serversError"
+          :selected-server-id="selectedServerId"
+          @submit="send"
+          @select-server="rememberServerSelection"
+          @request-servers="loadServers(true)"
+        />
       </div>
     </div>
 
@@ -1150,55 +1221,10 @@ h1 {
   font-size: 0.85rem;
 }
 
-.input-row {
-  width: 100%;
-  max-width: 760px;
-  display: flex;
-  gap: 0.5rem;
-  margin: 0 auto;
-}
-
 .input-panel {
   flex-shrink: 0;
   padding: 0.5rem 2rem 1.5rem;
   background: #ffffff;
-}
-
-.input-row textarea {
-  flex: 1;
-  min-width: 0;
-  min-height: 42px;
-  max-height: 144px;
-  padding: 0.55rem 0.85rem;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  resize: none;
-  font: inherit;
-  line-height: 1.55;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.input-row button {
-  padding: 0.55rem 1.1rem;
-  border: none;
-  border-radius: var(--radius);
-  background: var(--color-accent);
-  color: var(--color-accent-contrast);
-}
-
-.input-row button:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
-.input-hint {
-  max-width: 860px;
-  margin: 0.35rem auto 0;
-  padding-right: 0.2rem;
-  color: var(--color-text-muted);
-  font-size: 0.66rem;
-  text-align: right;
 }
 
 /* 视觉重塑：把对话区做成运维工作流，而不是通用聊天窗口。 */
@@ -1383,31 +1409,6 @@ h1 {
 
 .input-panel {
   padding: 0.75rem 2rem 1.35rem;
-}
-
-.input-row {
-  align-items: flex-end;
-  max-width: 860px;
-  gap: 8px;
-  padding: 6px;
-  border: 1px solid var(--color-border-strong);
-  border-radius: 12px;
-  background: #ffffff;
-  box-shadow: 0 8px 28px rgba(16, 39, 51, 0.08);
-}
-
-.input-row textarea {
-  min-height: 42px;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-  outline: none;
-}
-
-.input-row button {
-  min-width: 74px;
-  border-radius: 8px;
-  font-weight: 600;
 }
 
 @media (max-width: 760px) {

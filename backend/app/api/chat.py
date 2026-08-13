@@ -13,6 +13,7 @@ from app.services import (
     chat_run_record_service,
     chat_service,
     conversation_service,
+    server_service,
 )
 from app.services.chat_run_service import ChatRun, ChatRunManager
 
@@ -40,6 +41,13 @@ def _run_out(run: ChatRun, *, title: str | None = None) -> ChatRunOut:
 async def chat(data: ChatRequest, request: Request, db: DBSession) -> ChatRunOut:
     """创建独立后台 Chat Run；返回后浏览器即可订阅事件，断开不会取消 Agent。"""
     new_title: str | None = None
+    default_server = None
+    if data.default_server_id is not None:
+        default_server = await server_service.get_server(db, data.default_server_id)
+        if default_server is None:
+            raise HTTPException(
+                status_code=422, detail="选择的默认服务器不存在或已删除"
+            )
 
     if data.conversation_id is None:
         new_title = conversation_service.make_title(data.message)
@@ -58,7 +66,11 @@ async def chat(data: ChatRequest, request: Request, db: DBSession) -> ChatRunOut
     if manager.get_active(conversation.id) is not None:
         raise HTTPException(status_code=409, detail="该对话已有回复正在生成")
 
-    prepared = await chat_service.prepare_chat_turn(conversation.id, data.message)
+    prepared = await chat_service.prepare_chat_turn(
+        conversation.id,
+        data.message,
+        default_server=default_server,
+    )
     try:
         run = manager.start(
             conversation.id,

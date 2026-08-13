@@ -86,11 +86,16 @@ async function responseError(res: Response, fallback: string): Promise<Error> {
 export async function startChatMessage(
   message: string,
   conversationId: string | null,
+  defaultServerId: string | null,
 ): Promise<ChatRun> {
   const res = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, conversation_id: conversationId }),
+    body: JSON.stringify({
+      message,
+      conversation_id: conversationId,
+      default_server_id: defaultServerId,
+    }),
   })
   if (!res.ok) throw await responseError(res, '创建对话任务失败')
   return res.json()

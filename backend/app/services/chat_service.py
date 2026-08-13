@@ -19,6 +19,7 @@ from app.agents.tools.catalog import TOOLS_BY_NAME, WRITE_TOOL_NAMES
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models.message import Message
+from app.models.server import Server
 from app.operations.schemas import OperationResult
 from app.schemas.chat import OperationApprovalDecision
 from app.services import (
@@ -515,6 +516,7 @@ async def _drive_graph(
 async def prepare_chat_turn(
     conversation_id: uuid.UUID,
     user_message: str,
+    default_server: Server | None = None,
 ) -> PreparedChatTurn:
     """先持久化用户消息并准备图输入，确保 API 返回 run_id 时历史中已经能看到用户提问。
 
@@ -565,6 +567,15 @@ async def prepare_chat_turn(
                 "environment": "unknown",
                 "auto_approve_non_production_medium": (
                     settings.operation_auto_approve_non_production_medium
+                ),
+                "default_server": (
+                    {
+                        "id": str(default_server.id),
+                        "name": default_server.name,
+                        "ip_address": default_server.ip_address,
+                    }
+                    if default_server is not None
+                    else None
                 ),
             },
         },

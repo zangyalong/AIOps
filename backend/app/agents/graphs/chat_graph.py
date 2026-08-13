@@ -23,7 +23,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import interrupt
 
 from app.agents.presentation import compact_narration, restore_truncated_tool_links
-from app.agents.prompts import build_ops_system_prompt
+from app.agents.prompts import DefaultServerContext, build_ops_system_prompt
 from app.agents.skills import expand_explicit_skill_invocation
 from app.agents.tools.catalog import (
     READ_TOOLS_BY_NAME,
@@ -227,10 +227,24 @@ async def ops_agent_node(state: ChatState) -> dict:
     protocol_repairs = _trailing_protocol_repairs(state.get("messages", []))
     allow_write_tools = state.get("allow_write_tools", False)
     operation_context = state.get("operation_context") or {}
+    raw_default_server = operation_context.get("default_server")
+    default_server = (
+        DefaultServerContext(
+            id=str(raw_default_server.get("id") or ""),
+            name=str(raw_default_server.get("name") or ""),
+            ip_address=str(raw_default_server.get("ip_address") or ""),
+        )
+        if isinstance(raw_default_server, dict)
+        and raw_default_server.get("id")
+        and raw_default_server.get("name")
+        and raw_default_server.get("ip_address")
+        else None
+    )
     assembly = build_ops_system_prompt(
         tools=_ops_tools(allow_write_tools),
         allow_write_tools=allow_write_tools,
         run_mode=str(operation_context.get("run_mode") or ""),
+        default_server=default_server,
     )
     model_messages, explicit_skill, invocation_error = expand_explicit_skill_invocation(
         [*state["messages"], *protocol_repairs],

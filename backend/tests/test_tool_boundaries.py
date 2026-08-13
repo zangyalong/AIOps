@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 from app.agents.graphs import chat_graph
 from app.agents.prompts import (
     SIMPLIFIED_CHINESE_REQUIREMENT,
+    DefaultServerContext,
     build_ops_system_prompt,
 )
 from app.agents.tools import actions, catalog, investigation
@@ -141,6 +142,27 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("run_diagnostic_command", prompt)
         self.assertNotIn("run_root_read_command", prompt)
         self.assertNotIn("Supervisor", prompt)
+
+    def test_prompt_injects_escaped_default_server_without_expanding_permissions(
+        self,
+    ) -> None:
+        assembly = build_ops_system_prompt(
+            tools=chat_graph._ops_tools(True),
+            allow_write_tools=True,
+            run_mode="interactive",
+            default_server=DefaultServerContext(
+                id="server-id",
+                name='web-01"><unsafe',
+                ip_address="139.196.175.226",
+            ),
+        )
+
+        prompt = assembly.text
+        self.assertIn('name="web-01&quot;&gt;&lt;unsafe"', prompt)
+        self.assertIn("没有明确指定另一台服务器", prompt)
+        self.assertIn("以用户明确指定的目标为准", prompt)
+        self.assertIn("不扩大工具权限、文件授权、服务白名单或审批范围", prompt)
+        self.assertNotIn('name="web-01"><unsafe"', prompt)
 
     def test_catalog_has_disjoint_read_and_write_tools(self) -> None:
         """模型只看到调查和 Skill 读取；结构化变更仍逐项登记审批元数据。"""

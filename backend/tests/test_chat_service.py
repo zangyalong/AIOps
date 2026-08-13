@@ -167,6 +167,54 @@ class _TruncatedToolLinkGraph(_FakeGraph):
 
 
 class ChatStreamTest(unittest.IsolatedAsyncioTestCase):
+    async def test_prepare_turn_carries_trusted_default_server_context(self) -> None:
+        conversation_id = uuid.uuid4()
+        run_id = uuid.uuid4()
+        server_id = uuid.uuid4()
+        session_context = _AsyncSessionContext()
+        server = SimpleNamespace(
+            id=server_id,
+            name="web-01",
+            ip_address="139.196.175.226",
+        )
+
+        with (
+            patch.object(
+                chat_service,
+                "AsyncSessionLocal",
+                return_value=session_context,
+            ),
+            patch.object(
+                chat_service,
+                "_load_history_messages",
+                AsyncMock(return_value=[]),
+            ),
+            patch.object(
+                chat_service.chat_run_record_service,
+                "create_chat_run",
+                AsyncMock(return_value=SimpleNamespace(id=run_id)),
+            ),
+            patch.object(
+                chat_service.message_service,
+                "create_message",
+                AsyncMock(),
+            ),
+        ):
+            prepared = await chat_service.prepare_chat_turn(
+                conversation_id,
+                "检查默认服务器",
+                default_server=server,
+            )
+
+        self.assertEqual(
+            prepared.graph_input["operation_context"]["default_server"],
+            {
+                "id": str(server_id),
+                "name": "web-01",
+                "ip_address": "139.196.175.226",
+            },
+        )
+
     async def test_streams_tool_narration_and_single_agent_answer(self) -> None:
         """单 Agent 的工具旁白、调查状态和最终回答按真实顺序发送。"""
         graph = _FakeGraph()

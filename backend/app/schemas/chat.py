@@ -12,6 +12,9 @@ class ChatRequest(BaseModel):
     # 同一个 conversation_id 的多轮对话，每次请求都从 messages 表把历史加载出来
     # 喂给图；第一次不传，后端创建 conversation，并立即返回独立 Chat Run 的标识。
     conversation_id: uuid.UUID | None = None
+    # 前端选择的默认服务器只传 UUID；后端会重新查服务器目录，并把可信名称/IP 拼进本轮
+    # system prompt。它不写进用户消息，也不授予任何额外操作权限。
+    default_server_id: uuid.UUID | None = None
 
 
 class OperationApprovalDecision(BaseModel):
