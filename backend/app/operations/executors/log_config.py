@@ -28,6 +28,7 @@ class LogConfigSnapshot(Protocol):
 
 
 BuildSnapshot = Callable[[str], Awaitable[tuple[Any | None, LogConfigSnapshot | None]]]
+SelectSnapshot = Callable[[LogConfigSnapshot, Sequence[Any]], LogConfigSnapshot]
 
 
 async def apply_server_log_config(
@@ -36,12 +37,20 @@ async def apply_server_log_config(
     mappings: Sequence[Any],
     *,
     build_snapshot: BuildSnapshot,
+    select_snapshot: SelectSnapshot,
 ) -> OperationResult:
-    server, snapshot = await build_snapshot(server_name)
-    if server is None or snapshot is None:
+    server, full_snapshot = await build_snapshot(server_name)
+    if server is None or full_snapshot is None:
         return OperationResult.failure(
             f"没有找到名称或 IP 为 {server_name} 的服务器，请先确认服务器。",
             code="server_not_found",
+        )
+    try:
+        snapshot = select_snapshot(full_snapshot, mappings)
+    except ValueError as exc:
+        return OperationResult.failure(
+            f"服务目录已变化，{exc}，未修改服务器。请重新生成预览并再次确认。",
+            code="preview_changed",
         )
     if snapshot.source_count == 0:
         return OperationResult.failure(
@@ -49,12 +58,9 @@ async def apply_server_log_config(
             code="no_log_sources",
         )
 
-    approved_mappings = [item.model_dump() for item in mappings]
-    current_mappings = [item.model_dump() for item in snapshot.mappings]
-    if preview_hash != snapshot.preview_hash or approved_mappings != current_mappings:
+    if preview_hash != snapshot.preview_hash:
         return OperationResult.failure(
-            "服务目录已变化，当前配置与审批前预览不一致，未修改服务器。"
-            "请重新调用 preview_server_log_config 并再次确认。",
+            "所选日志配置与审批前预览不一致，未修改服务器。请重新生成预览并再次确认。",
             code="preview_changed",
         )
 

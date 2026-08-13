@@ -32,6 +32,7 @@ from app.agents.tools.server_files import (
 )
 from app.agents.tools.server_log_config import (
     apply_server_log_config,
+    resolve_apply_server_log_config_call,
 )
 from app.agents.tools.service_discovery import (
     register_server_services,
@@ -42,7 +43,6 @@ from app.operations.executors import service_control
 from app.operations.registry import OperationRegistry, RegisteredOperation
 from app.operations.schemas import (
     OperationCall,
-    OperationContext,
     OperationSpec,
     RiskLevel,
 )
@@ -410,6 +410,8 @@ def _registered_write_operation(write_spec: WriteToolSpec) -> RegisteredOperatio
             in {start_service.name, stop_service.name, restart_service.name}
             else resolve_update_server_file_call
             if write_spec.tool.name == update_server_file.name
+            else resolve_apply_server_log_config_call
+            if write_spec.tool.name == apply_server_log_config.name
             else None
         ),
     )
@@ -471,17 +473,9 @@ def describe_write_action(tool_call: dict[str, Any]) -> dict[str, Any]:
     spec = get_operation_spec(call.name)
     if spec is None or spec.effect != "write":
         raise ValueError(f"{call.name or '未知工具'} 不是已注册的写工具")
-    prepared = OPERATION_BROKER.prepare(
-        call,
-        OperationContext(
-            actor_id="catalog-preview",
-            actor_role="admin",
-            run_mode="interactive",
-            environment="unknown",
-            approval=None,
-        ),
-    )
-    return dict(prepared.approval_view or {})
+    write_spec = WRITE_TOOL_SPECS[call.name]
+    normalized = _normalize_tool_call(write_spec.tool, call)
+    return write_spec.pending_action(normalized.as_tool_call())
 
 
 def ensure_read_tools(tools: Iterable[BaseTool]) -> None:

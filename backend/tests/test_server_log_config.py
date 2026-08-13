@@ -6,8 +6,9 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from app.agents.tools import server_log_config
+from app.agents.tools import catalog, server_log_config
 from app.operations.executors import log_config as log_config_executor
+from app.operations.schemas import OperationCall, OperationContext
 
 
 def _snapshot() -> server_log_config.LogConfigSnapshot:
@@ -139,6 +140,63 @@ class ServerLogConfigTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("预览不一致", result.message)
         connect.assert_not_called()
 
+    async def test_broker_freezes_hash_for_selected_mapping_subset(self) -> None:
+        """全量目录 14 项、用户只选 9 项时，审批哈希必须绑定所选子集。"""
+        snapshot = _snapshot()
+        selected = [snapshot.mappings[0]]
+        selected_snapshot = server_log_config._snapshot_from_mappings(
+            snapshot.server_name,
+            selected,
+        )
+        with patch.object(
+            server_log_config,
+            "_build_snapshot",
+            AsyncMock(return_value=(SimpleNamespace(name="web01"), snapshot)),
+        ):
+            prepared = await catalog.OPERATION_BROKER.aprepare(
+                OperationCall(
+                    id="apply-selected-logs",
+                    name="apply_server_log_config",
+                    args={
+                        "server_name": "web01",
+                        "mappings": [item.model_dump() for item in selected],
+                    },
+                ),
+                OperationContext(
+                    actor_id="operator-1",
+                    actor_role="operator",
+                    run_mode="interactive",
+                ),
+            )
+
+        self.assertEqual(prepared.decision.result, "approval_required")
+        self.assertNotEqual(snapshot.preview_hash, selected_snapshot.preview_hash)
+        self.assertEqual(
+            prepared.call.args["preview_hash"], selected_snapshot.preview_hash
+        )
+        self.assertEqual(
+            prepared.call.normalized_args()["mappings"],
+            [item.model_dump() for item in selected_snapshot.mappings],
+        )
+        self.assertIn(
+            "orders-api ← docker/orders-api", prepared.approval_view["command"]
+        )
+        self.assertNotIn("worker", prepared.approval_view["command"])
+
+    async def test_selected_mapping_still_rejects_real_catalog_change(self) -> None:
+        snapshot = _snapshot()
+        requested = snapshot.mappings[0]
+        changed = server_log_config.LogMappingItem(
+            service_name=requested.service_name,
+            environment=requested.environment,
+            runtime_type="docker",
+            runtime_name="orders-api-v2",
+            log_source="docker",
+        )
+
+        with self.assertRaisesRegex(ValueError, "已不在当前服务目录"):
+            server_log_config._select_snapshot(snapshot, [changed])
+
     async def test_apply_uploads_only_fixed_map_and_runs_fixed_gateway(self) -> None:
         snapshot = _snapshot()
         server = SimpleNamespace(name="web01")
@@ -181,3 +239,49 @@ class ServerLogConfigTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(connection.commands, [log_config_executor.APPLY_COMMAND])
         self.assertTrue(result.ok)
         self.assertIn("已在 web01 应用 1 个日志源", result.message)
+
+    async def test_apply_selected_subset_ignores_unselected_catalog_entries(
+        self,
+    ) -> None:
+        full_snapshot = _snapshot()
+        selected_snapshot = server_log_config._snapshot_from_mappings(
+            full_snapshot.server_name,
+            [full_snapshot.mappings[0]],
+        )
+        server = SimpleNamespace(name="web01")
+        connection = _Connection()
+        params = SimpleNamespace(
+            host="192.0.2.10",
+            port=22,
+            username="aioms",
+            client_keys=["aioms-key"],
+        )
+        with (
+            patch.object(
+                server_log_config,
+                "_build_snapshot",
+                AsyncMock(return_value=(server, full_snapshot)),
+            ),
+            patch.object(
+                log_config_executor, "build_connect_params", return_value=params
+            ),
+            patch.object(
+                log_config_executor.asyncssh, "connect", return_value=connection
+            ),
+        ):
+            result = await server_log_config.apply_server_log_config.ainvoke(
+                {
+                    "server_name": "web01",
+                    "preview_hash": selected_snapshot.preview_hash,
+                    "mappings": [
+                        item.model_dump() for item in selected_snapshot.mappings
+                    ],
+                }
+            )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(connection.sftp.content, selected_snapshot.services_map)
+        self.assertIn(
+            "orders-api|prod|docker|orders-api|docker|-", connection.sftp.content
+        )
+        self.assertNotIn("worker", connection.sftp.content)

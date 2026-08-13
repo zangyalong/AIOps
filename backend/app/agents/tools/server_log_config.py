@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -13,7 +14,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.db.session import AsyncSessionLocal
 from app.operations.executors import log_config as log_config_executor
-from app.operations.schemas import OperationResult
+from app.operations.schemas import OperationCall, OperationContext, OperationResult
 from app.services import server_service, service_catalog_service
 
 RuntimeType = Literal["systemd", "docker", "process"]
@@ -47,7 +48,11 @@ class LogMappingItem(BaseModel):
 
 class ApplyServerLogConfigInput(BaseModel):
     server_name: str = Field(min_length=1, max_length=100)
-    preview_hash: str = Field(min_length=64, max_length=64)
+    preview_hash: str = Field(
+        default="",
+        max_length=64,
+        description="由后端审批前按本次所选 mappings 填充，Agent 不要自行生成",
+    )
     mappings: list[LogMappingItem] = Field(min_length=1, max_length=_MAX_MAPPINGS)
 
     @field_validator("server_name")
@@ -62,6 +67,8 @@ class ApplyServerLogConfigInput(BaseModel):
     @classmethod
     def validate_hash(cls, value: str) -> str:
         value = value.strip().lower()
+        if not value:
+            return ""
         if not _HASH.fullmatch(value):
             raise ValueError("必须是 64 位 SHA-256 十六进制摘要")
         return value
@@ -105,6 +112,80 @@ def _render_services_map(mappings: list[LogMappingItem]) -> str:
         for item in mappings
     )
     return "\n".join(lines) + "\n"
+
+
+def _mapping_key(item: LogMappingItem) -> tuple[str, str, str, str, str]:
+    return (
+        item.service_name,
+        item.environment,
+        item.runtime_type,
+        item.runtime_name,
+        item.log_source,
+    )
+
+
+def _mapping_sort_key(item: LogMappingItem) -> tuple[str, str, str, str]:
+    return (
+        item.environment,
+        item.service_name,
+        item.runtime_type,
+        item.runtime_name,
+    )
+
+
+def _snapshot_from_mappings(
+    server_name: str,
+    mappings: Sequence[LogMappingItem],
+    *,
+    warnings: Sequence[str] = (),
+) -> LogConfigSnapshot:
+    selected = sorted(mappings, key=_mapping_sort_key)
+    snapshot_warnings = list(warnings)
+    process_count = sum(item.log_source == "none" for item in selected)
+    if process_count:
+        snapshot_warnings.append(
+            f"{process_count} 个未纳管进程无法自动推断日志文件，保留为 none，不会采集日志"
+        )
+    requires_docker_socket = any(item.log_source == "docker" for item in selected)
+    if requires_docker_socket:
+        snapshot_warnings.append(
+            "包含 Docker 日志；目标服务器首次配置必须显式允许 ALLOW_DOCKER_SOCKET=true"
+        )
+    services_map = _render_services_map(selected)
+    return LogConfigSnapshot(
+        server_name=server_name,
+        mappings=tuple(selected),
+        services_map=services_map,
+        preview_hash=hashlib.sha256(services_map.encode("utf-8")).hexdigest(),
+        source_count=sum(item.log_source != "none" for item in selected),
+        requires_docker_socket=requires_docker_socket,
+        warnings=tuple(snapshot_warnings),
+    )
+
+
+def _select_snapshot(
+    snapshot: LogConfigSnapshot,
+    requested_mappings: Sequence[LogMappingItem],
+) -> LogConfigSnapshot:
+    """从当前全量目录中核验并冻结本次实际选择的日志映射。"""
+    current_by_key = {_mapping_key(item): item for item in snapshot.mappings}
+    selected: list[LogMappingItem] = []
+    seen: set[tuple[str, str, str, str, str]] = set()
+    for requested in requested_mappings:
+        key = _mapping_key(requested)
+        if key in seen:
+            raise ValueError(f"日志映射重复：{requested.service_name}")
+        seen.add(key)
+        current = current_by_key.get(key)
+        if current is None:
+            raise ValueError(
+                f"日志映射已不在当前服务目录：{requested.service_name} ← "
+                f"{requested.runtime_type}/{requested.runtime_name}"
+            )
+        selected.append(current)
+    if not selected:
+        raise ValueError("至少选择一个日志映射")
+    return _snapshot_from_mappings(snapshot.server_name, selected)
 
 
 async def _build_snapshot(
@@ -159,41 +240,44 @@ async def _build_snapshot(
                 )
             )
 
-    mappings.sort(
-        key=lambda item: (
-            item.environment,
-            item.service_name,
-            item.runtime_type,
-            item.runtime_name,
-        )
-    )
+    mappings.sort(key=_mapping_sort_key)
     if len(mappings) > _MAX_MAPPINGS:
         warnings.append(
             f"服务实例超过 {_MAX_MAPPINGS} 项，只生成前 {_MAX_MAPPINGS} 项；请分拆服务器或人工审核"
         )
         mappings = mappings[:_MAX_MAPPINGS]
-    services_map = _render_services_map(mappings)
-    preview_hash = hashlib.sha256(services_map.encode("utf-8")).hexdigest()
-    source_count = sum(item.log_source != "none" for item in mappings)
-    process_count = sum(item.log_source == "none" for item in mappings)
-    if process_count:
-        warnings.append(
-            f"{process_count} 个未纳管进程无法自动推断日志文件，保留为 none，不会采集日志"
-        )
-    if any(item.log_source == "docker" for item in mappings):
-        warnings.append(
-            "包含 Docker 日志；目标服务器首次配置必须显式允许 ALLOW_DOCKER_SOCKET=true"
-        )
-    snapshot = LogConfigSnapshot(
-        server_name=server.name,
-        mappings=tuple(mappings),
-        services_map=services_map,
-        preview_hash=preview_hash,
-        source_count=source_count,
-        requires_docker_socket=any(item.log_source == "docker" for item in mappings),
-        warnings=tuple(warnings),
+    snapshot = _snapshot_from_mappings(
+        server.name,
+        mappings,
+        warnings=warnings,
     )
     return server, snapshot
+
+
+async def resolve_apply_server_log_config_call(
+    call: OperationCall,
+    context: OperationContext,
+) -> OperationCall:
+    """审批前按本次所选 mappings 重新核验目录并生成专属配置哈希。"""
+    del context
+    args = call.normalized_args()
+    server, full_snapshot = await _build_snapshot(str(args["server_name"]))
+    if server is None or full_snapshot is None:
+        raise ValueError(
+            f"没有找到名称或 IP 为 {args['server_name']} 的服务器，请先确认服务器"
+        )
+    requested = [LogMappingItem.model_validate(item) for item in args["mappings"]]
+    selected_snapshot = _select_snapshot(full_snapshot, requested)
+    if selected_snapshot.source_count == 0:
+        raise ValueError("所选映射没有可自动采集的 systemd 或 Docker 日志源")
+    args.update(
+        {
+            "server_name": selected_snapshot.server_name,
+            "preview_hash": selected_snapshot.preview_hash,
+            "mappings": [item.model_dump() for item in selected_snapshot.mappings],
+        }
+    )
+    return OperationCall(id=call.id, name=call.name, args=args)
 
 
 def _snapshot_payload(snapshot: LogConfigSnapshot) -> dict[str, object]:
@@ -213,7 +297,8 @@ async def preview_server_log_config(server_name: str) -> str:
     """从已登记的服务实例生成目标服务器 Alloy 日志配置预览，不连接或修改服务器。
 
     systemd 自动映射 journald，Docker 自动映射容器 stdout/stderr，未纳管 process 因无法可靠
-    推断日志文件而标记为 none。返回的 preview_hash 和 mappings 必须原样交给写 Tool。
+    推断日志文件而标记为 none。用户可以选择全部或部分 mappings；写操作进入审批前，后端会
+    根据当前服务目录核验所选项，并为这组实际要应用的映射重新生成专属哈希。
     """
     _server, snapshot = await _build_snapshot(server_name)
     if snapshot is None:
@@ -227,7 +312,8 @@ async def preview_server_log_config(server_name: str) -> str:
         payload["next_action"] = "当前只有 process 实例，无法自动生成可采集日志源。"
     else:
         payload["next_action"] = (
-            "确认预览后，调用 apply_server_log_config；必须原样携带 preview_hash 和 mappings。"
+            "确认预览后，调用 apply_server_log_config；mappings 只提交本次确实要应用的映射，"
+            "preview_hash 由后端在审批前按所选映射重新生成。"
         )
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
@@ -235,12 +321,13 @@ async def preview_server_log_config(server_name: str) -> str:
 @tool(args_schema=ApplyServerLogConfigInput)
 async def apply_server_log_config(
     server_name: str,
-    preview_hash: str,
     mappings: list[LogMappingItem],
+    preview_hash: str = "",
 ) -> OperationResult:
     """审批后应用服务目录生成的 Alloy 配置，并启动或重载 Alloy。
 
-    工具会重新读取服务目录并核对预览哈希与每项映射；不会接受任意配置正文。核对成功后使用
+    审批前后都会重新读取服务目录，仅对本次所选 mappings 生成并核对配置哈希；目录中未选择的
+    其他服务不会造成假冲突，所选服务发生变化仍会拒绝执行。工具不会接受任意配置正文。核对成功后使用
     与只读查询共用服务器的非 root AIOMS SSH 身份上传到固定暂存路径，再调用唯一允许的
     root 网关子命令。SSH 身份本身不能执行任意 root 命令。
     """
@@ -249,4 +336,5 @@ async def apply_server_log_config(
         preview_hash,
         mappings,
         build_snapshot=_build_snapshot,
+        select_snapshot=_select_snapshot,
     )
