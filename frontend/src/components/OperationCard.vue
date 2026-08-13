@@ -84,7 +84,7 @@ const formattedArgs = computed(() => JSON.stringify(props.args ?? {}, null, 2))
       </div>
     </div>
 
-    <section v-if="diff" class="operation-diff">
+    <section v-if="expanded && diff" class="operation-diff">
       <h4>文件差异</h4>
       <DiffViewer :diff="diff" />
     </section>
