@@ -303,7 +303,7 @@ class OpsAgentGraphTest(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         original = (
             "http://localhost:3000/explore?schemaVersion=1&"
-            "panes=%7B%22aioms%22%3A%7B%22datasource%22%3A%22prometheus%22%7D%7D"
+            "panes=%7B%22aiops%22%3A%7B%22datasource%22%3A%22prometheus%22%7D%7D"
             "&orgId=1"
         )
         chat_graph._ops_llm = _fake_ops_factory(
@@ -972,7 +972,7 @@ class OpsAgentGraphTest(unittest.IsolatedAsyncioTestCase):
         ids = [call["id"] for call in normalized.tool_calls]
         self.assertEqual(ids[0], "duplicate")
         self.assertNotEqual(ids[0], ids[1])
-        self.assertTrue(ids[1].startswith("call_aioms_"))
+        self.assertTrue(ids[1].startswith("call_aiops_"))
 
     def test_repeated_invalid_investigation_is_stopped_before_execution(self) -> None:
         history = [

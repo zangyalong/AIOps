@@ -8,7 +8,7 @@ from app.models.base import Base, TimestampMixin, UUIDMixin
 
 
 class AlertRule(Base, UUIDMixin, TimestampMixin):
-    """由 AIOMS 管理并同步到 Prometheus 的告警规则。"""
+    """由 AIOps 管理并同步到 Prometheus 的告警规则。"""
 
     __tablename__ = "alert_rules"
     __table_args__ = (UniqueConstraint("name", name="uq_alert_rules_name"),)

@@ -31,8 +31,8 @@ async def search_logs(
 ) -> str:
     """搜索最近 N 分钟的日志，数据来自 Loki。
 
-    - server：按 AIOMS 服务器标签过滤（如 "web-01"）。
-    - service：按服务名过滤（如 "aioms-fake-app"）。不传则查该服务器所有服务的日志。
+    - server：按 AIOps 服务器标签过滤（如 "web-01"）。
+    - service：按服务名过滤（如 "aiops-fake-app"）。不传则查该服务器所有服务的日志。
     - keyword：只保留包含该关键词的行（大小写不敏感）。
     - level：只看某个级别，取 error / warn / info 之一（按日志文本匹配）。
     - minutes：往前查多少分钟，默认 60。

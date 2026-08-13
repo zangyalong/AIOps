@@ -24,7 +24,7 @@ systemctl list-dependencies <unit>
 journalctl -u <unit> -n 100 --no-pager
 ```
 
-在 AIOMS 对话里，应把这些命令映射为当前可用的只读调查能力，不假定存在任意 systemctl Shell。
+在 AIOps 对话里，应把这些命令映射为当前可用的只读调查能力，不假定存在任意 systemctl Shell。
 
 ## 常见现象
 

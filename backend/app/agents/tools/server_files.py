@@ -27,7 +27,7 @@ from app.services.ssh_service import (
     build_connect_params,
 )
 
-FILE_READ_GATEWAY = "/usr/local/sbin/aioms-file-read"
+FILE_READ_GATEWAY = "/usr/local/sbin/aiops-file-read"
 MAX_FILE_BYTES = 65_536
 MAX_DIFF_CHARS = 12_000
 MAX_CONFIG_VALUE_BYTES = 4_096
@@ -294,9 +294,9 @@ def _connect_params_or_error(
     try:
         return build_connect_params(server), None
     except SSHNotConfigured:
-        return None, "目标服务器没有配置 AIOMS SSH 身份，无法访问文件。"
+        return None, "目标服务器没有配置 AIOps SSH 身份，无法访问文件。"
     except SSHKeyMissing as exc:
-        return None, f"{exc}，请确认 AIOMS 私钥位置。"
+        return None, f"{exc}，请确认 AIOps 私钥位置。"
 
 
 async def _run_read_gateway(

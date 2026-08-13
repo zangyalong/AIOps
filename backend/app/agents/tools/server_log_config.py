@@ -95,7 +95,7 @@ def _mapping_source(runtime_type: str) -> LogSource:
 
 def _render_services_map(mappings: list[LogMappingItem]) -> str:
     lines = [
-        "# 由 AIOMS 服务目录自动生成；不要直接编辑。",
+        "# 由 AIOps 服务目录自动生成；不要直接编辑。",
         "# service|environment|runtime_type|runtime_name|log_source|log_path",
     ]
     lines.extend(
@@ -328,7 +328,7 @@ async def apply_server_log_config(
 
     审批前后都会重新读取服务目录，仅对本次所选 mappings 生成并核对配置哈希；目录中未选择的
     其他服务不会造成假冲突，所选服务发生变化仍会拒绝执行。工具不会接受任意配置正文。核对成功后使用
-    与只读查询共用服务器的非 root AIOMS SSH 身份上传到固定暂存路径，再调用唯一允许的
+    与只读查询共用服务器的非 root AIOps SSH 身份上传到固定暂存路径，再调用唯一允许的
     root 网关子命令。SSH 身份本身不能执行任意 root 命令。
     """
     return await log_config_executor.apply_server_log_config(

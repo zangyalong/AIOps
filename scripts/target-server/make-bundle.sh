@@ -100,7 +100,7 @@ done
 
 CONFIG_PATH="$(cd -- "$(dirname -- "$CONFIG_PATH")" && pwd)/$(basename -- "$CONFIG_PATH")"
 
-AIOMS_SSH_USER=""
+AIOPS_SSH_USER=""
 CONFIG_SERVER_NAME=""
 ALLOY_SERVICE_MAP=""
 ENABLE_MYSQL_EXPORTER="false"
@@ -128,7 +128,7 @@ while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
     key="$(trim "${line%%=*}")"
     value="$(trim "${line#*=}")"
     case "$key" in
-        AIOMS_SSH_USER|SERVER_NAME|ALLOY_SERVICE_MAP|\
+        AIOPS_SSH_USER|SERVER_NAME|ALLOY_SERVICE_MAP|\
         ENABLE_MYSQL_EXPORTER|MYSQL_EXPORTER_CONFIG|ENABLE_POSTGRES_EXPORTER|\
         POSTGRES_EXPORTER_PASSWORD_FILE|ENABLE_REDIS_EXPORTER|REDIS_EXPORTER_PASSWORD_FILE)
             [[ "$SEEN_KEYS" != *"|$key|"* ]] || fail "配置项重复：$key"
@@ -136,7 +136,7 @@ while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
             ;;
     esac
     case "$key" in
-        AIOMS_SSH_USER) AIOMS_SSH_USER="$value" ;;
+        AIOPS_SSH_USER) AIOPS_SSH_USER="$value" ;;
         SERVER_NAME) CONFIG_SERVER_NAME="$value" ;;
         ALLOY_SERVICE_MAP) ALLOY_SERVICE_MAP="$value" ;;
         ENABLE_MYSQL_EXPORTER) ENABLE_MYSQL_EXPORTER="$value" ;;
@@ -149,8 +149,8 @@ while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
 done <"$CONFIG_PATH"
 
 readonly USER_PATTERN='^[a-z_][a-z0-9_-]*[$]?$'
-[[ "$AIOMS_SSH_USER" =~ $USER_PATTERN ]] || fail "deploy.conf 的 AIOMS_SSH_USER 不合法"
-[[ "$AIOMS_SSH_USER" != "root" ]] || fail "AIOMS_SSH_USER 不能是 root"
+[[ "$AIOPS_SSH_USER" =~ $USER_PATTERN ]] || fail "deploy.conf 的 AIOPS_SSH_USER 不合法"
+[[ "$AIOPS_SSH_USER" != "root" ]] || fail "AIOPS_SSH_USER 不能是 root"
 [[ "$CONFIG_SERVER_NAME" == "$SERVER_NAME" ]] ||
     fail "deploy.conf 的 SERVER_NAME 必须与 --server 一致"
 
@@ -162,8 +162,8 @@ for boolean_value in \
         fail "exporter 开关只能是 true 或 false"
 done
 
-readonly BUNDLE_NAME="aioms-$SERVER_NAME"
-stage_root="$(mktemp -d /tmp/aioms-bundle.XXXXXX)"
+readonly BUNDLE_NAME="aiops-$SERVER_NAME"
+stage_root="$(mktemp -d /tmp/aiops-bundle.XXXXXX)"
 cleanup() {
     rm -rf -- "$stage_root"
 }
@@ -174,7 +174,7 @@ readonly GENERATED_ROOT="$stage_root/generated"
     --server "$SERVER_NAME" \
     --host "$SERVER_HOST" \
     --port "$SSH_PORT" \
-    --user "$AIOMS_SSH_USER" \
+    --user "$AIOPS_SSH_USER" \
     --key-dir "$KEY_DIR" \
     --generated-root "$GENERATED_ROOT"
 
@@ -203,7 +203,7 @@ package_tar="$stage_root/target-server.tar"
     tar -xf "$package_tar"
 )
 
-install -m 0644 "$ROLE_SOURCE/aioms.pub" "$ROLE_COPY/aioms.pub"
+install -m 0644 "$ROLE_SOURCE/aiops.pub" "$ROLE_COPY/aiops.pub"
 install -m 0755 "$ROLE_SOURCE/configure-role.sh" "$ROLE_COPY/configure-role.sh"
 install -m 0644 \
     "$ROLE_SOURCE/client-connection-info.txt" "$ROLE_COPY/client-connection-info.txt"
@@ -242,7 +242,7 @@ cat >"$BUNDLE_DIR/install.sh" <<EOF
 set -euo pipefail
 
 fail() {
-    echo "aioms-target-install: \$*" >&2
+    echo "aiops-target-install: \$*" >&2
     exit 1
 }
 
@@ -254,13 +254,13 @@ command -v sha256sum >/dev/null 2>&1 || fail "服务器缺少 sha256sum"
     sha256sum -c SHA256SUMS
 )
 
-"\$SCRIPT_DIR/role/configure-role.sh" --user "$AIOMS_SSH_USER"
+"\$SCRIPT_DIR/role/configure-role.sh" --user "$AIOPS_SSH_USER"
 "\$SCRIPT_DIR/target-server/install-runtime.sh" "\$SCRIPT_DIR/target-server"
-"/opt/aioms-target-server/deploy.sh" \
-    --config "/opt/aioms-target-server/deploy.conf"
+"/opt/aiops-target-server/deploy.sh" \
+    --config "/opt/aiops-target-server/deploy.conf"
 
-echo "AIOMS 目标服务器首次安装完成。"
-echo "现在可以在 AIOMS 对话中发现并注册 $SERVER_NAME 上的服务。"
+echo "AIOps 目标服务器首次安装完成。"
+echo "现在可以在 AIOps 对话中发现并注册 $SERVER_NAME 上的服务。"
 EOF
 chmod 0755 "$BUNDLE_DIR/install.sh"
 

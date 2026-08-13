@@ -24,7 +24,7 @@ class ServiceControlInput(BaseModel):
         min_length=1,
         max_length=200,
         description=(
-            "AIOMS 服务目录中的业务服务名，例如 pixel-forge-frontend；"
+            "AIOps 服务目录中的业务服务名，例如 pixel-forge-frontend；"
             "不要填写 .service 单元名或 Docker 容器名。"
         ),
     )

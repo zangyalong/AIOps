@@ -248,7 +248,7 @@ onMounted(loadRules)
     <section class="rules-panel">
       <div class="panel-heading">
         <div>
-          <h2>AIOMS 管理的规则</h2>
+          <h2>AIOps 管理的规则</h2>
           <p>保存、启停或删除后会自动重载 Prometheus；“同步”用于重新应用数据库中的全部规则。</p>
         </div>
         <button type="button" class="text-button" :disabled="loading" @click="loadRules()">

@@ -28,8 +28,8 @@ from app.services.ssh_service import (
 _SAFE_SYSTEMD_UNIT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.@:-]{0,199}")
 _SAFE_CONTAINER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,199}")
 _LISTENER_PID = re.compile(r"pid=(\d+)")
-_DOCKER_READ_WRAPPER = "/usr/local/sbin/aioms-docker-read"
-_SERVICE_READ_WRAPPER = "/usr/local/sbin/aioms-service-read"
+_DOCKER_READ_WRAPPER = "/usr/local/sbin/aiops-docker-read"
+_SERVICE_READ_WRAPPER = "/usr/local/sbin/aiops-service-read"
 _CHECK_TIMEOUT_SECONDS = 10
 _MAX_LISTENER_PIDS = 100
 

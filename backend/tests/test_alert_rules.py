@@ -115,7 +115,7 @@ class AlertRuleFileTests(unittest.TestCase):
         document = yaml.safe_load(_render_rules_document([rule]))
 
         annotations = document["groups"][0]["rules"][0]["annotations"]
-        self.assertEqual(annotations["aioms_revision"], _rule_revision(rule))
+        self.assertEqual(annotations["aiops_revision"], _rule_revision(rule))
 
     def test_write_replaces_rule_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -147,36 +147,36 @@ class AlertRuleReloadWaitTests(unittest.IsolatedAsyncioTestCase):
         expected = {"NodeCpuUsageHigh": "new-version"}
         old_group = [
             {
-                "name": "aioms-managed-alerts",
+                "name": "aiops-managed-alerts",
                 "rules": [
                     {
                         "name": "NodeCpuUsageHigh",
                         "state": "firing",
-                        "annotations": {"aioms_revision": "old-version"},
+                        "annotations": {"aiops_revision": "old-version"},
                     }
                 ],
             }
         ]
         new_group_before_evaluation = [
             {
-                "name": "aioms-managed-alerts",
+                "name": "aiops-managed-alerts",
                 "rules": [
                     {
                         "name": "NodeCpuUsageHigh",
                         "state": "unknown",
-                        "annotations": {"aioms_revision": "new-version"},
+                        "annotations": {"aiops_revision": "new-version"},
                     }
                 ],
             }
         ]
         new_group_after_evaluation = [
             {
-                "name": "aioms-managed-alerts",
+                "name": "aiops-managed-alerts",
                 "rules": [
                     {
                         "name": "NodeCpuUsageHigh",
                         "state": "firing",
-                        "annotations": {"aioms_revision": "new-version"},
+                        "annotations": {"aiops_revision": "new-version"},
                     }
                 ],
             }

@@ -14,7 +14,7 @@ usage() {
   sudo ./install.sh \
     --server web01 \
     --loki-url http://监控服务器:3100/loki/api/v1/push \
-    --ssh-user aioms \
+    --ssh-user aiops \
     --install-only \
     [--allow-docker-socket]
 
@@ -22,7 +22,7 @@ usage() {
   sudo ./install.sh \
     --server web01 \
     --loki-url http://监控服务器:3100/loki/api/v1/push \
-    --ssh-user aioms \
+    --ssh-user aiops \
     --map ./services.map \
     [--allow-docker-socket] \
     [--no-start]
@@ -41,17 +41,17 @@ EOF
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly CONFIG_DIR="/etc/alloy"
 readonly CONFIG_PATH="$CONFIG_DIR/config.alloy"
-readonly AIOMS_CONFIG_DIR="/etc/aioms"
-readonly TARGET_CONFIG="$AIOMS_CONFIG_DIR/alloy-target.conf"
-readonly LIBEXEC_DIR="/usr/local/libexec/aioms"
+readonly AIOPS_CONFIG_DIR="/etc/aiops"
+readonly TARGET_CONFIG="$AIOPS_CONFIG_DIR/alloy-target.conf"
+readonly LIBEXEC_DIR="/usr/local/libexec/aiops"
 readonly INSTALLED_GENERATOR="$LIBEXEC_DIR/generate-alloy-config"
 readonly INSTALLED_APPLIER="$LIBEXEC_DIR/apply-alloy-config"
-readonly DEPLOY_STATE_DIR="/var/lib/aioms"
+readonly DEPLOY_STATE_DIR="/var/lib/aiops"
 readonly DEPLOY_INCOMING_DIR="$DEPLOY_STATE_DIR/incoming"
 
 SERVER_NAME=""
 LOKI_PUSH_URL=""
-SSH_USER="aioms"
+SSH_USER="aiops"
 SERVICE_MAP=""
 ALLOW_DOCKER_SOCKET=false
 INSTALL_ONLY=false
@@ -147,7 +147,7 @@ validate_http_url() {
     fail "--loki-url 必须是 http(s)://.../loki/api/v1/push"
 [[ "$SSH_USER" =~ $USER_PATTERN ]] || fail "--ssh-user 格式不合法"
 [[ "$SSH_USER" != "root" ]] || fail "--ssh-user 不能是 root"
-id "$SSH_USER" >/dev/null 2>&1 || fail "AIOMS SSH 用户不存在：$SSH_USER"
+id "$SSH_USER" >/dev/null 2>&1 || fail "AIOps SSH 用户不存在：$SSH_USER"
 validate_http_url "--apt-repo-url" "$APT_REPO_URL"
 validate_http_url "--apt-gpg-key-url" "$APT_GPG_KEY_URL"
 validate_http_url "--rpm-repo-url" "$RPM_REPO_URL"
@@ -233,7 +233,7 @@ install_alloy_package() {
         fi
 
         # 仓库文件只在安装期间生效。无论成功、失败还是被中断，子 Shell 的 EXIT trap
-        # 都会恢复服务器原有配置，避免 AIOMS 永久改变系统软件源。
+        # 都会恢复服务器原有配置，避免 AIOps 永久改变系统软件源。
         (
             cleanup_temporary_repo() {
                 dnf -q --disablerepo='*' --enablerepo=grafana clean metadata \
@@ -247,7 +247,7 @@ install_alloy_package() {
             trap cleanup_temporary_repo EXIT
 
             if [[ -e "$repo_path" || -L "$repo_path" ]]; then
-                repo_backup="$(mktemp /tmp/aioms-grafana-repo.XXXXXX)"
+                repo_backup="$(mktemp /tmp/aiops-grafana-repo.XXXXXX)"
                 rm -f -- "$repo_backup"
                 cp -a -- "$repo_path" "$repo_backup"
                 repo_existed=true
@@ -289,12 +289,12 @@ for journal_group in adm systemd-journal; do
     fi
 done
 
-install -d -o root -g root -m 0755 "$LIBEXEC_DIR" "$AIOMS_CONFIG_DIR" "$DEPLOY_STATE_DIR"
+install -d -o root -g root -m 0755 "$LIBEXEC_DIR" "$AIOPS_CONFIG_DIR" "$DEPLOY_STATE_DIR"
 install -d -o "$SSH_USER" -g "$(id -gn "$SSH_USER")" -m 0700 "$DEPLOY_INCOMING_DIR"
 install -o root -g root -m 0755 "$SCRIPT_DIR/generate-config.sh" "$INSTALLED_GENERATOR"
-install -o root -g root -m 0755 "$SCRIPT_DIR/aioms-alloy-apply" "$INSTALLED_APPLIER"
+install -o root -g root -m 0755 "$SCRIPT_DIR/aiops-alloy-apply" "$INSTALLED_APPLIER"
 
-temp_target_config="$(mktemp "$AIOMS_CONFIG_DIR/.alloy-target.XXXXXX")"
+temp_target_config="$(mktemp "$AIOPS_CONFIG_DIR/.alloy-target.XXXXXX")"
 cleanup_target_config() {
     rm -f -- "$temp_target_config"
 }
@@ -316,7 +316,7 @@ if [[ "$INSTALL_ONLY" == true ]]; then
         systemctl disable --now alloy >/dev/null 2>&1 || true
     fi
     echo "Alloy 基础组件已安装，但没有服务映射，因此未启动。"
-    echo "服务注册后由 AIOMS 预览并审批应用日志配置。"
+    echo "服务注册后由 AIOps 预览并审批应用日志配置。"
     exit 0
 fi
 
@@ -331,7 +331,7 @@ if map_uses_source docker; then
     echo "已把 alloy 加入 $docker_group 组；该组通常拥有接近 root 的 Docker 控制权限。"
 fi
 
-generated_config="$(mktemp /tmp/aioms-alloy-config.XXXXXX)"
+generated_config="$(mktemp /tmp/aiops-alloy-config.XXXXXX)"
 cleanup_generated_config() {
     rm -f -- "$generated_config"
 }

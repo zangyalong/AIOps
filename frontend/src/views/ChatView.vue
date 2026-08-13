@@ -90,7 +90,7 @@ const activeRunId = ref<string | null>(null)
 const lastEventSequence = ref(0)
 let subscriptionController: AbortController | null = null
 let loadVersion = 0
-const SERVER_CONTEXT_STORAGE_KEY = 'aioms.chat.default-server-by-conversation'
+const SERVER_CONTEXT_STORAGE_KEY = 'aiops.chat.default-server-by-conversation'
 
 let uidCounter = 0
 function uid(): string {

@@ -198,7 +198,7 @@ class FileGatewayContractTest(unittest.TestCase):
             common = temp_dir / "file-common"
             common.write_text(
                 "MAX_FILE_BYTES=65536\n"
-                'file_fail() { echo "aioms-file-read: $*" >&2; exit 1; }\n'
+                'file_fail() { echo "aiops-file-read: $*" >&2; exit 1; }\n'
                 "require_root_gateway() { :; }\n"
                 "validate_policy_file() { :; }\n"
                 "canonical_existing_path() { printf '%s\\n' \"$1\"; }\n"
@@ -206,12 +206,12 @@ class FileGatewayContractTest(unittest.TestCase):
                 "policy_allows_read() { return 0; }\n"
                 "validate_text_file() { :; }\n"
             )
-            gateway = temp_dir / "aioms-file-read"
+            gateway = temp_dir / "aiops-file-read"
             gateway.write_text(
-                (FILES_DIR / "aioms-file-read")
+                (FILES_DIR / "aiops-file-read")
                 .read_text()
                 .replace(
-                    'readonly COMMON="/usr/local/libexec/aioms/file-common"',
+                    'readonly COMMON="/usr/local/libexec/aiops/file-common"',
                     f"readonly COMMON={shlex.quote(str(common))}",
                 )
             )
@@ -232,10 +232,10 @@ class FileGatewayContractTest(unittest.TestCase):
     def test_fixed_gateways_expose_structured_patch_without_service_actions(
         self,
     ) -> None:
-        reader = (FILES_DIR / "aioms-file-read").read_text()
-        writer = (FILES_DIR / "aioms-file-write").read_text()
+        reader = (FILES_DIR / "aiops-file-read").read_text()
+        writer = (FILES_DIR / "aiops-file-write").read_text()
         installer = (FILES_DIR / "install.sh").read_text()
-        sudoers = (FILES_DIR / "aioms-files.sudoers").read_text()
+        sudoers = (FILES_DIR / "aiops-files.sudoers").read_text()
 
         self.assertIn("config-preview", reader)
         self.assertIn("policy_allows_write", reader)
@@ -252,9 +252,9 @@ class FileGatewayContractTest(unittest.TestCase):
 
     def test_gateway_shell_scripts_parse(self) -> None:
         for script_name in (
-            "aioms-file-common",
-            "aioms-file-read",
-            "aioms-file-write",
+            "aiops-file-common",
+            "aiops-file-read",
+            "aiops-file-write",
             "install.sh",
         ):
             with self.subTest(script=script_name):

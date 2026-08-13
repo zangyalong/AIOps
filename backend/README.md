@@ -1,6 +1,6 @@
-# AIOMS Backend
+# AIOps Backend
 
-AIOMS 的 FastAPI 后端，负责业务 API、LangGraph Ops Agent 工作流、工具调用、告警接入和后台自动诊断。
+AIOps 的 FastAPI 后端，负责业务 API、LangGraph Ops Agent 工作流、工具调用、告警接入和后台自动诊断。
 
 当前后端已经接入 PostgreSQL、Prometheus、Loki、Alertmanager、Grafana、Redis/arq 和受控 SSH 工具，不再是只有模拟数据的聊天 Demo。
 
@@ -52,7 +52,7 @@ Agent 对外只认识“调查”和“变更”。`investigate` 是统一运维
 - Redis：告警自动诊断队列需要
 - Docker Desktop：本地 PLG 数据栈和 SSH 测试沙箱需要
 
-PostgreSQL 当前不在 `docker-compose.yml` 中，项目默认连接宿主机上的 `aioms` 数据库。
+PostgreSQL 当前不在 `docker-compose.yml` 中，项目默认连接宿主机上的 `aiops` 数据库。
 
 ## 首次配置
 
@@ -67,7 +67,7 @@ uv sync
 编辑 `backend/.env`，至少填写：
 
 ```dotenv
-DATABASE_URL=postgresql+psycopg://你的用户名@localhost:5432/aioms
+DATABASE_URL=postgresql+psycopg://你的用户名@localhost:5432/aiops
 DEEPSEEK_API_KEY=你的密钥
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-v4-flash
@@ -78,8 +78,8 @@ DEEPSEEK_MODEL=deepseek-v4-flash
 创建本地数据库的示例：
 
 ```bash
-createdb aioms
-psql -d aioms -c "select current_database();"
+createdb aiops
+psql -d aiops -c "select current_database();"
 ```
 
 应用启动时会执行 `Base.metadata.create_all()`，自动创建缺失的表，但不会修改已有表结构。开发期修改已有字段时仍需手工执行 `ALTER TABLE` 或删除本地表后重建。
@@ -100,7 +100,7 @@ uv run python scripts/migrate_chat_runs.py
 
 | 变量                              | 默认值                       | 用途                                                  |
 | --------------------------------- | ---------------------------- | ----------------------------------------------------- |
-| `DATABASE_URL`                  | 本机`aioms` 库             | PostgreSQL 异步连接                                   |
+| `DATABASE_URL`                  | 本机`aiops` 库             | PostgreSQL 异步连接                                   |
 | `DEEPSEEK_API_KEY`              | 空                           | DeepSeek API 密钥                                     |
 | `DEEPSEEK_BASE_URL`             | `https://api.deepseek.com` | OpenAI 兼容接口地址                                   |
 | `DEEPSEEK_MODEL`                | `deepseek-v4-flash`        | 对话、路由和回答模型                                  |
@@ -117,7 +117,7 @@ uv run python scripts/migrate_chat_runs.py
 
 SSH 私钥默认放在仓库根目录的 `ssh/`，数据库只保存私钥文件名。具体测试方法见 [`docs/local-ssh-sandbox.md`](../docs/local-ssh-sandbox.md)。
 只读查询和审批后的固定网关写操作统一使用 `ssh_user` / `ssh_key_filename` 对应的非 root
-AIOMS 身份；目标服务器 sudoers 只授权 root 持有的白名单包装器，不开放任意 `systemctl`、
+AIOps 身份；目标服务器 sudoers 只授权 root 持有的白名单包装器，不开放任意 `systemctl`、
 Shell、Docker 或 root 登录。服务器编辑页还会把
 非敏感部署参数保存在 `servers.deployment_config`；数据库 exporter 密码只用于当次下载或部署
 请求，不会落库。
@@ -127,9 +127,9 @@ Shell、Docker 或 root 登录。服务器编辑页还会把
 临时配置和数据库凭据。后端运行机器需要有 Bash、`ssh-keygen`、`tar` 和
 `sha256sum`（macOS 可使用 `shasum`），并且 `SSH_KEY_DIR` 对后端进程可写。
 
-首次安装包会把 root 所有的固定部署程序安装到 `/opt/aioms-target-server`。此后页面按钮或高风险
+首次安装包会把 root 所有的固定部署程序安装到 `/opt/aiops-target-server`。此后页面按钮或高风险
 写 Tool 可调用 `POST /servers/{server_id}/deploy`：后端只上传经过 Pydantic 校验的配置与本次
-请求凭据，再通过 `aioms-target-deploy apply-config` 固定网关应用。Tool 不接收数据库密码，
+请求凭据，再通过 `aiops-target-deploy apply-config` 固定网关应用。Tool 不接收数据库密码，
 只复用目标服务器已有凭据；首次启用数据库密码认证需从服务器页面提交。
 
 真实目标服务器需要安装只读 Docker / 业务资产发现网关和 sudoers，文件、安装位置、参数及
@@ -263,17 +263,17 @@ tests/             # 不依赖外部服务的自动化测试
 - `runtime` 调查使用后端定义的结构化选择器查询主机资源、systemd、journal、Docker、socket 等实时状态；参数和输出继续受超时、长度及目标格式校验，但这些内部命令白名单不进入 Prompt。
 - `host` 调查进入 root-read 的宿主机语境：`/`、PATH 和程序都来自目标服务器，因而 `python --version` 等结果是宿主机事实；宿主根仍为只读，网络、控制 socket、敏感路径和运行时数据路径继续隔离。
 - `discover_server_services` 是业务资产盘点工具：固定查询 systemd、Docker、TCP/UDP 和 Unix Socket，只对监听结果中的纯数字 PID 补充运行时长、unit 和启动命令，不再读取整机进程表；第三层只保留运行至少 60 秒且不属于 systemd service / Docker scope 的进程。机器发现的运行对象不等于业务服务。
-- Docker、监听 socket 和按 PID 只读查询在 SSH 端会改写为 `sudo -n -- /usr/local/sbin/aioms-*-read ...`；目标服务器的 root 所有包装脚本会再次校验子命令、容器名和 PID，sudoers 只授权这两个网关，不开放任意 `sudo docker/ss/ps`。
+- Docker、监听 socket 和按 PID 只读查询在 SSH 端会改写为 `sudo -n -- /usr/local/sbin/aiops-*-read ...`；目标服务器的 root 所有包装脚本会再次校验子命令、容器名和 PID，sudoers 只授权这两个网关，不开放任意 `sudo docker/ss/ps`。
 - `register_server_services` 是服务目录写工具：审批卡片列出准备登记的服务器、环境和运行时映射；批准后会重新扫描核对对象仍然存在，再幂等写入逻辑服务与部署实例。
-- `preview_server_log_config` 是只读 Tool，只从服务目录生成 systemd/Docker 日志映射、摘要和警告，不连接目标服务器；`apply_server_log_config` 是高风险写 Tool，两步确认后重新计算并核对摘要，使用同一非 root AIOMS 身份上传到固定暂存路径，再调用固定 `apply-alloy` 网关校验、安装并重载 Alloy。
-- `start_service` 是中风险写工具，审批卡片确认一次；`stop_service`、`restart_service` 是高风险写工具，审批卡片后还必须在详情弹窗二次确认，后端也会校验二次确认标记。三者根据服务目录中的运行时身份统一控制 systemd 服务或 Docker 容器，要求对应实例已开启“控制授权”，并通过同一非 root AIOMS 身份调用固定 `aioms-service-control` 网关。
-- `recreate_compose_service` 是独立高风险工具，用于应用 `.env` 插值和端口映射等必须重建容器才生效的配置。它只接受已登记且已授权的容器名；目标机 `aioms-compose-recreate` 从容器标签反查 Compose 项目，限定目标 service 为单副本并执行 `up -d --no-deps --force-recreate --no-build --pull never`，不接受路径或额外 flags。同一项目可以包含其他 service，它们不会随目标重建。
+- `preview_server_log_config` 是只读 Tool，只从服务目录生成 systemd/Docker 日志映射、摘要和警告，不连接目标服务器；`apply_server_log_config` 是高风险写 Tool，两步确认后重新计算并核对摘要，使用同一非 root AIOps 身份上传到固定暂存路径，再调用固定 `apply-alloy` 网关校验、安装并重载 Alloy。
+- `start_service` 是中风险写工具，审批卡片确认一次；`stop_service`、`restart_service` 是高风险写工具，审批卡片后还必须在详情弹窗二次确认，后端也会校验二次确认标记。三者根据服务目录中的运行时身份统一控制 systemd 服务或 Docker 容器，要求对应实例已开启“控制授权”，并通过同一非 root AIOps 身份调用固定 `aiops-service-control` 网关。
+- `recreate_compose_service` 是独立高风险工具，用于应用 `.env` 插值和端口映射等必须重建容器才生效的配置。它只接受已登记且已授权的容器名；目标机 `aiops-compose-recreate` 从容器标签反查 Compose 项目，限定目标 service 为单副本并执行 `up -d --no-deps --force-recreate --no-build --pull never`，不接受路径或额外 flags。同一项目可以包含其他 service，它们不会随目标重建。
 - `find_server_files` / `read_server_file` 只在服务实例已登记的文件范围内查找和读取不超过 64 KiB 的文本配置；目标机固定网关做真实路径校验，敏感字段按整行脱敏，私钥、shadow、sudoers 等路径始终禁止。
 - `preview_server_file_update` 先重新读取当前文件并生成统一差异；`update_server_file` 是高风险写工具，要求精确文件授权、审批卡片与详情弹窗两步确认，并重新核对旧内容 SHA-256、预览摘要和完整 diff。目标机写网关保存 root 备份、保留原所有权/权限并原子替换；含敏感字段的文件不能用通用工具整文件覆盖。
 - `preview_server_config_patch` / `patch_server_config` 补充字段级配置修改：dotenv 使用变量名、JSON 使用 JSON Pointer，只允许更新已存在的非敏感标量。预览和补丁都在目标机固定网关中完成，其他真实字段不进入模型；执行仍核对旧文件 SHA-256、审批摘要并备份原子替换。YAML 在固定的保格式解析器落地前保持拒绝。
 - 文件工具只负责编辑文件，不执行配置校验、reload、服务重启或部署。若用户要求让配置生效，Agent 必须在文件修改成功后通过独立调查和服务变更工具继续，每个后续写操作使用自己的审批目标。
 - 配置写入与运行时生效是两个证据阶段：若 Docker Compose 仅在创建容器时使用 `.env` 插值，普通容器 start/restart 不能替代 recreate。Agent 不应先尝试用旧容器配置启动，而应在文件补丁成功后直接提交 `recreate_compose_service` 审批，再核验新容器、端口和健康状态。
-- 服务目录开关通过固定 `aioms-service-policy add/remove` 网关同步目标服务器 root 白名单；远端成功后才保存数据库状态，数据库保存失败时会尽力回滚远端。策略网关不执行启停、不接受文件路径或 Shell，服务发现和目录注册也不会自动调用它。
+- 服务目录开关通过固定 `aiops-service-policy add/remove` 网关同步目标服务器 root 白名单；远端成功后才保存数据库状态，数据库保存失败时会尽力回滚远端。策略网关不执行启停、不接受文件路径或 Shell，服务发现和目录注册也不会自动调用它。
 - 已授权实例不能直接修改服务器/运行时身份或删除，逻辑服务也不能级联删除仍授权的实例；必须先关闭授权，让目标服务器移除白名单后再修改目录。
 
 - `create_alert_rule` 是中风险写工具：人工审批后复用预警规则页面相同的字段校验、PromQL 校验、数据库写入和 Prometheus 热重载流程。

@@ -8,7 +8,7 @@ Alloy 安装在目标服务器，从已经登记的 systemd 或 Docker 运行对
 
 ```text
 service
-service_name    # 兼容现有 AIOMS 日志查询
+service_name    # 兼容现有 AIOps 日志查询
 environment
 server
 runtime_type
@@ -50,7 +50,7 @@ GPG 公钥地址（APT 使用 `ALLOY_APT_*`，DNF 使用 `ALLOY_RPM_*`）。
 
 ## 2. 通过对话发现和注册服务
 
-基础部署完成后对 AIOMS 说：
+基础部署完成后对 AIOps 说：
 
 ```text
 发现 web01 上的服务，并注册到服务目录。
@@ -85,8 +85,8 @@ AI 先调用只读 `discover_server_services`，再把选中的 systemd、Docker
 
 1. 重新读取服务目录，核对摘要和每项映射，变化时拒绝应用并要求重新预览。
 2. 使用服务器记录中的非 root `ssh_user` / `ssh_key_filename`；读写共用身份，但权限仍由固定网关隔离。
-3. 只把自动生成的映射上传到 `/var/lib/aioms/incoming/services.map`。
-4. 只执行 `sudo /usr/local/sbin/aioms-target-deploy apply-alloy`。
+3. 只把自动生成的映射上传到 `/var/lib/aiops/incoming/services.map`。
+4. 只执行 `sudo /usr/local/sbin/aiops-target-deploy apply-alloy`。
 5. root 应用器再次校验文件所有者、权限、大小和格式，运行 `alloy validate`，备份旧配置后
    启动或重载 Alloy；失败时尝试恢复旧配置。
 
@@ -104,7 +104,7 @@ Docker socket 通常赋予接近 root 的容器控制能力。服务目录中存
 sudo ./install.sh \
   --server web01 \
   --loki-url http://监控服务器:3100/loki/api/v1/push \
-  --ssh-user aioms \
+  --ssh-user aiops \
   --map ./services.map \
   --allow-docker-socket
 ```
@@ -119,12 +119,12 @@ sudo setfacl -R -d -m u:alloy:rx /var/log/mysql
 ## 5. 安装后的固定文件
 
 ```text
-/etc/aioms/alloy-target.conf                 # root 确定的服务器/Loki/Docker 策略
-/etc/aioms/alloy-services.map                # 最近一次成功应用的服务映射
+/etc/aiops/alloy-target.conf                 # root 确定的服务器/Loki/Docker 策略
+/etc/aiops/alloy-services.map                # 最近一次成功应用的服务映射
 /etc/alloy/config.alloy                      # Alloy 实际运行配置
-/usr/local/libexec/aioms/generate-alloy-config
-/usr/local/libexec/aioms/apply-alloy-config
-/var/lib/aioms/incoming/                      # 仅 aioms 用户可写的暂存目录
+/usr/local/libexec/aiops/generate-alloy-config
+/usr/local/libexec/aiops/apply-alloy-config
+/var/lib/aiops/incoming/                      # 仅 aiops 用户可写的暂存目录
 ```
 
 ## 6. 检查与排错

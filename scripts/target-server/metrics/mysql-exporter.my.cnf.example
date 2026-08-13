@@ -1,6 +1,6 @@
 # 请复制为 mysql-exporter.my.cnf，并使用专用只读监控账号。
 [client]
-user=aioms_exporter
+user=aiops_exporter
 password=CHANGE_ME
 host=127.0.0.1
 port=3306

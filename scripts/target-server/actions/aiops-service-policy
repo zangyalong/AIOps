@@ -4,20 +4,20 @@ set -euo pipefail
 PATH=/usr/sbin:/usr/bin:/usr/local/bin:/sbin:/bin
 
 fail() {
-    echo "aioms-service-policy: $*" >&2
+    echo "aiops-service-policy: $*" >&2
     exit 1
 }
 
 [[ $EUID -eq 0 ]] || fail "必须由 root 通过 sudoers 调用"
 [[ $# -eq 3 ]] ||
-    fail "用法：aioms-service-policy add|remove systemd|docker RUNTIME_NAME"
+    fail "用法：aiops-service-policy add|remove systemd|docker RUNTIME_NAME"
 
 readonly ACTION="$1"
 readonly RUNTIME_TYPE="$2"
 readonly RUNTIME_NAME="$3"
-readonly POLICY_DIR="/etc/aioms"
+readonly POLICY_DIR="/etc/aiops"
 readonly ALLOWLIST="$POLICY_DIR/service-control.allowlist"
-readonly LOCK_FILE="/run/lock/aioms-service-policy.lock"
+readonly LOCK_FILE="/run/lock/aiops-service-policy.lock"
 readonly SERVICE_PATTERN='^[A-Za-z0-9][A-Za-z0-9_.@:-]*\.service$'
 readonly CONTAINER_PATTERN='^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$'
 readonly TARGET="$RUNTIME_TYPE:$RUNTIME_NAME"

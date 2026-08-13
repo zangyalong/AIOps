@@ -19,21 +19,21 @@ from app.services.ssh_service import (
     build_connect_params,
 )
 
-ROOT_READ_GATEWAY = "/usr/local/sbin/aioms-root-read"
+ROOT_READ_GATEWAY = "/usr/local/sbin/aiops-root-read"
 ROOT_READ_REMOTE_COMMAND = f"sudo -n -- {ROOT_READ_GATEWAY}"
 ROOT_READ_TIMEOUT_SECONDS = 20
 SSH_TIMEOUT_SECONDS = 35
 MAX_COMMAND_CHARS = 8_192
 MAX_OUTPUT_CHARS = 12_000
 ROOT_READ_TOOLBOX_NOTICE = (
-    "[执行语境] Shell、PATH、程序版本及未加 /host 前缀的路径都属于 AIOMS "
-    "诊断容器，不属于目标服务器；宿主机文件根是 /host。看到 AIOMS_PATH_MASKED "
+    "[执行语境] Shell、PATH、程序版本及未加 /host 前缀的路径都属于 AIOps "
+    "诊断容器，不属于目标服务器；宿主机文件根是 /host。看到 AIOPS_PATH_MASKED "
     "表示路径已被安全遮蔽，不能判断为空或不存在。"
 )
 ROOT_READ_HOST_NOTICE = (
     "[证据范围] 命令的 /、PATH 和可执行程序均来自目标服务器；宿主文件系统只读，"
     "敏感路径和运行时控制面已遮蔽。普通 Unix 所有者及 700/777 等权限位不能用来判定 "
-    "AIOMS 是否获准读取，也不能扩大到目录内其他文件；只有实际出现 AIOMS_PATH_MASKED、权限错误或不存在"
+    "AIOps 是否获准读取，也不能扩大到目录内其他文件；只有实际出现 AIOPS_PATH_MASKED、权限错误或不存在"
     "才能判定无法读取。即使权限位允许写，本次调查也不可写。"
 )
 
@@ -123,12 +123,12 @@ async def execute_root_read(
         params = build_connect_params(server)
     except SSHNotConfigured:
         return _failure(
-            f"{parsed.server_name} 没有配置 AIOMS SSH 身份，无法执行宿主机只读调查。",
+            f"{parsed.server_name} 没有配置 AIOps SSH 身份，无法执行宿主机只读调查。",
             code="ssh_not_configured",
         )
     except SSHKeyMissing as exc:
         return _failure(
-            f"{exc}，请确认 AIOMS 私钥位置。",
+            f"{exc}，请确认 AIOps 私钥位置。",
             code="ssh_key_missing",
         )
 

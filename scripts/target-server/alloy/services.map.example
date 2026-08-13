@@ -1,4 +1,4 @@
-# AIOMS Alloy 服务映射，一行六列，用 | 分隔：
+# AIOps Alloy 服务映射，一行六列，用 | 分隔：
 # service|environment|runtime_type|runtime_name|log_source|log_path
 #
 # log_source 允许 journal/docker/file/none：

@@ -33,7 +33,7 @@ flowchart LR
 - `operations/policy.py`：纯规则判断，不访问数据库、不连接服务器，输出 `allow / approval_required / deny`。
 - `operation_records`：所有调查以独立 `execution_id` 保存统一请求、证据目标和脱敏结果；交互操作额外关联 `chat_run_id`，无人值守调查也能审计。写操作保存冻结请求、审批和状态机，且必须绑定真实 Chat Run。
 - `operations/executors/`：执行数据库复查、SSH/SFTP 和业务逻辑；即使上层批准，也不能绕过服务目录授权和参数校验。
-- `scripts/target-server/root-read/`：宿主机通用只读边界。后端可进入宿主机真实根目录执行程序，也可在内部工具箱中用 `rg/find/jq` 搜索宿主文件；两者都运行在无网络的一次性容器中，宿主根只读，敏感路径以 `AIOMS_PATH_MASKED` 明示遮蔽。执行语境由后端选择，不暴露给 Agent。
+- `scripts/target-server/root-read/`：宿主机通用只读边界。后端可进入宿主机真实根目录执行程序，也可在内部工具箱中用 `rg/find/jq` 搜索宿主文件；两者都运行在无网络的一次性容器中，宿主根只读，敏感路径以 `AIOPS_PATH_MASKED` 明示遮蔽。执行语境由后端选择，不暴露给 Agent。
 - `scripts/target-server/` 的其他目录：写操作最终权限边界。SSH 用户不能修改 root 包装脚本，sudoers 只放行固定参数入口，不开放任意宿主机写 Shell。
 
 ## 默认策略

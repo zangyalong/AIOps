@@ -357,8 +357,8 @@ class ServerFileToolValidationTest(unittest.IsolatedAsyncioTestCase):
         params = SimpleNamespace(
             host="192.0.2.10",
             port=22,
-            username="aioms",
-            client_keys=["aioms-key"],
+            username="aiops",
+            client_keys=["aiops-key"],
         )
         with (
             patch.object(
@@ -395,7 +395,7 @@ class ServerFileToolValidationTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result.ok)
         self.assertEqual(len(connection.commands), 1)
-        self.assertIn("aioms-file-write config-apply", connection.commands[0])
+        self.assertIn("aiops-file-write config-apply", connection.commands[0])
         self.assertIn("SERVER_PORT", connection.commands[0])
         self.assertNotIn("POSTGRES_PASSWORD", connection.commands[0])
 

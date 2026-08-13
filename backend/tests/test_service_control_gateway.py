@@ -40,15 +40,15 @@ class ServiceControlGatewayTest(unittest.TestCase):
             '[[ $EUID -eq 0 ]] || fail "必须由 root 通过 sudoers 调用"',
             ": # 测试在临时目录中运行，不需要 root",
         )
-        if script_name == "aioms-service-policy":
+        if script_name == "aiops-service-policy":
             content = _replace_once(
                 content,
-                'readonly POLICY_DIR="/etc/aioms"',
+                'readonly POLICY_DIR="/etc/aiops"',
                 f'readonly POLICY_DIR="{allowlist.parent}"',
             )
             content = _replace_once(
                 content,
-                'readonly LOCK_FILE="/run/lock/aioms-service-policy.lock"',
+                'readonly LOCK_FILE="/run/lock/aiops-service-policy.lock"',
                 f'readonly LOCK_FILE="{temporary_root / "policy.lock"}"',
             )
             content = _replace_once(
@@ -59,7 +59,7 @@ class ServiceControlGatewayTest(unittest.TestCase):
         else:
             content = _replace_once(
                 content,
-                'readonly ALLOWLIST="/etc/aioms/service-control.allowlist"',
+                'readonly ALLOWLIST="/etc/aiops/service-control.allowlist"',
                 f'readonly ALLOWLIST="{allowlist}"',
             )
         content = _replace_once(
@@ -67,7 +67,7 @@ class ServiceControlGatewayTest(unittest.TestCase):
             "read -r owner mode < <(stat -c '%u %a' \"$ALLOWLIST\")",
             "owner=0; mode=644",
         )
-        if script_name == "aioms-service-policy":
+        if script_name == "aiops-service-policy":
             content = _replace_once(content, 'chown root:root "$tmp"', ":")
 
         script = temporary_root / script_name
@@ -80,7 +80,7 @@ class ServiceControlGatewayTest(unittest.TestCase):
             bin_dir = root / "bin"
             bin_dir.mkdir()
             state = root / "systemd.state"
-            allowlist = root / "aioms" / "service-control.allowlist"
+            allowlist = root / "aiops" / "service-control.allowlist"
             allowlist.parent.mkdir()
             allowlist.write_text(
                 "systemd:pixel-forge-frontend.service\n", encoding="utf-8"
@@ -91,16 +91,16 @@ class ServiceControlGatewayTest(unittest.TestCase):
 if [[ "$1" == "show" ]]; then
     echo loaded
 elif [[ "$1" == "is-active" ]]; then
-    [[ -f "$AIOMS_TEST_STATE" ]] && echo active || echo inactive
+    [[ -f "$AIOPS_TEST_STATE" ]] && echo active || echo inactive
 elif [[ "$1" == "start" ]]; then
-    touch "$AIOMS_TEST_STATE"
+    touch "$AIOPS_TEST_STATE"
 else
     exit 1
 fi
 """,
             )
             script = self._prepare_script(
-                "aioms-service-control", root, allowlist=allowlist
+                "aiops-service-control", root, allowlist=allowlist
             )
 
             result = subprocess.run(
@@ -115,7 +115,7 @@ fi
                 check=False,
                 env={
                     **os.environ,
-                    "AIOMS_TEST_STATE": str(state),
+                    "AIOPS_TEST_STATE": str(state),
                     "LC_ALL": "C",
                 },
                 text=True,
@@ -129,7 +129,7 @@ fi
             root = Path(temporary_dir)
             bin_dir = root / "bin"
             bin_dir.mkdir()
-            allowlist = root / "aioms" / "service-control.allowlist"
+            allowlist = root / "aiops" / "service-control.allowlist"
             allowlist.parent.mkdir()
             allowlist.write_text(
                 "\n".join(
@@ -149,7 +149,7 @@ fi
             )
             _write_executable(bin_dir / "flock", "#!/bin/bash\nexit 0\n")
             script = self._prepare_script(
-                "aioms-service-policy", root, allowlist=allowlist
+                "aiops-service-policy", root, allowlist=allowlist
             )
 
             result = subprocess.run(

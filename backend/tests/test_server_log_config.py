@@ -204,8 +204,8 @@ class ServerLogConfigTest(unittest.IsolatedAsyncioTestCase):
         params = SimpleNamespace(
             host="192.0.2.10",
             port=22,
-            username="aioms",
-            client_keys=["aioms-key"],
+            username="aiops",
+            client_keys=["aiops-key"],
         )
         with (
             patch.object(
@@ -253,8 +253,8 @@ class ServerLogConfigTest(unittest.IsolatedAsyncioTestCase):
         params = SimpleNamespace(
             host="192.0.2.10",
             port=22,
-            username="aioms",
-            client_keys=["aioms-key"],
+            username="aiops",
+            client_keys=["aiops-key"],
         )
         with (
             patch.object(

@@ -48,7 +48,7 @@ InvestigationArea = Literal[
 ]
 
 _SOURCE_LABELS: dict[InvestigationArea, str] = {
-    "servers": "AIOMS 服务器清单",
+    "servers": "AIOps 服务器清单",
     "services": "服务目录或目标服务器运行时发现",
     "runtime": "目标服务器实时状态探针",
     "host": "目标服务器宿主机只读调查",

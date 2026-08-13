@@ -5,7 +5,7 @@ global:
   scrape_interval: 15s      # 每 15s 抓一次所有 target
   evaluation_interval: 15s  # 每 15s 评估一次告警规则
 
-# 告警规则由 AIOMS 前端管理并存入数据库，后端自动生成下面这个运行时文件；不要手工编辑。
+# 告警规则由 AIOps 前端管理并存入数据库，后端自动生成下面这个运行时文件；不要手工编辑。
 # Prometheus 按 evaluation_interval 评估这些规则，命中就把告警置为 firing 并推给 Alertmanager。
 rule_files:
   - /etc/prometheus/rules/managed_alert_rules.yml
@@ -36,7 +36,7 @@ scrape_configs:
           environment: prod
           service: mysqld
           runtime_type: docker
-          runtime_name: aioms-mysql-exporter
+          runtime_name: aiops-mysql-exporter
 
   - job_name: web01-node
     static_configs:
@@ -46,7 +46,7 @@ scrape_configs:
           environment: prod
           service: node-exporter
           runtime_type: docker
-          runtime_name: aioms-node-exporter
+          runtime_name: aiops-node-exporter
 
   - job_name: web01-cadvisor
     static_configs:
@@ -56,7 +56,7 @@ scrape_configs:
           environment: prod
           runtime_type: docker
     metric_relabel_configs:
-      - source_labels: [container_label_aioms_service]
+      - source_labels: [container_label_aiops_service]
         regex: "(.+)"
         target_label: service
       - source_labels: [service, container_label_com_docker_compose_service]
@@ -80,7 +80,7 @@ scrape_configs:
           environment: prod
           service: sub2api-postgres
           runtime_type: docker
-          runtime_name: aioms-postgres-exporter
+          runtime_name: aiops-postgres-exporter
 
   - job_name: web01-redis
     static_configs:
@@ -90,4 +90,4 @@ scrape_configs:
           environment: prod
           service: sub2api-redis
           runtime_type: docker
-          runtime_name: aioms-redis-exporter
+          runtime_name: aiops-redis-exporter

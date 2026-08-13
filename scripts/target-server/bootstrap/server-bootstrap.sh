@@ -10,30 +10,30 @@ fail() {
 usage() {
     cat <<'EOF'
 用法：
-  sudo ./configure-role.sh [--user aioms]
+  sudo ./configure-role.sh [--user aiops]
 
-请把 configure-role.sh、aioms.pub 和 SHA256SUMS 放在同一目录。
+请把 configure-role.sh、aiops.pub 和 SHA256SUMS 放在同一目录。
 本脚本只完成首次 SSH 角色初始化：创建一个普通账号、安装公钥、生成固定部署入口和最小 sudoers。
-它不会安装 AIOMS 运行包、服务发现网关、Alloy 或 exporter，也不会修改 sshd_config。
+它不会安装 AIOps 运行包、服务发现网关、Alloy 或 exporter，也不会修改 sshd_config。
 EOF
 }
 
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-readonly AIOMS_PUBLIC_KEY="$SCRIPT_DIR/aioms.pub"
+readonly AIOPS_PUBLIC_KEY="$SCRIPT_DIR/aiops.pub"
 readonly CHECKSUM_FILE="$SCRIPT_DIR/SHA256SUMS"
-readonly INSTALL_ROOT="/opt/aioms-target-server"
-readonly DEPLOY_GATEWAY="/usr/local/sbin/aioms-target-deploy"
-readonly DEPLOY_SUDOERS="/etc/sudoers.d/aioms-target-deploy"
-readonly DEPLOY_STATE_DIR="/var/lib/aioms"
+readonly INSTALL_ROOT="/opt/aiops-target-server"
+readonly DEPLOY_GATEWAY="/usr/local/sbin/aiops-target-deploy"
+readonly DEPLOY_SUDOERS="/etc/sudoers.d/aiops-target-deploy"
+readonly DEPLOY_STATE_DIR="/var/lib/aiops"
 readonly DEPLOY_INCOMING_DIR="$DEPLOY_STATE_DIR/incoming"
 
-AIOMS_USER="aioms"
+AIOPS_USER="aiops"
 
 while (($# > 0)); do
     case "$1" in
         --user)
             (($# >= 2)) || fail "--user 缺少参数"
-            AIOMS_USER="$2"
+            AIOPS_USER="$2"
             shift 2
             ;;
         -h|--help)
@@ -48,14 +48,14 @@ done
 
 readonly USER_PATTERN='^[a-z_][a-z0-9_-]*[$]?$'
 [[ $EUID -eq 0 ]] || fail "请使用 root 或 sudo 运行"
-[[ "$AIOMS_USER" =~ $USER_PATTERN ]] || fail "AIOMS 用户名格式不合法"
-[[ "$AIOMS_USER" != "root" ]] || fail "AIOMS SSH 用户不能使用 root"
+[[ "$AIOPS_USER" =~ $USER_PATTERN ]] || fail "AIOps 用户名格式不合法"
+[[ "$AIOPS_USER" != "root" ]] || fail "AIOps SSH 用户不能使用 root"
 
 for required_command in awk cut getent id install mktemp sed ssh-keygen stat visudo; do
     command -v "$required_command" >/dev/null 2>&1 || fail "服务器缺少命令：$required_command"
 done
 
-[[ -f "$AIOMS_PUBLIC_KEY" ]] || fail "找不到 AIOMS 公钥：$AIOMS_PUBLIC_KEY"
+[[ -f "$AIOPS_PUBLIC_KEY" ]] || fail "找不到 AIOps 公钥：$AIOPS_PUBLIC_KEY"
 
 if [[ -f "$CHECKSUM_FILE" ]]; then
     command -v sha256sum >/dev/null 2>&1 || fail "服务器缺少 sha256sum，无法校验角色包"
@@ -129,7 +129,7 @@ install_authorized_key() {
     install -d -o "$user_name" -g "$user_group" -m 0700 "$user_home/.ssh"
     authorized_keys="$user_home/.ssh/authorized_keys"
 
-    make_temp "/tmp/aioms-authorized-keys.XXXXXX"
+    make_temp "/tmp/aiops-authorized-keys.XXXXXX"
     temp_keys="$TEMP_PATH"
     if [[ -f "$authorized_keys" ]]; then
         awk -v key_blob="$key_blob" 'index($0, key_blob) == 0 { print }' \
@@ -145,7 +145,7 @@ install_authorized_key() {
 
 install_deploy_gateway() {
     local temp_gateway
-    make_temp "/tmp/aioms-target-deploy.XXXXXX"
+    make_temp "/tmp/aiops-target-deploy.XXXXXX"
     temp_gateway="$TEMP_PATH"
 
     cat >"$temp_gateway" <<'EOF'
@@ -154,18 +154,18 @@ install_deploy_gateway() {
 set -euo pipefail
 
 fail() {
-    echo "aioms-target-deploy: $*" >&2
+    echo "aiops-target-deploy: $*" >&2
     exit 1
 }
 
 [[ $EUID -eq 0 ]] || fail "该入口只能通过 sudo 运行"
 [[ $# -eq 1 ]] || fail "只允许 apply、apply-config 或 apply-alloy 固定子命令"
 
-readonly INSTALL_DIR="/opt/aioms-target-server"
+readonly INSTALL_DIR="/opt/aiops-target-server"
 readonly DEPLOY_SCRIPT="$INSTALL_DIR/deploy.sh"
 readonly CONFIG_PATH="$INSTALL_DIR/deploy.conf"
 readonly CONFIG_APPLY_HELPER="$INSTALL_DIR/apply-incoming-config.sh"
-readonly ALLOY_APPLY_HELPER="/usr/local/libexec/aioms/apply-alloy-config"
+readonly ALLOY_APPLY_HELPER="/usr/local/libexec/aiops/apply-alloy-config"
 
 verify_root_owned() {
     local path="$1"
@@ -203,7 +203,7 @@ case "$1" in
         exec "$CONFIG_APPLY_HELPER"
         ;;
     *)
-        fail "只允许：sudo /usr/local/sbin/aioms-target-deploy apply、apply-config 或 apply-alloy"
+        fail "只允许：sudo /usr/local/sbin/aiops-target-deploy apply、apply-config 或 apply-alloy"
         ;;
 esac
 EOF
@@ -214,17 +214,17 @@ EOF
 
 install_deploy_sudoers() {
     local temp_sudoers
-    make_temp "/etc/sudoers.d/.aioms-target-deploy.XXXXXX"
+    make_temp "/etc/sudoers.d/.aiops-target-deploy.XXXXXX"
     temp_sudoers="$TEMP_PATH"
 
     cat >"$temp_sudoers" <<EOF
-# 由 AIOMS configure-role.sh 生成。
-# aioms 普通账号只能应用管理员放在 /opt/aioms-target-server/ 下的 root 所有配置。
-Cmnd_Alias AIOMS_TARGET_DEPLOY = /usr/local/sbin/aioms-target-deploy apply, \
-    /usr/local/sbin/aioms-target-deploy apply-config, \
-    /usr/local/sbin/aioms-target-deploy apply-alloy
+# 由 AIOps configure-role.sh 生成。
+# aiops 普通账号只能应用管理员放在 /opt/aiops-target-server/ 下的 root 所有配置。
+Cmnd_Alias AIOPS_TARGET_DEPLOY = /usr/local/sbin/aiops-target-deploy apply, \
+    /usr/local/sbin/aiops-target-deploy apply-config, \
+    /usr/local/sbin/aiops-target-deploy apply-alloy
 
-$AIOMS_USER ALL=(root) NOPASSWD: AIOMS_TARGET_DEPLOY
+$AIOPS_USER ALL=(root) NOPASSWD: AIOPS_TARGET_DEPLOY
 EOF
     chmod 0440 "$temp_sudoers"
     visudo -cf "$temp_sudoers"
@@ -233,19 +233,19 @@ EOF
     echo "已生成部署 sudoers：$DEPLOY_SUDOERS"
 }
 
-ensure_user "$AIOMS_USER"
-install_authorized_key "$AIOMS_USER" "$AIOMS_PUBLIC_KEY" "AIOMS"
+ensure_user "$AIOPS_USER"
+install_authorized_key "$AIOPS_USER" "$AIOPS_PUBLIC_KEY" "AIOps"
 
 install -d -o root -g root -m 0755 "$INSTALL_ROOT"
-deploy_group="$(id -gn "$AIOMS_USER")"
+deploy_group="$(id -gn "$AIOPS_USER")"
 install -d -o root -g root -m 0755 "$DEPLOY_STATE_DIR"
-install -d -o "$AIOMS_USER" -g "$deploy_group" -m 0700 "$DEPLOY_INCOMING_DIR"
+install -d -o "$AIOPS_USER" -g "$deploy_group" -m 0700 "$DEPLOY_INCOMING_DIR"
 install_deploy_gateway
 install_deploy_sudoers
 
 echo
-echo "AIOMS SSH 角色初始化完成。"
-echo "普通账号：$AIOMS_USER"
+echo "AIOps SSH 角色初始化完成。"
+echo "普通账号：$AIOPS_USER"
 echo "固定部署入口：sudo $DEPLOY_GATEWAY apply"
 echo "自动配置入口：sudo $DEPLOY_GATEWAY apply-config"
 echo "Alloy 配置入口：sudo $DEPLOY_GATEWAY apply-alloy"

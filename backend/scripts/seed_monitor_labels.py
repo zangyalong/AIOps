@@ -5,7 +5,7 @@ monitor_labels 列要手动 ALTER。这个脚本用 ADD COLUMN IF NOT EXISTS，�
 
 配的映射（docker-test-01 是本地 Docker 沙箱 127.0.0.1）：
 - instance = node-exporter:9100（Prometheus 里的本地主机指标 / 告警）
-- service  = aioms-fake-app（Loki 里的应用日志）
+- service  = aiops-fake-app（Loki 里的应用日志）
 注：这是 demo 配对——指标是 Docker VM 的、日志是 fake-app 的，严格说不是同一个进程，但足以
 演示"给定一台机器，把三支柱在同一时间窗对齐"的关联机制。真实环境里这两个标签会指向同一实体。
 
@@ -28,7 +28,7 @@ from app.db.session import AsyncSessionLocal, engine  # noqa: E402
 from app.models.server import Server  # noqa: E402
 
 _TARGET = "docker-test-01"
-_LABELS = {"instance": "node-exporter:9100", "service": "aioms-fake-app"}
+_LABELS = {"instance": "node-exporter:9100", "service": "aiops-fake-app"}
 
 
 async def main() -> None:

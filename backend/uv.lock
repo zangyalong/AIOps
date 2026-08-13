@@ -7,7 +7,7 @@ resolution-markers = [
 ]
 
 [[package]]
-name = "aioms-backend"
+name = "aiops-backend"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

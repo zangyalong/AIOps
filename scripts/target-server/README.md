@@ -1,19 +1,19 @@
-# AIOMS 目标服务器配置指南
+# AIOps 目标服务器配置指南
 
-推荐在 AIOMS 前端的服务器编辑页填写“环境部署”并下载单服务器安装包，目标服务器解压后只
+推荐在 AIOps 前端的服务器编辑页填写“环境部署”并下载单服务器安装包，目标服务器解压后只
 执行一次 `sudo ./install.sh`。命令行 `make-bundle.sh` 仍保留，适合离线或排错。
 也可以把整个 `scripts/target-server/` 目录复制到目标 Linux 服务器，按底层步骤分别执行。
 首次安装可以完成：
 
 1. 安装无网络、宿主机只读并遮蔽敏感路径的 root 诊断沙箱。
-2. 安装 AIOMS 服务发现所需的结构化只读网关和精确 sudoers 权限。
-3. 为同一个非 root `aioms` 用户安装统一的 systemd / Docker 白名单服务控制写网关，以及只从已授权容器标签反查项目的 Docker Compose 单服务 recreate 网关；白名单留空时拒绝全部。
+2. 安装 AIOps 服务发现所需的结构化只读网关和精确 sudoers 权限。
+3. 为同一个非 root `aiops` 用户安装统一的 systemd / Docker 白名单服务控制写网关，以及只从已授权容器标签反查项目的 Docker Compose 单服务 recreate 网关；白名单留空时拒绝全部。
 4. 按需安装 Grafana Alloy 基础组件；服务发现并注册后由 AI 生成日志配置并审批启用。
 5. 按独立开关部署 node_exporter、cAdvisor、MySQL、PostgreSQL 和 Redis exporter。
 
-如果目标服务器还没有 AIOMS 专用 SSH 用户，先使用 `bootstrap/prepare-client.sh` 在客户端
+如果目标服务器还没有 AIOps 专用 SSH 用户，先使用 `bootstrap/prepare-client.sh` 在客户端
 生成一组密钥和一个独立角色包。服务器管理员只需接收一个公钥和角色配置脚本，不需要接收
-完整运行包，也不需要把 root 密码或私钥交给 AIOMS。
+完整运行包，也不需要把 root 密码或私钥交给 AIOps。
 
 ## 先分清目标服务器和中央监控服务器
 
@@ -27,14 +27,14 @@ Alloy，需要哪类指标就单独启用对应 exporter。
 
 ## 推荐：前端生成一个安装包、服务器执行一条命令
 
-在 AIOMS 前端打开“服务器 → 编辑”，依次填写：
+在 AIOps 前端打开“服务器 → 编辑”，依次填写：
 
-1. AIOMS SSH 身份：端口和非 root 用户名（例如 `22`、`aioms`）。
+1. AIOps SSH 身份：端口和非 root 用户名（例如 `22`、`aiops`）。
 2. 环境部署：环境名、Loki 地址，以及 Alloy、node_exporter、cAdvisor 和数据库 exporter 开关。
 3. 启用数据库 exporter 时，填写连接参数和本次部署密码。
 
 首次点击“保存并下载首次安装包”。后端会生成或复用一组 Ed25519 密钥，私钥只保留在后端的
-`SSH_KEY_DIR`，浏览器下载 `aioms-<server>.tar.gz`。非敏感环境配置会随服务器记录保存；
+`SSH_KEY_DIR`，浏览器下载 `aiops-<server>.tar.gz`。非敏感环境配置会随服务器记录保存；
 数据库密码不会写入数据库或返回服务器详情，只会进入当次压缩包或自动部署请求的独立凭据
 文件，请求完成后服务端临时数据会被清理。
 
@@ -46,7 +46,7 @@ Alloy，需要哪类指标就单独启用对应 exporter。
 首次部署仍不填写服务器上的服务清单。安装完成后由 AI 对话运行发现 Tool，注册服务，再生成
 并审批应用 Alloy 服务映射，所以服务发现能力不会被前置手工配置替代。
 
-如果不使用前端，也可以在 AIOMS 后端机器命令行生成：
+如果不使用前端，也可以在 AIOps 后端机器命令行生成：
 
 首次只填写服务器级配置，不填写服务列表：
 
@@ -63,20 +63,20 @@ cp deploy.conf.example deploy.conf
 本地生成：
 
 ```text
-ssh/web01-aioms                         # 私钥，只留在 AIOMS 后端机器
-scripts/target-server/dist/aioms-web01.tar.gz
+ssh/web01-aiops                         # 私钥，只留在 AIOps 后端机器
+scripts/target-server/dist/aiops-web01.tar.gz
 ```
 
 把压缩包复制到目标服务器后，管理员只执行：
 
 ```bash
-tar -xzf aioms-web01.tar.gz
-cd aioms-web01
+tar -xzf aiops-web01.tar.gz
+cd aiops-web01
 sudo ./install.sh
 ```
 
 这一条命令内部依次配置单一 SSH 身份、安装 root 只读沙箱、discovery 和固定写网关，再按开关安装基础指标及未配置服务映射的
-Alloy。完成后即可回到 AIOMS 对话中调查、发现、注册服务，再预览并审批应用日志配置。压缩包不含
+Alloy。完成后即可回到 AIOps 对话中调查、发现、注册服务，再预览并审批应用日志配置。压缩包不含
 私钥；如果启用了数据库 exporter，会包含配置引用的监控凭据，因此仍要通过受控渠道传输。
 
 ## 目录说明
@@ -94,33 +94,33 @@ target-server/
 │   ├── Dockerfile               # 固定诊断工具镜像
 │   ├── entrypoint.py            # stdin JSON 校验、超时、截断和脱敏
 │   ├── host_mounts.py           # 安全枚举宿主机独立挂载点
-│   ├── aioms-root-read          # root 持有的一次性沙箱启动器
-│   ├── aioms-root-read.sudoers  # 只开放无参数固定入口
+│   ├── aiops-root-read          # root 持有的一次性沙箱启动器
+│   ├── aiops-root-read.sudoers  # 只开放无参数固定入口
 │   ├── install.sh               # 构建镜像并固定不可变 image ID
 │   └── README.md                # 沙箱边界与验收命令
 ├── discovery/
 │   ├── install.sh               # 只读发现网关安装器，由 deploy.sh 调用
-│   ├── aioms-service-read       # socket、指定 PID 和 systemd unit 只读查询网关
-│   ├── aioms-docker-read        # Docker 只读查询网关
-│   ├── aioms-readonly.sudoers   # 最小 sudo 权限模板
+│   ├── aiops-service-read       # socket、指定 PID 和 systemd unit 只读查询网关
+│   ├── aiops-docker-read        # Docker 只读查询网关
+│   ├── aiops-readonly.sudoers   # 最小 sudo 权限模板
 │   └── README.md                # 发现命令与权限边界
 ├── actions/
 │   ├── install.sh               # systemd / Docker 统一服务控制写网关安装器
-│   ├── aioms-service-control    # 只接受 start/stop/restart + 白名单运行时身份
-│   ├── aioms-compose-recreate   # 只接受已授权容器名，反查 Compose 单服务并重建
-│   ├── aioms-service-policy     # 只接受页面授权触发的白名单 add/remove
-│   ├── aioms-service-control.sudoers
+│   ├── aiops-service-control    # 只接受 start/stop/restart + 白名单运行时身份
+│   ├── aiops-compose-recreate   # 只接受已授权容器名，反查 Compose 单服务并重建
+│   ├── aiops-service-policy     # 只接受页面授权触发的白名单 add/remove
+│   ├── aiops-service-control.sudoers
 │   └── README.md                # 双端白名单和权限边界
 ├── files/
 │   ├── install.sh               # 文件查找、读取、授权和写入网关安装器
-│   ├── aioms-file-read          # 授权范围内查找并脱敏读取文本
-│   ├── aioms-file-policy        # 页面触发的 read/write 白名单同步
-│   ├── aioms-file-write         # 整文件或字段补丁的备份与原子替换
+│   ├── aiops-file-read          # 授权范围内查找并脱敏读取文本
+│   ├── aiops-file-policy        # 页面触发的 read/write 白名单同步
+│   ├── aiops-file-write         # 整文件或字段补丁的备份与原子替换
 │   ├── config_patch.py          # dotenv / JSON / YAML 非敏感标量补丁器
 │   └── README.md                # 敏感路径、大小和审批边界
 ├── alloy/
 │   ├── install.sh               # Alloy 基础组件/管理员配置安装器
-│   ├── aioms-alloy-apply        # root 所有的固定 AI 配置应用器
+│   ├── aiops-alloy-apply        # root 所有的固定 AI 配置应用器
 │   ├── generate-config.sh       # 根据服务映射生成 Alloy 配置
 │   ├── check.sh                 # Alloy 安装后检查
 │   ├── services.map.example     # 管理员手工配置时的映射模板
@@ -134,19 +134,19 @@ target-server/
     └── README.md                # 数据库账号、权限、端口和中央抓取说明
 ```
 
-普通配置、代码和日志调查由 `root-read/` 提供，不需要维护读取命令或业务目录白名单。运行包仍会安装 `files/` 下的受控文件网关；它用于“准备修改文件”的快照、哈希复核和审批写入。文件写白名单默认为空，需要在 AIOMS 服务目录的实例详情中登记“精确可写文件”；页面会通过同一个非 root SSH 身份把授权同步到目标机 root 持有的 `/etc/aioms/file-access.allowlist`。
+普通配置、代码和日志调查由 `root-read/` 提供，不需要维护读取命令或业务目录白名单。运行包仍会安装 `files/` 下的受控文件网关；它用于“准备修改文件”的快照、哈希复核和审批写入。文件写白名单默认为空，需要在 AIOps 服务目录的实例详情中登记“精确可写文件”；页面会通过同一个非 root SSH 身份把授权同步到目标机 root 持有的 `/etc/aiops/file-access.allowlist`。
 
-受控文件快照仅支持不超过 64 KiB 的文本文件并自动脱敏。普通整文件写入不会接收密码、Token、私钥或脱敏占位符，执行前必须展示完整 diff 并通过高风险二次确认。结构化补丁可在不读取其他真实字段的情况下修改 dotenv 已有变量，或 JSON Pointer 指向的 JSON/YAML 已有非敏感标量，使用中风险单次审批。文件网关只编辑文件，不执行配置校验、reload、服务重启或部署；这些后续动作必须走各自的独立受控入口。目标机备份统一位于 `/var/lib/aioms/file-backups/`。
+受控文件快照仅支持不超过 64 KiB 的文本文件并自动脱敏。普通整文件写入不会接收密码、Token、私钥或脱敏占位符，执行前必须展示完整 diff 并通过高风险二次确认。结构化补丁可在不读取其他真实字段的情况下修改 dotenv 已有变量，或 JSON Pointer 指向的 JSON/YAML 已有非敏感标量，使用中风险单次审批。文件网关只编辑文件，不执行配置校验、reload、服务重启或部署；这些后续动作必须走各自的独立受控入口。目标机备份统一位于 `/var/lib/aiops/file-backups/`。
 
 长期生效的文件会安装到 `/usr/local/sbin/`、`/etc/sudoers.d/`、`/etc/alloy/` 和
-`/etc/aioms-exporters/`。上传到临时目录的配置包在验证完成后可以删除。
+`/etc/aiops-exporters/`。上传到临时目录的配置包在验证完成后可以删除。
 
 ## 一、部署前准备
 
 目标服务器需要满足：
 
 - Linux 使用 systemd，并有 Bash、sudo、`visudo` 和 `ss`（iproute2）。
-- AIOMS 用于 SSH 登录的普通用户已经存在并安装公钥，例如 `aioms`；没有时先执行下一节的
+- AIOps 用于 SSH 登录的普通用户已经存在并安装公钥，例如 `aiops`；没有时先执行下一节的
   首次 SSH 初始化。
 - 启用 Alloy 时，目标服务器能访问中央 Loki 的 HTTP 推送地址。
 - Docker Engine 25+ 是 root 只读沙箱禁用递归并逐项只读挂载的必需依赖；Linux 5.10 可用。启用任一指标 exporter 时还必须已有 Docker Compose。
@@ -156,7 +156,7 @@ target-server/
 
 ## 零、首次 SSH 初始化（每台服务器只做一次）
 
-在 AIOMS 项目根目录生成一组共用的 SSH 密钥：
+在 AIOps 项目根目录生成一组共用的 SSH 密钥：
 
 ```bash
 scripts/target-server/bootstrap/prepare-client.sh \
@@ -173,17 +173,17 @@ scripts/target-server/bootstrap/prepare-client.sh \
 管理员在目标服务器核对脚本和 SHA-256 后执行：
 
 ```bash
-cd /tmp/aioms-role-web01
+cd /tmp/aiops-role-web01
 sha256sum -c SHA256SUMS
-sudo ./configure-role.sh --user aioms
+sudo ./configure-role.sh --user aiops
 ```
 
-bootstrap 创建或复用一个 `aioms` 普通用户。它既用于只读查询，也用于审批后调用固定写网关。
+bootstrap 创建或复用一个 `aiops` 普通用户。它既用于只读查询，也用于审批后调用固定写网关。
 该用户可以把通用调查命令送入 root 只读沙箱，但不能在宿主机执行任意 root Shell，也不能指定
 额外脚本、挂载、镜像、网络、`systemctl` 或 Docker 控制命令。
 
-角色脚本还会生成 `/usr/local/sbin/aioms-target-deploy` 和
-`/etc/sudoers.d/aioms-target-deploy`，并预留 root 所有的 `/opt/aioms-target-server/`。它不会复制运行
+角色脚本还会生成 `/usr/local/sbin/aiops-target-deploy` 和
+`/etc/sudoers.d/aiops-target-deploy`，并预留 root 所有的 `/opt/aiops-target-server/`。它不会复制运行
 包、安装发现网关、启动 Alloy 或 exporter。完整文件位置、验证命令和密钥边界见
 [`bootstrap/README.md`](bootstrap/README.md)。
 
@@ -206,7 +206,7 @@ cp metrics/redis-exporter.password.example metrics/redis-exporter.password
 编辑 `deploy.conf`：
 
 ```ini
-AIOMS_SSH_USER=aioms
+AIOPS_SSH_USER=aiops
 SERVICE_CONTROL_ALLOWLIST=systemd:bt.service,systemd:nginx.service,docker:orders-api
 ENABLE_ALLOY=true
 SERVER_NAME=web01
@@ -231,7 +231,7 @@ START_EXPORTERS=true
 
 | 配置项                             | 何时需要                | 说明                                                             |
 | ---------------------------------- | ----------------------- | ---------------------------------------------------------------- |
-| `AIOMS_SSH_USER`                 | 始终必填                | 非 root AIOMS SSH 用户，应与 `servers.ssh_user` 一致；读写能力都只能经过固定网关 |
+| `AIOPS_SSH_USER`                 | 始终必填                | 非 root AIOps SSH 用户，应与 `servers.ssh_user` 一致；读写能力都只能经过固定网关 |
 | `SERVICE_CONTROL_ALLOWLIST`      | 使用服务控制 Tool       | 允许启停/重启的 `systemd:unit.service` 或 `docker:container`；留空拒绝全部 |
 | `ENABLE_ALLOY`                   | 始终必填                | `true` 安装 Alloy 基础组件，`false` 只安装发现和指标组件     |
 | `SERVER_NAME`                    | 启用 Alloy              | 稳定服务器标签，如`web01`                                      |
@@ -291,7 +291,7 @@ ALLOY_PACKAGE_PROXY_URL=http://proxy.example.internal:7890
 代理只传给本次 `wget`、`apt-get` 或 `dnf` 下载命令，脚本不会修改 `/etc/apt/apt.conf.d`、DNF 配置
 或系统环境变量。代理 URL 包含账号密码时，`deploy.conf` 和安装包包含敏感信息，务必限制权限和传输范围。
 
-首次不要编辑 `alloy/services.map`。基础部署完成后，直接在 AIOMS 对话中说：
+首次不要编辑 `alloy/services.map`。基础部署完成后，直接在 AIOps 对话中说：
 
 ```text
 发现 web01 上的服务，并注册到服务目录。
@@ -318,17 +318,17 @@ ENABLE_ALLOY=false
 
 ## 三、打包并上传
 
-在 AIOMS 项目机器执行：
+在 AIOps 项目机器执行：
 
 ```bash
-tar -czf /tmp/aioms-target-server.tar.gz -C scripts target-server
-scp /tmp/aioms-target-server.tar.gz root@web01:/tmp/
+tar -czf /tmp/aiops-target-server.tar.gz -C scripts target-server
+scp /tmp/aiops-target-server.tar.gz root@web01:/tmp/
 ```
 
 也可以直接复制目录：
 
 ```bash
-scp -r scripts/target-server root@web01:/tmp/aioms-target-server
+scp -r scripts/target-server root@web01:/tmp/aiops-target-server
 ```
 
 `deploy.conf` 和 `services.map` 不应该包含密码或私钥；数据库密码放在独立凭据文件中。实际
@@ -342,7 +342,7 @@ scp -r scripts/target-server root@web01:/tmp/aioms-target-server
 ```bash
 ssh root@web01
 cd /tmp
-tar -xzf aioms-target-server.tar.gz
+tar -xzf aiops-target-server.tar.gz
 cd target-server
 sudo ./deploy.sh
 ```
@@ -350,7 +350,7 @@ sudo ./deploy.sh
 使用普通管理员账号上传时同样运行 `sudo ./deploy.sh`。也可指定放在其他位置的配置：
 
 ```bash
-sudo ./deploy.sh --config /etc/aioms/web01.conf
+sudo ./deploy.sh --config /etc/aiops/web01.conf
 ```
 
 总脚本执行顺序如下：
@@ -359,8 +359,8 @@ sudo ./deploy.sh --config /etc/aioms/web01.conf
 2. 调用 `discovery/install.sh` 安装两个 root 所有的只读网关和 sudoers。
 3. 若 `ENABLE_ALLOY=true` 且没有映射，安装 Alloy 与固定应用器但保持未启动；有管理员映射时
    才直接生成配置。
-4. 按五个 exporter 开关生成 `/etc/aioms-exporters/compose.yaml` 并安全复制凭据。
-5. 若 `START_EXPORTERS=true`，拉取镜像并更新 `aioms-exporters` Compose 项目。
+4. 按五个 exporter 开关生成 `/etc/aiops-exporters/compose.yaml` 并安全复制凭据。
+5. 若 `START_EXPORTERS=true`，拉取镜像并更新 `aiops-exporters` Compose 项目。
 
 脚本可重复执行，用于更新同名网关、Alloy 和 exporter；Compose 使用 `--remove-orphans`，所以
 重新部署时会停止并移除本项目中已被关闭的 exporter 容器，不会操作其他 Compose 项目。脚本
@@ -368,33 +368,33 @@ sudo ./deploy.sh --config /etc/aioms/web01.conf
 服务器管理员审核配置后执行。
 
 如果五个 exporter 开关全部为 `false`，脚本会停止之前由本配置包部署的
-`aioms-exporters` 项目，但保留 `/etc/aioms-exporters` 下的配置、凭据和备份；首次部署且没有
+`aiops-exporters` 项目，但保留 `/etc/aiops-exporters` 下的配置、凭据和备份；首次部署且没有
 旧指标配置时不会要求服务器安装 Docker。
 
 ## 五、部署后验证
 
-### 1. 验证 AIOMS 只读发现权限
+### 1. 验证 AIOps 只读发现权限
 
-以下示例假设 SSH 用户是 `aioms`：
+以下示例假设 SSH 用户是 `aiops`：
 
 ```bash
-sudo -l -U aioms
-sudo visudo -cf /etc/sudoers.d/aioms-readonly
-sudo -u aioms sudo -n -- /usr/local/sbin/aioms-service-read inet-sockets
-sudo -u aioms sudo -n -- /usr/local/sbin/aioms-service-read unix-sockets
+sudo -l -U aiops
+sudo visudo -cf /etc/sudoers.d/aiops-readonly
+sudo -u aiops sudo -n -- /usr/local/sbin/aiops-service-read inet-sockets
+sudo -u aiops sudo -n -- /usr/local/sbin/aiops-service-read unix-sockets
 ```
 
 有 Docker 时再执行：
 
 ```bash
-sudo -u aioms sudo -n -- /usr/local/sbin/aioms-docker-read inventory
+sudo -u aiops sudo -n -- /usr/local/sbin/aiops-docker-read inventory
 ```
 
 从 socket 输出中选择一个真实纯数字 PID，例如 `12345`，验证定点进程信息：
 
 ```bash
-sudo -u aioms sudo -n -- /usr/local/sbin/aioms-service-read process 12345
-sudo -u aioms sudo -n -- /usr/local/sbin/aioms-service-read unit 12345
+sudo -u aiops sudo -n -- /usr/local/sbin/aiops-service-read process 12345
+sudo -u aiops sudo -n -- /usr/local/sbin/aiops-service-read unit 12345
 ```
 
 ### 2. 验证 Alloy（应用服务映射后）
@@ -438,35 +438,35 @@ up{server="web01"}
 sudoers 不直接开放任意 `docker`、`ss`、`ps`、`systemctl` 或 Shell，只允许执行：
 
 ```text
-/usr/local/sbin/aioms-docker-read
-/usr/local/sbin/aioms-service-read
+/usr/local/sbin/aiops-docker-read
+/usr/local/sbin/aiops-service-read
 ```
 
-同一个 `aioms` 用户还可调用三个精确部署入口：
+同一个 `aiops` 用户还可调用三个精确部署入口：
 
 ```text
-/usr/local/sbin/aioms-target-deploy apply
-/usr/local/sbin/aioms-target-deploy apply-config
-/usr/local/sbin/aioms-target-deploy apply-alloy
+/usr/local/sbin/aiops-target-deploy apply
+/usr/local/sbin/aiops-target-deploy apply-config
+/usr/local/sbin/aiops-target-deploy apply-alloy
 ```
 
-`apply` 只能调用 `/opt/aioms-target-server/deploy.sh`，并且只能读取同目录下由 root 持有且
+`apply` 只能调用 `/opt/aiops-target-server/deploy.sh`，并且只能读取同目录下由 root 持有且
 group/other 不可写的 `deploy.conf`。固定部署目录本身也必须由 root 持有且 group/other 不可
-写；在管理员尚未安装这两个文件时，入口会拒绝执行。AIOMS 账号不能把上传目录中的脚本交给
+写；在管理员尚未安装这两个文件时，入口会拒绝执行。AIOps 账号不能把上传目录中的脚本交给
 root 执行。
 
-`apply-config` 不接受路径或 Shell 参数，只读取 `/var/lib/aioms/incoming/` 下固定命名的配置、
+`apply-config` 不接受路径或 Shell 参数，只读取 `/var/lib/aiops/incoming/` 下固定命名的配置、
 部署清单和可选数据库凭据。root 固定应用器会校验上传用户、权限、文件类型、大小和清单字段，
 部署失败时恢复并重新应用上一版配置。自动部署只能更新这些配置数据，不能上传或替换 root
 执行脚本。
 
 `apply-alloy` 不接受路径或配置参数，只调用 root 所有的固定应用器。部署 Tool 只能把自动生成的
-`services.map` 上传到 `/var/lib/aioms/incoming/`；应用器重新校验文件所有者、权限、大小
-和映射格式，从 `/etc/aioms/alloy-target.conf` 读取管理员确定的服务器名、Loki 地址和 Docker
+`services.map` 上传到 `/var/lib/aiops/incoming/`；应用器重新校验文件所有者、权限、大小
+和映射格式，从 `/etc/aiops/alloy-target.conf` 读取管理员确定的服务器名、Loki 地址和 Docker
 socket 策略。自动流程拒绝 `file` 日志源，不能借 Alloy 读取任意文件。
 
 网关内部只接受固定子命令，并校验容器名和纯数字 PID。安装后的网关必须保持 `root:root`
-和 `0755`，sudoers 必须保持 `root:root` 和 `0440`；绝不能让 `aioms` 用户修改这些文件或
+和 `0755`，sudoers 必须保持 `root:root` 和 `0440`；绝不能让 `aiops` 用户修改这些文件或
 它们的上级目录。
 
 启用 Docker 日志采集时，Alloy 需要访问 Docker socket。Docker 组通常具有接近 root 的控制
@@ -478,12 +478,12 @@ node_exporter 读取宿主机文件系统和 PID 信息；cAdvisor 按官方容�
 文件系统运行，但仍持有数据库监控凭据。Exporter HTTP 端点默认没有认证，只允许中央
 Prometheus 通过内网或防火墙访问，不能暴露到公网。
 
-AIOMS 的业务资产扫描仍遵循最小读取原则：先盘点 systemd 和 Docker，再扫描 TCP/UDP、Unix
+AIOps 的业务资产扫描仍遵循最小读取原则：先盘点 systemd 和 Docker，再扫描 TCP/UDP、Unix
 Socket，只对监听结果中的纯数字 PID 定点读取进程详情，不读取整机 `ps aux`。
 
 ## 七、常见问题
 
-### `用户 aioms 不存在`
+### `用户 aiops 不存在`
 
 先按“零、首次 SSH 初始化”生成角色包，由服务器管理员执行 `configure-role.sh`，再重新部署
 完整运行包。日常 `deploy.sh` 不负责创建账号或写入 SSH 公钥。
@@ -509,11 +509,11 @@ sudo journalctl -u alloy -n 100 --no-pager
 
 ```bash
 sudo docker compose \
-  --project-name aioms-exporters \
-  -f /etc/aioms-exporters/compose.yaml ps
+  --project-name aiops-exporters \
+  -f /etc/aiops-exporters/compose.yaml ps
 sudo docker compose \
-  --project-name aioms-exporters \
-  -f /etc/aioms-exporters/compose.yaml logs --tail 100
+  --project-name aiops-exporters \
+  -f /etc/aiops-exporters/compose.yaml logs --tail 100
 ```
 
 常见原因是端口已被已有 exporter 占用、数据库凭据不正确、Docker 数据目录不是
@@ -525,7 +525,7 @@ sudo docker compose \
 仍可直接运行底层脚本：
 
 ```bash
-sudo ./discovery/install.sh aioms
+sudo ./discovery/install.sh aiops
 sudo ./alloy/install.sh --help
 sudo ./metrics/install.sh --help
 ```

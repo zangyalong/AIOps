@@ -1,8 +1,0 @@
-# 该文件由 install.sh 把 @AIOMS_SSH_USER@ 替换成目标服务器上的 SSH 用户名。
-# sudoers 只授权两个 root 所有的参数校验网关；真正允许的子命令由网关脚本精确控制。
-
-Cmnd_Alias AIOMS_READONLY_GATEWAYS = \
-    /usr/local/sbin/aioms-docker-read, \
-    /usr/local/sbin/aioms-service-read
-
-@AIOMS_SSH_USER@ ALL=(root) NOPASSWD: AIOMS_READONLY_GATEWAYS

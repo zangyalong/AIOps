@@ -9,7 +9,7 @@ class ToolLinkPresentationTest(unittest.TestCase):
     def setUp(self) -> None:
         self.original = (
             "http://localhost:3000/explore?schemaVersion=1&"
-            "panes=%7B%22aioms%22%3A%7B%22datasource%22%3A%22prometheus%22%7D%7D"
+            "panes=%7B%22aiops%22%3A%7B%22datasource%22%3A%22prometheus%22%7D%7D"
             "&orgId=1"
         )
 

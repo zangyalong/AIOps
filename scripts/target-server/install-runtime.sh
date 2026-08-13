@@ -11,7 +11,7 @@ fail() {
 [[ $# -eq 1 ]] || fail "用法：sudo ./install-runtime.sh /path/to/target-server"
 
 readonly SOURCE_DIR="$(cd -- "$1" && pwd)"
-readonly INSTALL_DIR="/opt/aioms-target-server"
+readonly INSTALL_DIR="/opt/aiops-target-server"
 
 [[ -x "$SOURCE_DIR/deploy.sh" ]] || fail "源目录缺少 deploy.sh"
 [[ -f "$SOURCE_DIR/deploy.conf" ]] || fail "源目录缺少 deploy.conf"
@@ -41,4 +41,4 @@ for secret in \
     fi
 done
 
-echo "AIOMS 固定部署运行包已安装：$INSTALL_DIR"
+echo "AIOps 固定部署运行包已安装：$INSTALL_DIR"

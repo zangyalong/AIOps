@@ -1,7 +1,7 @@
-# AIOMS root 只读沙箱
+# AIOps root 只读沙箱
 
-这个入口解决的是“诊断搜索被命令白名单卡住”的问题。AIOMS 仍以普通 `aioms` 用户 SSH
-登录，只能无参数调用 root 持有的 `/usr/local/sbin/aioms-root-read`；命令通过 stdin JSON
+这个入口解决的是“诊断搜索被命令白名单卡住”的问题。AIOps 仍以普通 `aiops` 用户 SSH
+登录，只能无参数调用 root 持有的 `/usr/local/sbin/aiops-root-read`；命令通过 stdin JSON
 进入一次性 Docker 容器，不会在宿主机 Shell 中被 `eval`。后端可选择宿主机语境或工具箱语境，
 这个选择属于内部实现，不交给 Agent 或用户判断。
 
@@ -12,8 +12,8 @@
 - 宿主机根文件系统以“只读且不递归”方式挂到 `/host`；root 持有的解析器再枚举安全子挂载并逐个只读挂入。这样不会在旧内核上把子挂载意外暴露为可写，也仍能读取独立业务数据盘。容器根目录同样只读，只有容器自己的 `/tmp` 是受限临时盘。
 - 容器没有网络、Docker socket、宿主机 `/run`、`/tmp`、`/proc`、`/sys` 或 `/dev`，不能控制
   systemd、Docker 或宿主进程。
-- 私钥、云凭据、账号哈希、宿主机 `/tmp`、数据库数据目录、容器运行时数据和 AIOMS 部署凭据会被标记挂载遮蔽；目录中出现 `AIOMS_PATH_MASKED.txt` 或文件内容为 `AIOMS_PATH_MASKED` 表示无法读取，绝不能解释为真实为空或不存在。普通系统配置仍可用于诊断。
-- 镜像由安装器构建；启动器只读取 `/etc/aioms/root-read.image-id` 中的不可变 image ID，
+- 私钥、云凭据、账号哈希、宿主机 `/tmp`、数据库数据目录、容器运行时数据和 AIOps 部署凭据会被标记挂载遮蔽；目录中出现 `AIOPS_PATH_MASKED.txt` 或文件内容为 `AIOPS_PATH_MASKED` 表示无法读取，绝不能解释为真实为空或不存在。普通系统配置仍可用于诊断。
+- 镜像由安装器构建；启动器只读取 `/etc/aiops/root-read.image-id` 中的不可变 image ID，
   调用方不能指定镜像、挂载、网络、capability 或 Docker 参数。
 - 单条命令最长 8192 字符、最长运行 20 秒、最多返回 64 KiB；外层 30 秒还会强制删除容器。
 - 输出会做常见密码、Token、Authorization、URL 凭据和 PEM 私钥脱敏。但任意 root 读取能力
@@ -40,7 +40,7 @@
 由总入口自动调用，也可单独执行：
 
 ```bash
-sudo ./install.sh aioms
+sudo ./install.sh aiops
 ```
 
 首次安装需要 Docker 和 `/usr/bin/python3.11` 可用；Alibaba Cloud Linux 3 可先执行
@@ -61,18 +61,18 @@ Docker daemon 的全局镜像源。镜像内部较大的 Debian 主仓库索引�
 ```bash
 # 应成功
 printf '%s' '{"command":"cat /etc/hosts; python --version","timeout":10,"scope":"host"}' \
-  | sudo -u aioms sudo -n -- /usr/local/sbin/aioms-root-read
+  | sudo -u aiops sudo -n -- /usr/local/sbin/aiops-root-read
 
 printf '%s' '{"command":"rg -n redis /host/etc /host/www 2>/dev/null","timeout":20,"scope":"toolbox"}' \
-  | sudo -u aioms sudo -n -- /usr/local/sbin/aioms-root-read
+  | sudo -u aiops sudo -n -- /usr/local/sbin/aiops-root-read
 
 # 宿主机写入应失败
-printf '%s' '{"command":"touch /etc/aioms-test","timeout":10,"scope":"host"}' \
-  | sudo -u aioms sudo -n -- /usr/local/sbin/aioms-root-read
+printf '%s' '{"command":"touch /etc/aiops-test","timeout":10,"scope":"host"}' \
+  | sudo -u aiops sudo -n -- /usr/local/sbin/aiops-root-read
 
 # 网络与控制面应失败
 printf '%s' '{"command":"systemctl restart nginx; python3 -c '\''import socket; socket.create_connection((\"example.com\", 443))'\''","timeout":10,"scope":"host"}' \
-  | sudo -u aioms sudo -n -- /usr/local/sbin/aioms-root-read
+  | sudo -u aiops sudo -n -- /usr/local/sbin/aiops-root-read
 ```
 
 还应确认 `/host/run`、`/host/root/.ssh`、`/host/etc/ssh/ssh_host_*_key`、`/host/var/lib/docker` 等位置不可读取，且

@@ -18,7 +18,7 @@ from app.services.ssh_service import (
     build_connect_params,
 )
 
-POLICY_GATEWAY = "/usr/local/sbin/aioms-file-policy"
+POLICY_GATEWAY = "/usr/local/sbin/aiops-file-policy"
 PolicyAction = Literal["add", "remove"]
 AccessLevel = Literal["read", "write"]
 _POLICY_PATH_PATTERN = re.compile(r"^POLICY_PATH=(/.+)$", re.MULTILINE)
@@ -39,7 +39,7 @@ async def _apply_remote_policy(
         params = build_connect_params(server)
     except SSHNotConfigured as exc:
         raise ServerFilePolicySyncError(
-            "目标服务器没有配置 AIOMS SSH 身份，无法同步文件访问白名单"
+            "目标服务器没有配置 AIOps SSH 身份，无法同步文件访问白名单"
         ) from exc
     except SSHKeyMissing as exc:
         raise ServerFilePolicySyncError(str(exc)) from exc

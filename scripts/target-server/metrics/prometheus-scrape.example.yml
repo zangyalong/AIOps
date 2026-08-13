@@ -9,7 +9,7 @@
         environment: prod
         service: node-exporter
         runtime_type: docker
-        runtime_name: aioms-node-exporter
+        runtime_name: aiops-node-exporter
 
 - job_name: web01-cadvisor
   static_configs:
@@ -18,10 +18,10 @@
         server: web01
         environment: prod
         runtime_type: docker
-  # 优先读取业务容器显式设置的 aioms.service 标签，其次使用 Docker Compose service，
+  # 优先读取业务容器显式设置的 aiops.service 标签，其次使用 Docker Compose service，
   # 最后退化为容器名。这样 cAdvisor 的每条容器指标能映射到具体服务，而不是统一叫 cadvisor。
   metric_relabel_configs:
-    - source_labels: [container_label_aioms_service]
+    - source_labels: [container_label_aiops_service]
       regex: "(.+)"
       target_label: service
     - source_labels: [service, container_label_com_docker_compose_service]
@@ -45,7 +45,7 @@
         environment: prod
         service: mysqld
         runtime_type: docker
-        runtime_name: aioms-mysql-exporter
+        runtime_name: aiops-mysql-exporter
 
 - job_name: web01-postgres
   static_configs:
@@ -55,7 +55,7 @@
         environment: prod
         service: sub2api-postgres
         runtime_type: docker
-        runtime_name: aioms-postgres-exporter
+        runtime_name: aiops-postgres-exporter
 
 - job_name: web01-redis
   static_configs:
@@ -65,4 +65,4 @@
         environment: prod
         service: sub2api-redis
         runtime_type: docker
-        runtime_name: aioms-redis-exporter
+        runtime_name: aiops-redis-exporter

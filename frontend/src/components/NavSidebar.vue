@@ -3,14 +3,14 @@ import { computed, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 
 const route = useRoute()
-const lastChatPath = ref(localStorage.getItem('aioms:last-chat-path') || '/chat')
+const lastChatPath = ref(localStorage.getItem('aiops:last-chat-path') || '/chat')
 
 watch(
   () => route.fullPath,
   (path) => {
     if (path === '/chat' || path.startsWith('/chat/')) {
       lastChatPath.value = path
-      localStorage.setItem('aioms:last-chat-path', path)
+      localStorage.setItem('aiops:last-chat-path', path)
     }
   },
   { immediate: true },
@@ -62,12 +62,12 @@ const items = computed(() => [
       <span class="signal-dot" />
     </div>
 
-    <div class="brand" aria-label="AIOMS">
+    <div class="brand" aria-label="AIOps">
       <svg class="brand-mark" viewBox="0 0 40 40" fill="none" aria-hidden="true">
         <path d="M7 22h6l3-9 5 16 4-10 2 3h6" />
       </svg>
       <span class="brand-copy">
-        <strong>AIOMS</strong>
+        <strong>AIOps</strong>
         <small>Operations desk</small>
       </span>
     </div>

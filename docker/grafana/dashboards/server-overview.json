@@ -231,7 +231,7 @@
   ],
   "refresh": "30s",
   "schemaVersion": 41,
-  "tags": ["aioms", "node-exporter"],
+  "tags": ["aiops", "node-exporter"],
   "templating": {
     "list": [
       {
@@ -265,7 +265,7 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "AIOMS 服务器总览",
-  "uid": "aioms-server-overview",
+  "title": "AIOps 服务器总览",
+  "uid": "aiops-server-overview",
   "version": 1
 }

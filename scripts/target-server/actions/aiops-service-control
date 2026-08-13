@@ -4,18 +4,18 @@ set -euo pipefail
 PATH=/usr/sbin:/usr/bin:/usr/local/bin:/sbin:/bin
 
 fail() {
-    echo "aioms-service-control: $*" >&2
+    echo "aiops-service-control: $*" >&2
     exit 1
 }
 
 [[ $EUID -eq 0 ]] || fail "必须由 root 通过 sudoers 调用"
 [[ $# -eq 3 ]] ||
-    fail "用法：aioms-service-control start|stop|restart systemd|docker RUNTIME_NAME"
+    fail "用法：aiops-service-control start|stop|restart systemd|docker RUNTIME_NAME"
 
 readonly ACTION="$1"
 readonly RUNTIME_TYPE="$2"
 readonly RUNTIME_NAME="$3"
-readonly ALLOWLIST="/etc/aioms/service-control.allowlist"
+readonly ALLOWLIST="/etc/aiops/service-control.allowlist"
 readonly SERVICE_PATTERN='^[A-Za-z0-9][A-Za-z0-9_.@:-]*\.service$'
 readonly CONTAINER_PATTERN='^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$'
 readonly TARGET="$RUNTIME_TYPE:$RUNTIME_NAME"

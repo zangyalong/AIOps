@@ -52,7 +52,7 @@ class TargetDeploymentConfig(BaseModel):
         pattern=IMAGE_PATTERN,
     )
     mysql_exporter_user: str = Field(
-        default="aioms_exporter",
+        default="aiops_exporter",
         min_length=1,
         max_length=100,
         pattern=USERNAME_PATTERN,
@@ -76,7 +76,7 @@ class TargetDeploymentConfig(BaseModel):
         max_length=500,
     )
     postgres_exporter_user: str = Field(
-        default="aioms_exporter",
+        default="aiops_exporter",
         min_length=1,
         max_length=100,
         pattern=USERNAME_PATTERN,

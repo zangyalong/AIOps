@@ -115,7 +115,7 @@ export async function generateDeploymentBundle(
   const filenameMatch = disposition.match(/filename="?([^";]+)"?/i)
   return {
     blob: await res.blob(),
-    filename: filenameMatch?.[1] ?? `aioms-target-server-${id}.tar.gz`,
+    filename: filenameMatch?.[1] ?? `aiops-target-server-${id}.tar.gz`,
     sha256: res.headers.get('X-Checksum-SHA256'),
   }
 }

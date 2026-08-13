@@ -4,16 +4,16 @@ set -euo pipefail
 PATH=/usr/sbin:/usr/bin:/usr/local/bin:/sbin:/bin
 
 fail() {
-    echo "aioms-compose-recreate: $*" >&2
+    echo "aiops-compose-recreate: $*" >&2
     exit 1
 }
 
 [[ $EUID -eq 0 ]] || fail "必须由 root 通过 sudoers 调用"
-[[ $# -eq 1 ]] || fail "用法：aioms-compose-recreate CONTAINER_NAME"
+[[ $# -eq 1 ]] || fail "用法：aiops-compose-recreate CONTAINER_NAME"
 [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" ]] || fail "缺少非 root 调用身份"
 
 readonly CONTAINER_NAME="$1"
-readonly ALLOWLIST="/etc/aioms/service-control.allowlist"
+readonly ALLOWLIST="/etc/aiops/service-control.allowlist"
 readonly CONTAINER_PATTERN='^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$'
 readonly PROJECT_PATTERN='^[a-z0-9][a-z0-9_-]{0,127}$'
 readonly COMPOSE_SERVICE_PATTERN='^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$'
@@ -58,13 +58,13 @@ config_files_label="$(label_value com.docker.compose.project.config_files)"
     || fail "容器缺少合法的 Compose config_files 标签"
 working_dir="$(realpath -e -- "$working_dir_label")"
 
-# 固定网关以 root 调用 Docker，因此配置及其父目录不能被 AIOMS
+# 固定网关以 root 调用 Docker，因此配置及其父目录不能被 AIOps
 # SSH 用户直接改写；Agent 只能通过独立审批的文件网关修改它们。
-assert_not_aioms_writable() {
+assert_not_aiops_writable() {
     local candidate="$1"
     while true; do
         if runuser -u "$SUDO_USER" -- test -w "$candidate"; then
-            fail "Compose 路径可被 AIOMS SSH 用户绕过审批改写：$candidate"
+            fail "Compose 路径可被 AIOps SSH 用户绕过审批改写：$candidate"
         fi
         [[ "$candidate" == "/" ]] && break
         candidate="$(dirname -- "$candidate")"
@@ -72,7 +72,7 @@ assert_not_aioms_writable() {
 }
 
 command -v runuser >/dev/null 2>&1 || fail "系统缺少 runuser，无法核对 Compose 路径权限"
-assert_not_aioms_writable "$working_dir"
+assert_not_aiops_writable "$working_dir"
 
 IFS=',' read -r -a raw_config_files <<<"$config_files_label"
 (( ${#raw_config_files[@]} >= 1 && ${#raw_config_files[@]} <= 8 )) \
@@ -94,14 +94,14 @@ for raw_path in "${raw_config_files[@]}"; do
     [[ -f "$candidate_path" && ! -L "$candidate_path" ]] \
         || fail "Compose 配置文件不存在或不安全：$raw_path"
     config_path="$(realpath -e -- "$candidate_path")"
-    assert_not_aioms_writable "$config_path"
+    assert_not_aiops_writable "$config_path"
     config_files+=("$config_path")
     compose_args+=(-f "$config_path")
 done
 if [[ -e "$working_dir/.env" ]]; then
     [[ -f "$working_dir/.env" && ! -L "$working_dir/.env" ]] \
         || fail "Compose .env 不是安全的普通文件"
-    assert_not_aioms_writable "$working_dir/.env"
+    assert_not_aiops_writable "$working_dir/.env"
 fi
 
 target_id="$($DOCKER_BIN inspect --format '{{.Id}}' -- "$CONTAINER_NAME")"

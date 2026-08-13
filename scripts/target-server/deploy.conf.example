@@ -1,9 +1,9 @@
-# AIOMS 目标服务器一键部署配置
+# AIOps 目标服务器一键部署配置
 # 复制为 deploy.conf 后修改；不要在值两侧添加引号。
 
-# 必填：AIOMS 后端通过 SSH 登录目标服务器时使用的普通 Linux 用户。
+# 必填：AIOps 后端通过 SSH 登录目标服务器时使用的普通 Linux 用户。
 # 同一身份通过 root 持有的固定网关执行只读和审批后的白名单操作，不开放任意 root 命令。
-AIOMS_SSH_USER=aioms
+AIOPS_SSH_USER=aiops
 
 # Agent 经人工审批后允许启停/重启的运行对象。使用 systemd:unit.service 或 docker:container。
 # 兼容旧的裸 .service 写法并自动规范为 systemd；留空拒绝全部。
@@ -73,7 +73,7 @@ MYSQL_EXPORTER_NETWORK=host
 ENABLE_POSTGRES_EXPORTER=false
 POSTGRES_EXPORTER_IMAGE=quay.io/prometheuscommunity/postgres-exporter:v0.19.1
 POSTGRES_EXPORTER_URI=127.0.0.1:5432/postgres?sslmode=disable
-POSTGRES_EXPORTER_USER=aioms_exporter
+POSTGRES_EXPORTER_USER=aiops_exporter
 POSTGRES_EXPORTER_PASSWORD_FILE=metrics/postgres-exporter.password
 POSTGRES_EXPORTER_NETWORK=host
 
@@ -81,7 +81,7 @@ POSTGRES_EXPORTER_NETWORK=host
 ENABLE_REDIS_EXPORTER=false
 REDIS_EXPORTER_IMAGE=quay.io/oliver006/redis_exporter:v1.88.0
 REDIS_EXPORTER_ADDRESS=redis://127.0.0.1:6379
-REDIS_EXPORTER_USER=aioms_exporter
+REDIS_EXPORTER_USER=aiops_exporter
 REDIS_EXPORTER_PASSWORD_FILE=metrics/redis-exporter.password
 REDIS_EXPORTER_NETWORK=host
 

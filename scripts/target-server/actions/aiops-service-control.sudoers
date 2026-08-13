@@ -1,0 +1,1 @@
+__AIOPS_SSH_USER__ ALL=(root) NOPASSWD: /usr/local/sbin/aiops-service-control *, /usr/local/sbin/aiops-service-policy *, /usr/local/sbin/aiops-compose-recreate *

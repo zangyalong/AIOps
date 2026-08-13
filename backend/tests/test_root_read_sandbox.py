@@ -24,7 +24,7 @@ class RootReadSandboxContractTest(unittest.TestCase):
         return result.returncode, json.loads(result.stdout)
 
     def test_launcher_fixes_the_docker_security_boundary(self) -> None:
-        launcher = (ROOT_READ_DIR / "aioms-root-read").read_text()
+        launcher = (ROOT_READ_DIR / "aiops-root-read").read_text()
         for fragment in (
             "--interactive",
             "--network none",
@@ -39,7 +39,7 @@ class RootReadSandboxContractTest(unittest.TestCase):
             "--memory 256m",
             "--cpus 0.5",
             "bind-recursive=disabled",
-            'readonly IMAGE_ID_FILE="/etc/aioms/root-read.image-id"',
+            'readonly IMAGE_ID_FILE="/etc/aiops/root-read.image-id"',
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, launcher)
@@ -54,8 +54,8 @@ class RootReadSandboxContractTest(unittest.TestCase):
 
     def test_installer_marks_masked_paths_instead_of_making_them_empty(self) -> None:
         installer = (ROOT_READ_DIR / "install.sh").read_text()
-        self.assertIn("AIOMS_PATH_MASKED:", installer)
-        self.assertIn("$MASK_DIR/AIOMS_PATH_MASKED.txt", installer)
+        self.assertIn("AIOPS_PATH_MASKED:", installer)
+        self.assertIn("$MASK_DIR/AIOPS_PATH_MASKED.txt", installer)
         self.assertIn('"$TEMP_STATE" "$MASK_FILE"', installer)
         self.assertNotIn('/dev/null "$MASK_FILE"', installer)
 
@@ -91,7 +91,7 @@ class RootReadSandboxContractTest(unittest.TestCase):
 
     def test_host_scope_preloads_libcap_and_exposes_only_dev_null(self) -> None:
         entrypoint = ENTRYPOINT.read_text()
-        launcher = (ROOT_READ_DIR / "aioms-root-read").read_text()
+        launcher = (ROOT_READ_DIR / "aiops-root-read").read_text()
         installer = (ROOT_READ_DIR / "install.sh").read_text()
         self.assertLess(
             entrypoint.index("libcap = _load_libcap()"),
@@ -105,7 +105,7 @@ class RootReadSandboxContractTest(unittest.TestCase):
         self.assertIn("2>/dev/null", installer)
 
     def test_launcher_masks_control_and_secret_paths(self) -> None:
-        launcher = (ROOT_READ_DIR / "aioms-root-read").read_text()
+        launcher = (ROOT_READ_DIR / "aiops-root-read").read_text()
         for path in (
             "/run",
             "/dev",
@@ -138,7 +138,7 @@ class RootReadSandboxContractTest(unittest.TestCase):
 
     def test_host_mount_parser_uses_explicit_python_311(self) -> None:
         helper = (ROOT_READ_DIR / "host_mounts.py").read_text()
-        launcher = (ROOT_READ_DIR / "aioms-root-read").read_text()
+        launcher = (ROOT_READ_DIR / "aiops-root-read").read_text()
         installer = (ROOT_READ_DIR / "install.sh").read_text()
         self.assertTrue(helper.startswith("#!/usr/bin/python3.11\n"))
         self.assertIn('readonly HOST_PYTHON="/usr/bin/python3.11"', launcher)
@@ -147,8 +147,8 @@ class RootReadSandboxContractTest(unittest.TestCase):
         self.assertIn('"$HOST_PYTHON" "$SCRIPT_DIR/host_mounts.py"', installer)
 
     def test_sudoers_allows_only_the_no_argument_gateway(self) -> None:
-        sudoers = (ROOT_READ_DIR / "aioms-root-read.sudoers").read_text()
-        self.assertIn('/usr/local/sbin/aioms-root-read ""', sudoers)
+        sudoers = (ROOT_READ_DIR / "aiops-root-read.sudoers").read_text()
+        self.assertIn('/usr/local/sbin/aiops-root-read ""', sudoers)
         self.assertNotIn("NOPASSWD: ALL", sudoers)
 
     def test_entrypoint_accepts_pipeline_and_returns_json(self) -> None:

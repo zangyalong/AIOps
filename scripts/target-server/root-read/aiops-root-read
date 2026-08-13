@@ -3,7 +3,7 @@
 set -euo pipefail
 
 fail() {
-    echo "aioms-root-read: $*" >&2
+    echo "aiops-root-read: $*" >&2
     exit 126
 }
 
@@ -12,11 +12,11 @@ fail() {
 
 readonly MAX_REQUEST_BYTES=16384
 readonly OUTER_TIMEOUT_SECONDS=30
-readonly IMAGE_ID_FILE="/etc/aioms/root-read.image-id"
-readonly EMPTY_DIR="/var/lib/aioms/root-read/empty-dir"
-readonly EMPTY_FILE="/var/lib/aioms/root-read/empty-file"
-readonly MASKED_DEV_DIR="/var/lib/aioms/root-read/masked-dev"
-readonly HOST_MOUNTS_HELPER="/usr/local/libexec/aioms/root-read-host-mounts.py"
+readonly IMAGE_ID_FILE="/etc/aiops/root-read.image-id"
+readonly EMPTY_DIR="/var/lib/aiops/root-read/empty-dir"
+readonly EMPTY_FILE="/var/lib/aiops/root-read/empty-file"
+readonly MASKED_DEV_DIR="/var/lib/aiops/root-read/masked-dev"
+readonly HOST_MOUNTS_HELPER="/usr/local/libexec/aiops/root-read-host-mounts.py"
 readonly HOST_PYTHON="/usr/bin/python3.11"
 readonly DOCKER_BIN="$(command -v docker || true)"
 
@@ -33,9 +33,9 @@ command -v mktemp >/dev/null 2>&1 || fail "系统缺少 mktemp 命令"
 readonly IMAGE_ID="$(tr -d '[:space:]' <"$IMAGE_ID_FILE")"
 [[ "$IMAGE_ID" =~ ^sha256:[a-f0-9]{64}$ ]] || fail "固定镜像 ID 格式不合法"
 
-readonly REQUEST_FILE="$(mktemp /run/aioms-root-read-request.XXXXXX)"
-readonly MOUNT_LIST_FILE="$(mktemp /run/aioms-root-read-mounts.XXXXXX)"
-readonly CONTAINER_NAME="aioms-root-read-$$-${RANDOM}"
+readonly REQUEST_FILE="$(mktemp /run/aiops-root-read-request.XXXXXX)"
+readonly MOUNT_LIST_FILE="$(mktemp /run/aiops-root-read-mounts.XXXXXX)"
+readonly CONTAINER_NAME="aiops-root-read-$$-${RANDOM}"
 
 cleanup() {
     "$DOCKER_BIN" rm -f -- "$CONTAINER_NAME" >/dev/null 2>&1 || true
@@ -69,14 +69,14 @@ hidden_directory_paths=(
     /var/tmp
     /etc/ssl/private
     /etc/pki/private
-    /etc/aioms-exporters
+    /etc/aiops-exporters
     /etc/kubernetes
     /etc/letsencrypt
     /etc/openvpn
     /etc/rancher
     /etc/wireguard
-    /opt/aioms-target-server
-    /var/lib/aioms
+    /opt/aiops-target-server
+    /var/lib/aiops
     /var/lib/containerd
     /var/lib/docker
     /var/lib/kubelet
@@ -212,7 +212,7 @@ timeout \
         --rm \
         --interactive \
         --name "$CONTAINER_NAME" \
-        --hostname aioms-root-read \
+        --hostname aiops-root-read \
         --pull never \
         --network none \
         --ipc none \

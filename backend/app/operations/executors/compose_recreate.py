@@ -16,7 +16,7 @@ from app.services.ssh_service import (
     build_connect_params,
 )
 
-COMPOSE_RECREATE_GATEWAY = "/usr/local/sbin/aioms-compose-recreate"
+COMPOSE_RECREATE_GATEWAY = "/usr/local/sbin/aiops-compose-recreate"
 DOCKER_CONTAINER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
 
@@ -63,7 +63,7 @@ async def recreate_compose_service(
         params = build_connect_params(server)
     except SSHNotConfigured:
         return OperationResult.failure(
-            f"{server.name} 没有配置 AIOMS SSH 身份，无法重建 Compose 服务。",
+            f"{server.name} 没有配置 AIOps SSH 身份，无法重建 Compose 服务。",
             code="ssh_not_configured",
         )
     except SSHKeyMissing as exc:

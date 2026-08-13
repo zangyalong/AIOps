@@ -102,33 +102,33 @@ class DiagnosticCommandValidationTest(unittest.TestCase):
     def test_docker_command_is_rewritten_to_noninteractive_sudo(self) -> None:
         self.assertEqual(
             commands._validated_command("docker ps"),
-            "sudo -n -- /usr/local/sbin/aioms-docker-read ps",
+            "sudo -n -- /usr/local/sbin/aiops-docker-read ps",
         )
         self.assertEqual(
             commands._validated_command("docker logs --tail 100 web-01"),
-            "sudo -n -- /usr/local/sbin/aioms-docker-read logs web-01",
+            "sudo -n -- /usr/local/sbin/aiops-docker-read logs web-01",
         )
         self.assertEqual(
             commands._validated_command("docker top web-01"),
-            "sudo -n -- /usr/local/sbin/aioms-docker-read top web-01",
+            "sudo -n -- /usr/local/sbin/aiops-docker-read top web-01",
         )
 
     def test_socket_and_pid_queries_use_readonly_gateway(self) -> None:
         self.assertEqual(
             commands._validated_command("ss -lntup"),
-            "sudo -n -- /usr/local/sbin/aioms-service-read inet-sockets",
+            "sudo -n -- /usr/local/sbin/aiops-service-read inet-sockets",
         )
         self.assertEqual(
             commands._validated_command("ss -lxnp"),
-            "sudo -n -- /usr/local/sbin/aioms-service-read unix-sockets",
+            "sudo -n -- /usr/local/sbin/aiops-service-read unix-sockets",
         )
         self.assertEqual(
             commands._validated_command("ps -p 12345 -o pid,ppid,user,lstart,cmd"),
-            "sudo -n -- /usr/local/sbin/aioms-service-read process 12345",
+            "sudo -n -- /usr/local/sbin/aiops-service-read process 12345",
         )
         self.assertEqual(
             commands._validated_command("systemctl status 12345 --no-pager"),
-            "sudo -n -- /usr/local/sbin/aioms-service-read unit 12345",
+            "sudo -n -- /usr/local/sbin/aiops-service-read unit 12345",
         )
 
 

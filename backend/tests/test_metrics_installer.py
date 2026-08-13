@@ -51,11 +51,11 @@ IMAGE_MIRROR_PREFIX="m.daocloud.io"
             _write_executable(
                 bin_dir / "docker",
                 """#!/bin/bash
-echo "$*" >>"$AIOMS_DOCKER_LOG"
+echo "$*" >>"$AIOPS_DOCKER_LOG"
 if [[ "$1" == "pull" ]]; then
-    [[ "$AIOMS_MIRROR_PULL_OK" == "true" ]]
+    [[ "$AIOPS_MIRROR_PULL_OK" == "true" ]]
 elif [[ "$1" == "image" && "$2" == "inspect" ]]; then
-    [[ "$AIOMS_LOCAL_IMAGE_EXISTS" == "true" ]]
+    [[ "$AIOPS_LOCAL_IMAGE_EXISTS" == "true" ]]
 elif [[ "$1" == "tag" || ( "$1" == "image" && "$2" == "rm" ) ]]; then
     exit 0
 else
@@ -70,9 +70,9 @@ fi
                 check=False,
                 env={
                     **os.environ,
-                    "AIOMS_DOCKER_LOG": str(docker_log),
-                    "AIOMS_LOCAL_IMAGE_EXISTS": str(local_image_exists).lower(),
-                    "AIOMS_MIRROR_PULL_OK": str(mirror_pull_ok).lower(),
+                    "AIOPS_DOCKER_LOG": str(docker_log),
+                    "AIOPS_LOCAL_IMAGE_EXISTS": str(local_image_exists).lower(),
+                    "AIOPS_MIRROR_PULL_OK": str(mirror_pull_ok).lower(),
                     "LC_ALL": "C",
                     "PATH": f"{bin_dir}:/usr/bin:/bin",
                 },

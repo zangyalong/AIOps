@@ -103,7 +103,7 @@ def _normalize_tool_call_ids(message: AIMessage) -> AIMessage:
         item = dict(call)
         call_id = str(item.get("id") or "")
         if not call_id or call_id in seen:
-            call_id = f"call_aioms_{uuid.uuid4().hex}"
+            call_id = f"call_aiops_{uuid.uuid4().hex}"
             item["id"] = call_id
             changed = True
         seen.add(call_id)

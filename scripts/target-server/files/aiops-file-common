@@ -1,14 +1,14 @@
 #!/bin/bash
 
-# 由三个文件网关 source；只能安装到 root 持有且不可由 AIOMS SSH 用户修改的位置。
+# 由三个文件网关 source；只能安装到 root 持有且不可由 AIOps SSH 用户修改的位置。
 
-POLICY_FILE="/etc/aioms/file-access.allowlist"
+POLICY_FILE="/etc/aiops/file-access.allowlist"
 MAX_FILE_BYTES=65536
 CONFIG_PATCH_PYTHON="/usr/bin/python3.11"
-CONFIG_PATCH_HELPER="/usr/local/libexec/aioms/config-patch.py"
+CONFIG_PATCH_HELPER="/usr/local/libexec/aiops/config-patch.py"
 
 file_fail() {
-    echo "${AIOMS_FILE_GATEWAY:-aioms-file}: $*" >&2
+    echo "${AIOPS_FILE_GATEWAY:-aiops-file}: $*" >&2
     exit 1
 }
 

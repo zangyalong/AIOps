@@ -12,7 +12,7 @@ RUN sed -Ei \
         'Acquire::http::Timeout "30";' \
         'Acquire::https::Timeout "30";' \
         'Acquire::http::Pipeline-Depth "0";' \
-        > /etc/apt/apt.conf.d/99aioms-build \
+        > /etc/apt/apt.conf.d/99aiops-build \
     && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         bash \
@@ -31,12 +31,12 @@ RUN sed -Ei \
     && /usr/bin/python3 -c \
         'import ctypes, json, os, re, selectors, signal, subprocess, sys, time; ctypes.CDLL("libcap.so.2"); from typing import NoReturn' \
     && rm -rf /var/lib/apt/lists/* \
-    && rm -f /etc/apt/apt.conf.d/99aioms-build
+    && rm -f /etc/apt/apt.conf.d/99aiops-build
 
-COPY entrypoint.py /usr/local/libexec/aioms/root-read-entrypoint.py
+COPY entrypoint.py /usr/local/libexec/aiops/root-read-entrypoint.py
 
-RUN chown root:root /usr/local/libexec/aioms/root-read-entrypoint.py \
-    && chmod 0555 /usr/local/libexec/aioms/root-read-entrypoint.py
+RUN chown root:root /usr/local/libexec/aiops/root-read-entrypoint.py \
+    && chmod 0555 /usr/local/libexec/aiops/root-read-entrypoint.py
 
 ENV HOME=/tmp \
     LANG=C.UTF-8 \
@@ -45,4 +45,4 @@ ENV HOME=/tmp \
     PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     SYSTEMD_PAGER=cat
 
-ENTRYPOINT ["/usr/bin/python3", "/usr/local/libexec/aioms/root-read-entrypoint.py"]
+ENTRYPOINT ["/usr/bin/python3", "/usr/local/libexec/aiops/root-read-entrypoint.py"]

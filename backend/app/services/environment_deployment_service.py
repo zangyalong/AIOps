@@ -20,14 +20,14 @@ from app.services.target_deployment_service import (
     render_deploy_config,
 )
 
-_REMOTE_CONFIG = "/var/lib/aioms/incoming/deploy.conf"
-_REMOTE_MANIFEST = "/var/lib/aioms/incoming/deployment.manifest"
+_REMOTE_CONFIG = "/var/lib/aiops/incoming/deploy.conf"
+_REMOTE_MANIFEST = "/var/lib/aiops/incoming/deployment.manifest"
 _REMOTE_SECRET_PATHS = {
-    "MYSQL_SECRET": "/var/lib/aioms/incoming/mysql-exporter.my.cnf",
-    "POSTGRES_SECRET": "/var/lib/aioms/incoming/postgres-exporter.password",
-    "REDIS_SECRET": "/var/lib/aioms/incoming/redis-exporter.password",
+    "MYSQL_SECRET": "/var/lib/aiops/incoming/mysql-exporter.my.cnf",
+    "POSTGRES_SECRET": "/var/lib/aiops/incoming/postgres-exporter.password",
+    "REDIS_SECRET": "/var/lib/aiops/incoming/redis-exporter.password",
 }
-_APPLY_COMMAND = "sudo -n -- /usr/local/sbin/aioms-target-deploy apply-config"
+_APPLY_COMMAND = "sudo -n -- /usr/local/sbin/aiops-target-deploy apply-config"
 _DEPLOY_TIMEOUT_SECONDS = 600
 _SECRET_MAX_LENGTH = 4096
 
@@ -163,7 +163,7 @@ async def apply_saved_environment(
         params = build_connect_params(server)
     except SSHNotConfigured as exc:
         raise EnvironmentDeploymentError(
-            "服务器尚未配置 AIOMS SSH 用户和私钥，无法自动部署"
+            "服务器尚未配置 AIOps SSH 用户和私钥，无法自动部署"
         ) from exc
     except SSHKeyMissing as exc:
         raise EnvironmentDeploymentError(str(exc)) from exc

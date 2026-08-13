@@ -24,7 +24,7 @@ def make_server() -> Server:
         name="web01",
         ip_address="192.0.2.10",
         ssh_port=22,
-        ssh_user="aioms",
+        ssh_user="aiops",
     )
 
 
@@ -32,9 +32,9 @@ class TargetDeploymentServiceTests(unittest.TestCase):
     def test_regenerating_key_pair_only_removes_current_server_files(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             key_dir = Path(temporary_dir)
-            private_key = key_dir / "web01-aioms"
-            public_key = key_dir / "web01-aioms.pub"
-            unrelated_key = key_dir / "db01-aioms"
+            private_key = key_dir / "web01-aiops"
+            public_key = key_dir / "web01-aiops.pub"
+            unrelated_key = key_dir / "db01-aiops"
             private_key.write_text("old-private", encoding="utf-8")
             public_key.write_text("old-public", encoding="utf-8")
             unrelated_key.write_text("keep-me", encoding="utf-8")
@@ -54,8 +54,8 @@ class TargetDeploymentServiceTests(unittest.TestCase):
     def test_failed_bundle_can_restore_original_key_pair(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_dir:
             key_dir = Path(temporary_dir)
-            private_key = key_dir / "web01-aioms"
-            public_key = key_dir / "web01-aioms.pub"
+            private_key = key_dir / "web01-aiops"
+            public_key = key_dir / "web01-aiops.pub"
             private_key.write_text("old-private", encoding="utf-8")
             public_key.write_text("old-public", encoding="utf-8")
             private_key.chmod(0o600)
@@ -103,8 +103,8 @@ class TargetDeploymentServiceTests(unittest.TestCase):
             )
 
         self.assertIn("SERVER_NAME=web01\n", rendered)
-        self.assertIn("AIOMS_SSH_USER=aioms\n", rendered)
-        self.assertNotIn("AIOMS_DEPLOY_USER", rendered)
+        self.assertIn("AIOPS_SSH_USER=aiops\n", rendered)
+        self.assertNotIn("AIOPS_DEPLOY_USER", rendered)
         self.assertIn("ALLOW_DOCKER_SOCKET=true\n", rendered)
         self.assertIn("ALLOY_SERVICE_MAP=\n", rendered)
         self.assertIn("START_ALLOY=false\n", rendered)

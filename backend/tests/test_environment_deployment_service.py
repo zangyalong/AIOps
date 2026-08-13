@@ -18,8 +18,8 @@ def make_server() -> Server:
         name="web01",
         ip_address="192.0.2.10",
         ssh_port=22,
-        ssh_user="aioms",
-        ssh_key_filename="web01-aioms",
+        ssh_user="aiops",
+        ssh_key_filename="web01-aiops",
     )
 
 
@@ -138,7 +138,7 @@ class EnvironmentDeploymentServiceTests(unittest.IsolatedAsyncioTestCase):
                 return_value=SimpleNamespace(
                     host="192.0.2.10",
                     port=22,
-                    username="aioms",
+                    username="aiops",
                     client_keys=["/tmp/test-key"],
                 ),
             ),
@@ -163,12 +163,12 @@ class EnvironmentDeploymentServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [call.args[1] for call in upload.await_args_list],
             [
-                "/var/lib/aioms/incoming/deploy.conf",
-                "/var/lib/aioms/incoming/deployment.manifest",
+                "/var/lib/aiops/incoming/deploy.conf",
+                "/var/lib/aiops/incoming/deployment.manifest",
             ],
         )
         connection.run.assert_awaited_once_with(
-            "sudo -n -- /usr/local/sbin/aioms-target-deploy apply-config",
+            "sudo -n -- /usr/local/sbin/aiops-target-deploy apply-config",
             check=False,
             timeout=600,
         )

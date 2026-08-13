@@ -82,7 +82,7 @@ class RootReadExecutionTest(unittest.IsolatedAsyncioTestCase):
         params = SimpleNamespace(
             host="127.0.0.1",
             port=22,
-            username="aioms",
+            username="aiops",
             client_keys=["test-key"],
         )
         connection = _FakeConnection(response)
@@ -140,7 +140,7 @@ class RootReadExecutionTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("Shell、PATH、程序版本", result.message)
         self.assertIn("宿主机文件根是 /host", result.message)
-        self.assertIn("AIOMS_PATH_MASKED", result.message)
+        self.assertIn("AIOPS_PATH_MASKED", result.message)
         self.assertEqual(len(connection.calls), 1)
         remote_command, kwargs = connection.calls[0]
         self.assertEqual(remote_command, root_read.ROOT_READ_REMOTE_COMMAND)
@@ -204,7 +204,7 @@ class RootReadExecutionTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.ok)
         self.assertIn("/、PATH 和可执行程序均来自目标服务器", result.message)
         self.assertIn("700/777 等权限位不能用来判定", result.message)
-        self.assertIn("AIOMS 是否获准读取", result.message)
+        self.assertIn("AIOps 是否获准读取", result.message)
         self.assertIn("本次调查也不可写", result.message)
         self.assertNotIn("宿主机文件根是 /host", result.message)
         request = json.loads(str(connection.calls[0][1]["input"]))

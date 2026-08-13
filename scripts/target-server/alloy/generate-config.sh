@@ -40,7 +40,7 @@ append_common_config() {
     local escaped_loki_url
     escaped_loki_url="$(alloy_escape "$LOKI_PUSH_URL")"
     cat >"$TEMP_OUTPUT" <<EOF
-// 由 AIOMS scripts/target-server/alloy/generate-config.sh 生成。
+// 由 AIOps scripts/target-server/alloy/generate-config.sh 生成。
 // 不要直接编辑本文件；请修改 services.map 后重新生成。
 
 logging {
@@ -123,7 +123,7 @@ discovery.relabel "${component_id}_target" {
     replacement  = "$escaped_service"
   }
 
-  // service_name 是 AIOMS 旧日志查询的迁移兼容标签。
+  // service_name 是 AIOps 旧日志查询的迁移兼容标签。
   rule {
     target_label = "service_name"
     replacement  = "$escaped_service"

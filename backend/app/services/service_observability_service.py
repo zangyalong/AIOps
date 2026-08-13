@@ -395,7 +395,7 @@ def _grafana_server_url(metric_instance: str, minutes: int) -> str:
         }
     )
     base_url = settings.grafana_base_url.rstrip("/")
-    return f"{base_url}/d/aioms-server-overview/server-overview?{query}"
+    return f"{base_url}/d/aiops-server-overview/server-overview?{query}"
 
 
 def _log_level(line: str) -> LogLevel:

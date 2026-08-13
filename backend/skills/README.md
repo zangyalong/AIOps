@@ -1,4 +1,4 @@
-# AIOMS Skills
+# AIOps Skills
 
 每个 Skill 放在独立目录的 `SKILL.md` 中。后端会在每轮 Agent 调用和 `GET /skills` 请求时重新扫描该目录，因此新增或修改 Skill 不需要再维护一份 Python 注册表。
 

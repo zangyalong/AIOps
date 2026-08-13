@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""AIOMS root 只读容器入口：校验 stdin 协议并在容器内执行诊断命令。"""
+"""AIOps root 只读容器入口：校验 stdin 协议并在容器内执行诊断命令。"""
 
 from __future__ import annotations
 
@@ -273,9 +273,9 @@ def _run(
 
     output = chunks.decode("utf-8", errors="replace")
     if timed_out:
-        output += f"\n[AIOMS：命令超过 {timeout} 秒，已终止]"
+        output += f"\n[AIOps：命令超过 {timeout} 秒，已终止]"
     elif truncated:
-        output += f"\n[AIOMS：输出超过 {MAX_OUTPUT_BYTES} 字节，已截断并终止命令]"
+        output += f"\n[AIOps：输出超过 {MAX_OUTPUT_BYTES} 字节，已截断并终止命令]"
     return exit_code, output, timed_out, truncated
 
 

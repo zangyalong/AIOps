@@ -1,6 +1,6 @@
 # 目标服务器 Prometheus exporter 配置
 
-本目录由根目录 `deploy.sh` 调用，使用一个名为 `aioms-exporters` 的 Docker Compose 项目管理：
+本目录由根目录 `deploy.sh` 调用，使用一个名为 `aiops-exporters` 的 Docker Compose 项目管理：
 
 | 组件 | 默认端口 | 数据范围 | 权限特点 |
 | --- | ---: | --- | --- |
@@ -29,7 +29,7 @@ Docker daemon。代理或直连拉取失败时，只有目标机已经存在完�
 中的镜像，再重新执行部署。
 
 关闭某一个开关并重新部署时，Compose 会移除该项目中对应的旧 exporter。五个开关全部关闭
-时，`deploy.sh` 会停止整个 `aioms-exporters` 项目，但保留 `/etc/aioms-exporters` 中的配置、
+时，`deploy.sh` 会停止整个 `aiops-exporters` 项目，但保留 `/etc/aiops-exporters` 中的配置、
 凭据和备份，便于以后重新启用。
 
 ## 凭据文件
@@ -43,7 +43,7 @@ cp metrics/redis-exporter.password.example metrics/redis-exporter.password
 ```
 
 只复制已启用数据库需要的文件。实际文件已被 `.gitignore` 排除，部署时会复制到
-`/etc/aioms-exporters/secrets/`，保存为 `root:aioms-exporters`、权限 `0640`。密码不会写入
+`/etc/aiops-exporters/secrets/`，保存为 `root:aiops-exporters`、权限 `0640`。密码不会写入
 生成的 Compose；但拥有 Docker 管理权限的人仍等同于拥有主机高权限。
 
 三个数据库 exporter 都有 `*_EXPORTER_NETWORK` 配置。数据库运行在宿主机并已监听本机 TCP
@@ -64,10 +64,10 @@ REDIS_EXPORTER_ADDRESS=redis://sub2api-redis:6379
 MySQL/MariaDB 示例权限：
 
 ```sql
-CREATE USER 'aioms_exporter'@'localhost'
+CREATE USER 'aiops_exporter'@'localhost'
   IDENTIFIED BY '替换成强密码'
   WITH MAX_USER_CONNECTIONS 3;
-GRANT PROCESS, REPLICATION CLIENT, SELECT ON *.* TO 'aioms_exporter'@'localhost';
+GRANT PROCESS, REPLICATION CLIENT, SELECT ON *.* TO 'aiops_exporter'@'localhost';
 ```
 
 如果 exporter 通过 TCP 连接时数据库看到的来源不是 `localhost`，请按实际网络设置账号 host，
@@ -76,9 +76,9 @@ GRANT PROCESS, REPLICATION CLIENT, SELECT ON *.* TO 'aioms_exporter'@'localhost'
 PostgreSQL 10+ 示例权限：
 
 ```sql
-CREATE USER aioms_exporter WITH PASSWORD '替换成强密码';
-GRANT CONNECT ON DATABASE postgres TO aioms_exporter;
-GRANT pg_monitor TO aioms_exporter;
+CREATE USER aiops_exporter WITH PASSWORD '替换成强密码';
+GRANT CONNECT ON DATABASE postgres TO aiops_exporter;
+GRANT pg_monitor TO aiops_exporter;
 ```
 
 Redis 6+ 建议创建专用 ACL 用户，只开放 exporter 读取 INFO、CONFIG GET、CLIENT、SLOWLOG 等
@@ -91,9 +91,9 @@ Exporter 采用 Prometheus 拉取模式，目标服务器不会主动把指标�
 `prometheus-scrape.example.yml` 中已启用的 job 到中央 `scrape_configs`，把示例 IP、服务器名、
 环境和服务名改成服务目录中的实际值，然后校验并 reload Prometheus。
 
-cAdvisor 模板会优先把容器的 `aioms.service` Docker label 映射为统一 `service` 标签；没有该
+cAdvisor 模板会优先把容器的 `aiops.service` Docker label 映射为统一 `service` 标签；没有该
 label 时依次退化为 Docker Compose service 和容器名。重要业务容器建议显式增加
-`aioms.service=<服务目录名称>` 标签。
+`aiops.service=<服务目录名称>` 标签。
 
 只允许中央 Prometheus 访问以下已启用端口，不要直接暴露到公网：
 

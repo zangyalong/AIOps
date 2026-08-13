@@ -14,11 +14,11 @@ usage() {
     --server web01 \
     [--host 192.0.2.10] \
     [--port 22] \
-    [--user aioms] \
+    [--user aiops] \
     [--key-dir /path/to/ssh] \
     [--generated-root /absolute/path]
 
-脚本在 AIOMS 客户端生成一组 Ed25519 密钥。私钥只保存在 key-dir；
+脚本在 AIOps 客户端生成一组 Ed25519 密钥。私钥只保存在 key-dir；
 同时生成一个可单独交给服务器管理员的角色包：
   bootstrap/generated/<server>/
 
@@ -34,7 +34,7 @@ readonly PROJECT_ROOT="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
 SERVER_NAME=""
 SERVER_HOST=""
 SSH_PORT="22"
-AIOMS_USER="aioms"
+AIOPS_USER="aiops"
 KEY_DIR="$PROJECT_ROOT/ssh"
 GENERATED_ROOT="$SCRIPT_DIR/generated"
 
@@ -57,7 +57,7 @@ while (($# > 0)); do
             ;;
         --user)
             (($# >= 2)) || fail "--user 缺少参数"
-            AIOMS_USER="$2"
+            AIOPS_USER="$2"
             shift 2
             ;;
         --key-dir)
@@ -83,8 +83,8 @@ done
 readonly SERVER_PATTERN='^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$'
 readonly USER_PATTERN='^[a-z_][a-z0-9_-]*[$]?$'
 [[ "$SERVER_NAME" =~ $SERVER_PATTERN ]] || fail "必须提供格式合法的 --server"
-[[ "$AIOMS_USER" =~ $USER_PATTERN ]] || fail "AIOMS 用户名格式不合法"
-[[ "$AIOMS_USER" != "root" ]] || fail "AIOMS SSH 用户不能使用 root"
+[[ "$AIOPS_USER" =~ $USER_PATTERN ]] || fail "AIOps 用户名格式不合法"
+[[ "$AIOPS_USER" != "root" ]] || fail "AIOps SSH 用户不能使用 root"
 [[ "$SSH_PORT" =~ ^[0-9]{1,5}$ ]] || fail "SSH 端口格式不合法"
 ((SSH_PORT >= 1 && SSH_PORT <= 65535)) || fail "SSH 端口必须在 1 到 65535 之间"
 [[ "$KEY_DIR" == /* ]] || fail "--key-dir 必须是绝对路径"
@@ -104,7 +104,7 @@ command -v install >/dev/null 2>&1 || fail "客户端缺少 install 命令"
 umask 077
 install -d -m 0700 "$KEY_DIR"
 
-readonly KEY_PATH="$KEY_DIR/$SERVER_NAME-$AIOMS_USER"
+readonly KEY_PATH="$KEY_DIR/$SERVER_NAME-$AIOPS_USER"
 readonly GENERATED_DIR="$GENERATED_ROOT/$SERVER_NAME"
 
 ensure_key_pair() {
@@ -130,39 +130,39 @@ ensure_key_pair() {
     chmod 0644 "$private_path.pub"
 }
 
-ensure_key_pair "$KEY_PATH" "aioms@$SERVER_NAME"
+ensure_key_pair "$KEY_PATH" "aiops@$SERVER_NAME"
 
 install -d -m 0755 "$GENERATED_DIR"
-install -m 0644 "$KEY_PATH.pub" "$GENERATED_DIR/aioms.pub"
+install -m 0644 "$KEY_PATH.pub" "$GENERATED_DIR/aiops.pub"
 install -m 0755 "$SCRIPT_DIR/server-bootstrap.sh" "$GENERATED_DIR/configure-role.sh"
 
 cat >"$GENERATED_DIR/client-connection-info.txt" <<EOF
 server_name=$SERVER_NAME
 host=$SERVER_HOST
 port=$SSH_PORT
-ssh_user=$AIOMS_USER
+ssh_user=$AIOPS_USER
 ssh_key_filename=$(basename -- "$KEY_PATH")
 
 把整个角色包目录复制到目标服务器（请把 <server-admin> 替换为管理员账号）：
-scp -P $SSH_PORT -r "$GENERATED_DIR" <server-admin>@$SERVER_HOST:/tmp/aioms-role-$SERVER_NAME
+scp -P $SSH_PORT -r "$GENERATED_DIR" <server-admin>@$SERVER_HOST:/tmp/aiops-role-$SERVER_NAME
 
 管理员在目标服务器执行：
-cd /tmp/aioms-role-$SERVER_NAME
+cd /tmp/aiops-role-$SERVER_NAME
 sha256sum -c SHA256SUMS
-sudo ./configure-role.sh --user $AIOMS_USER
+sudo ./configure-role.sh --user $AIOPS_USER
 
-AIOMS servers 表的 SSH 字段：
-ssh_user=$AIOMS_USER
+AIOps servers 表的 SSH 字段：
+ssh_user=$AIOPS_USER
 ssh_key_filename=$(basename -- "$KEY_PATH")
 
 核对并记录服务器 host key 后，可手工验证：
-ssh -p $SSH_PORT -i "$KEY_PATH" $AIOMS_USER@$SERVER_HOST 'id'
+ssh -p $SSH_PORT -i "$KEY_PATH" $AIOPS_USER@$SERVER_HOST 'id'
 EOF
 chmod 0644 "$GENERATED_DIR/client-connection-info.txt"
 
 readonly MANIFEST_PATH="$GENERATED_DIR/SHA256SUMS"
 checksum_files=(
-    "aioms.pub"
+    "aiops.pub"
     "configure-role.sh"
     "client-connection-info.txt"
 )

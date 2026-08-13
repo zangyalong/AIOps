@@ -7,14 +7,14 @@
 # 特殊域名才能访问到宿主机（Docker Desktop 上可用）。send_resolved: true 表示告警恢复时也推一条。
 
 route:
-  receiver: "aioms-backend"
+  receiver: "aiops-backend"
   # 同类告警攒一攒再处理的窗口，本地演示给小一点，让告警尽快推过来。
   group_wait: 5s
   group_interval: 10s
   repeat_interval: 1h
 
 receivers:
-  - name: "aioms-backend"
+  - name: "aiops-backend"
     webhook_configs:
       - url: "http://host.docker.internal:8010/alerts/webhook"
         send_resolved: true

@@ -40,8 +40,8 @@ def _server() -> SimpleNamespace:
         name="web-01",
         ip_address="192.0.2.10",
         ssh_port=22,
-        ssh_user="aioms",
-        ssh_key_filename="web-01-aioms",
+        ssh_user="aiops",
+        ssh_key_filename="web-01-aiops",
     )
 
 
@@ -74,7 +74,7 @@ class ServiceControlPolicyTests(unittest.IsolatedAsyncioTestCase):
                 return_value=SimpleNamespace(
                     host=server.ip_address,
                     port=22,
-                    username="aioms",
+                    username="aiops",
                     client_keys=["test-key"],
                 ),
             ),
@@ -97,7 +97,7 @@ class ServiceControlPolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             connection.commands,
             [
-                "sudo -n -- /usr/local/sbin/aioms-service-policy "
+                "sudo -n -- /usr/local/sbin/aiops-service-policy "
                 "add systemd mysqld.service"
             ],
         )
@@ -120,7 +120,7 @@ class ServiceControlPolicyTests(unittest.IsolatedAsyncioTestCase):
                 return_value=SimpleNamespace(
                     host=server.ip_address,
                     port=22,
-                    username="aioms",
+                    username="aiops",
                     client_keys=["test-key"],
                 ),
             ),
@@ -163,7 +163,7 @@ class ServiceControlPolicyTests(unittest.IsolatedAsyncioTestCase):
                 return_value=SimpleNamespace(
                     host=server.ip_address,
                     port=22,
-                    username="aioms",
+                    username="aiops",
                     client_keys=["test-key"],
                 ),
             ),
@@ -186,9 +186,9 @@ class ServiceControlPolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             connection.commands,
             [
-                "sudo -n -- /usr/local/sbin/aioms-service-policy "
+                "sudo -n -- /usr/local/sbin/aiops-service-policy "
                 "add systemd mysqld.service",
-                "sudo -n -- /usr/local/sbin/aioms-service-policy "
+                "sudo -n -- /usr/local/sbin/aiops-service-policy "
                 "remove systemd mysqld.service",
             ],
         )
@@ -213,7 +213,7 @@ class ServiceControlPolicyTests(unittest.IsolatedAsyncioTestCase):
                 return_value=SimpleNamespace(
                     host=server.ip_address,
                     port=22,
-                    username="aioms",
+                    username="aiops",
                     client_keys=["test-key"],
                 ),
             ),
@@ -234,5 +234,5 @@ class ServiceControlPolicyTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             connection.commands,
-            ["sudo -n -- /usr/local/sbin/aioms-service-policy add docker orders-api"],
+            ["sudo -n -- /usr/local/sbin/aiops-service-policy add docker orders-api"],
         )

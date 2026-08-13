@@ -15,7 +15,7 @@ from app.services.ssh_service import (
     build_connect_params,
 )
 
-POLICY_GATEWAY = "/usr/local/sbin/aioms-service-policy"
+POLICY_GATEWAY = "/usr/local/sbin/aiops-service-policy"
 PolicyAction = Literal["add", "remove"]
 
 
@@ -34,7 +34,7 @@ async def _apply_remote_policy(
         params = build_connect_params(server)
     except SSHNotConfigured as exc:
         raise ServiceControlPolicySyncError(
-            "目标服务器没有配置 AIOMS SSH 身份，无法同步服务控制白名单"
+            "目标服务器没有配置 AIOps SSH 身份，无法同步服务控制白名单"
         ) from exc
     except SSHKeyMissing as exc:
         raise ServiceControlPolicySyncError(str(exc)) from exc

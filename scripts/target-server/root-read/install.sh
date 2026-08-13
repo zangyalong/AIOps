@@ -8,26 +8,26 @@ fail() {
 }
 
 [[ $EUID -eq 0 ]] || fail "请使用 root 或 sudo 运行"
-[[ $# -eq 1 ]] || fail "用法：./install.sh <AIOMS SSH 用户名>"
+[[ $# -eq 1 ]] || fail "用法：./install.sh <AIOps SSH 用户名>"
 
-readonly AIOMS_SSH_USER="$1"
+readonly AIOPS_SSH_USER="$1"
 readonly USER_PATTERN='^[a-z_][a-z0-9_-]*[$]?$'
-[[ "$AIOMS_SSH_USER" =~ $USER_PATTERN ]] || fail "SSH 用户名格式不合法"
-[[ "$AIOMS_SSH_USER" != "root" ]] || fail "SSH 用户不能是 root"
-id "$AIOMS_SSH_USER" >/dev/null 2>&1 || fail "用户 $AIOMS_SSH_USER 不存在"
+[[ "$AIOPS_SSH_USER" =~ $USER_PATTERN ]] || fail "SSH 用户名格式不合法"
+[[ "$AIOPS_SSH_USER" != "root" ]] || fail "SSH 用户不能是 root"
+id "$AIOPS_SSH_USER" >/dev/null 2>&1 || fail "用户 $AIOPS_SSH_USER 不存在"
 
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-readonly INSTALL_CONTEXT="/usr/local/share/aioms/root-read"
-readonly STATE_DIR="/etc/aioms"
+readonly INSTALL_CONTEXT="/usr/local/share/aiops/root-read"
+readonly STATE_DIR="/etc/aiops"
 readonly IMAGE_ID_FILE="$STATE_DIR/root-read.image-id"
 readonly SOURCE_HASH_FILE="$STATE_DIR/root-read.source-sha256"
-readonly MASK_DIR="/var/lib/aioms/root-read/empty-dir"
-readonly MASK_FILE="/var/lib/aioms/root-read/empty-file"
-readonly MASKED_DEV_DIR="/var/lib/aioms/root-read/masked-dev"
-readonly MASK_NOTICE="AIOMS_PATH_MASKED: 该宿主机路径已被安全策略遮蔽，不能判断为空或不存在。"
-readonly SUDOERS_TARGET="/etc/sudoers.d/aioms-root-read"
-readonly TEMP_SUDOERS="$(mktemp /etc/sudoers.d/.aioms-root-read.XXXXXX)"
-readonly TEMP_STATE="$(mktemp /tmp/aioms-root-read-state.XXXXXX)"
+readonly MASK_DIR="/var/lib/aiops/root-read/empty-dir"
+readonly MASK_FILE="/var/lib/aiops/root-read/empty-file"
+readonly MASKED_DEV_DIR="/var/lib/aiops/root-read/masked-dev"
+readonly MASK_NOTICE="AIOPS_PATH_MASKED: 该宿主机路径已被安全策略遮蔽，不能判断为空或不存在。"
+readonly SUDOERS_TARGET="/etc/sudoers.d/aiops-root-read"
+readonly TEMP_SUDOERS="$(mktemp /etc/sudoers.d/.aiops-root-read.XXXXXX)"
+readonly TEMP_STATE="$(mktemp /tmp/aiops-root-read-state.XXXXXX)"
 
 cleanup() {
     rm -f -- "$TEMP_SUDOERS" "$TEMP_STATE"
@@ -59,11 +59,11 @@ docker_server_major="${docker_server_version%%.*}"
 install -d -o root -g root -m 0755 \
     "$INSTALL_CONTEXT" \
     "$STATE_DIR" \
-    /usr/local/libexec/aioms
+    /usr/local/libexec/aiops
 install -d -o root -g root -m 0755 "$MASK_DIR"
 install -d -o root -g root -m 0755 "$MASKED_DEV_DIR"
 printf '%s\n' "$MASK_NOTICE" >"$TEMP_STATE"
-install -o root -g root -m 0444 "$TEMP_STATE" "$MASK_DIR/AIOMS_PATH_MASKED.txt"
+install -o root -g root -m 0444 "$TEMP_STATE" "$MASK_DIR/AIOPS_PATH_MASKED.txt"
 chmod 0555 "$MASK_DIR"
 install -o root -g root -m 0444 "$TEMP_STATE" "$MASK_FILE"
 # Docker 嵌套挂载需要目标先存在；这个空普通文件仅作为
@@ -75,8 +75,8 @@ install -o root -g root -m 0644 "$SCRIPT_DIR/Dockerfile" "$INSTALL_CONTEXT/Docke
 install -o root -g root -m 0555 "$SCRIPT_DIR/entrypoint.py" "$INSTALL_CONTEXT/entrypoint.py"
 install -o root -g root -m 0555 \
     "$SCRIPT_DIR/host_mounts.py" \
-    /usr/local/libexec/aioms/root-read-host-mounts.py
-install -o root -g root -m 0755 "$SCRIPT_DIR/aioms-root-read" /usr/local/sbin/aioms-root-read
+    /usr/local/libexec/aiops/root-read-host-mounts.py
+install -o root -g root -m 0755 "$SCRIPT_DIR/aiops-root-read" /usr/local/sbin/aiops-root-read
 
 source_hash="$({
     sha256sum "$INSTALL_CONTEXT/Dockerfile"
@@ -94,13 +94,13 @@ if [[ -r "$SOURCE_HASH_FILE" && -r "$IMAGE_ID_FILE" ]] \
 fi
 
 if [[ -z "$image_id" ]]; then
-    echo "构建 AIOMS root 只读诊断镜像……"
+    echo "构建 AIOps root 只读诊断镜像……"
     docker build \
         --pull \
-        --tag aioms-root-read:local \
+        --tag aiops-root-read:local \
         --file "$INSTALL_CONTEXT/Dockerfile" \
         "$INSTALL_CONTEXT"
-    image_id="$(docker image inspect --format '{{.Id}}' aioms-root-read:local)"
+    image_id="$(docker image inspect --format '{{.Id}}' aiops-root-read:local)"
     [[ "$image_id" =~ ^sha256:[a-f0-9]{64}$ ]] || fail "Docker 返回了异常镜像 ID"
 
     printf '%s\n' "$image_id" >"$TEMP_STATE"
@@ -111,34 +111,34 @@ else
     echo "root-read 镜像内容未变化，复用固定镜像：$image_id"
 fi
 
-sed "s/@AIOMS_SSH_USER@/$AIOMS_SSH_USER/g" \
-    "$SCRIPT_DIR/aioms-root-read.sudoers" >"$TEMP_SUDOERS"
+sed "s/@AIOPS_SSH_USER@/$AIOPS_SSH_USER/g" \
+    "$SCRIPT_DIR/aiops-root-read.sudoers" >"$TEMP_SUDOERS"
 chmod 0440 "$TEMP_SUDOERS"
 visudo -cf "$TEMP_SUDOERS"
 install -o root -g root -m 0440 "$TEMP_SUDOERS" "$SUDOERS_TARGET"
 visudo -cf "$SUDOERS_TARGET"
 
-if test_output="$(printf '{"command":"printf aioms-root-read-ok","timeout":5}' \
-    | /usr/local/sbin/aioms-root-read)"; then
+if test_output="$(printf '{"command":"printf aiops-root-read-ok","timeout":5}' \
+    | /usr/local/sbin/aiops-root-read)"; then
     :
 else
     test_status=$?
     fail "root-read 容器自检失败（退出码 $test_status）：${test_output:-无标准输出}"
 fi
-[[ "$test_output" == *'"output": "aioms-root-read-ok"'* ]] \
+[[ "$test_output" == *'"output": "aiops-root-read-ok"'* ]] \
     || fail "root-read 容器自检返回异常：$test_output"
 
-if host_test_output="$(printf '{"command":"test -r /etc/os-release 2>/dev/null && printf aioms-host-read-ok","timeout":5,"scope":"host"}' \
-    | /usr/local/sbin/aioms-root-read)"; then
+if host_test_output="$(printf '{"command":"test -r /etc/os-release 2>/dev/null && printf aiops-host-read-ok","timeout":5,"scope":"host"}' \
+    | /usr/local/sbin/aiops-root-read)"; then
     :
 else
     host_test_status=$?
     fail "宿主机只读语境自检失败（退出码 $host_test_status）：${host_test_output:-无标准输出}"
 fi
-[[ "$host_test_output" == *'"output": "aioms-host-read-ok"'* ]] \
+[[ "$host_test_output" == *'"output": "aiops-host-read-ok"'* ]] \
     || fail "宿主机只读语境自检返回异常：$host_test_output"
 
-echo "AIOMS root 只读沙箱安装完成。"
-echo "SSH 用户：$AIOMS_SSH_USER"
+echo "AIOps root 只读沙箱安装完成。"
+echo "SSH 用户：$AIOPS_SSH_USER"
 echo "固定镜像：$image_id"
 echo "sudoers：$SUDOERS_TARGET"

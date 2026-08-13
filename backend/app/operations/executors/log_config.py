@@ -14,9 +14,9 @@ from app.services.ssh_service import (
     build_connect_params,
 )
 
-REMOTE_TEMP_MAP = "/var/lib/aioms/incoming/.services.map.upload"
-REMOTE_MAP = "/var/lib/aioms/incoming/services.map"
-APPLY_COMMAND = "sudo -n -- /usr/local/sbin/aioms-target-deploy apply-alloy"
+REMOTE_TEMP_MAP = "/var/lib/aiops/incoming/.services.map.upload"
+REMOTE_MAP = "/var/lib/aiops/incoming/services.map"
+APPLY_COMMAND = "sudo -n -- /usr/local/sbin/aiops-target-deploy apply-alloy"
 
 
 class LogConfigSnapshot(Protocol):
@@ -68,13 +68,13 @@ async def apply_server_log_config(
         params = build_connect_params(server)
     except SSHNotConfigured:
         return OperationResult.failure(
-            f"{snapshot.server_name} 没有配置 AIOMS SSH 身份"
+            f"{snapshot.server_name} 没有配置 AIOps SSH 身份"
             "（ssh_user / ssh_key_filename），未修改服务器。",
             code="ssh_not_configured",
         )
     except SSHKeyMissing as exc:
         return OperationResult.failure(
-            f"{exc}，请确认 AIOMS 私钥已经放到 {exc.key_path.parent} 目录下。",
+            f"{exc}，请确认 AIOps 私钥已经放到 {exc.key_path.parent} 目录下。",
             code="ssh_key_missing",
         )
 

@@ -101,9 +101,9 @@ class ServiceMetricDefinitionTests(unittest.TestCase):
         self.assertNotIn("runtime_name", pg_up.promql)
 
     def test_exporter_service_uses_exporter_runtime_label(self) -> None:
-        service = SimpleNamespace(name="aioms-redis-exporter")
+        service = SimpleNamespace(name="aiops-redis-exporter")
         instance = SimpleNamespace(
-            runtime_name="aioms-redis-exporter",
+            runtime_name="aiops-redis-exporter",
             runtime_type="docker",
             metric_instance=None,
         )
@@ -114,7 +114,7 @@ class ServiceMetricDefinitionTests(unittest.TestCase):
         )
 
         redis_up = next(item for item in definitions if item.key == "redis_up")
-        self.assertIn('runtime_name="aioms-redis-exporter"', redis_up.promql)
+        self.assertIn('runtime_name="aiops-redis-exporter"', redis_up.promql)
 
     def test_systemd_service_uses_its_cgroup_metrics(self) -> None:
         service = SimpleNamespace(name="pixel-forge-frontend")

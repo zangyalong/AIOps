@@ -2,6 +2,18 @@
 
 跟踪多步骤任务的进度。这不是项目路线图，只在用户明确列出一批任务时才新增/更新——规则见 [CLAUDE.md](../CLAUDE.md) 「与 Claude 的协作模式」第 9 条。
 
+## 统一项目名称为 AIOps
+
+- [ ] **统一产品展示名称与说明**
+  - 前后端界面、提示词、API 标题、文档和示例统一使用 `AIOps`
+- [ ] **统一代码与部署技术标识**
+  - Python 包、Docker 资源、Grafana/Prometheus 标识、环境变量、SSH 用户、目标机目录和固定网关统一使用 `aiops` / `AIOPS_*`
+  - 同步改名目标机脚本文件及其安装引用，避免名称与实际路径不一致
+- [ ] **自动化检查与现有环境迁移验收**
+  - 旧名称全仓零残留，Shell 语法、Ruff、后端测试和前端生产构建通过后保持未勾选
+  - `.env`、数据库、未跟踪的 SSH 私钥及已部署目标机不由源码替换自动迁移；切换前先备份，再按新标识更新连接配置、凭据文件名和服务器目录记录
+  - 目标机先用新角色包重新部署并验证新网关，再人工清理旧账号、目录和 sudoers；等本地可观测性容器与目标服务器都验证完成后再验收
+
 ## Exporter 镜像代理失败时复用本地镜像
 
 - [ ] **镜像准备允许安全回退**
@@ -74,7 +86,7 @@
 - [ ] **把统一 Ops Agent 提示词改为运行时组装**
   - 固定保留运维核心职责和不可被 Skill 覆盖的安全边界；工具可用性、运行模式、回答契约和 Skill 上下文按每轮状态拼装
   - 移除 `chat_graph.py` 中整块写死的系统提示词，继续保持交互对话可写、无人值守 worker 禁写的硬边界
-- [ ] **新增 Pi 风格的 AIOMS Skill 发现与按需读取机制**
+- [ ] **新增 Pi 风格的 AIOps Skill 发现与按需读取机制**
   - 从独立 `SKILL.md` 发现名称、描述与正文，运行时只把名称、描述和文件位置索引拼入 Prompt
   - 模型语义判断后调用 `read_skill` 读取全文；用户可用 `/skill:名称` 强制展开，不使用后端关键词路由
 - [ ] **提供首批内置运维 Skills**
@@ -82,7 +94,7 @@
   - 强制安全规则和必须执行的审批/生效流程继续固定在 Ops Prompt、LangGraph 与 Operation Broker 中
 - [ ] **SKILLS 页展示已安装说明文档**
   - 主导航使用 `SKILLS`；页面只展示名称、描述和正文，不外显路径、触发词、关联工具、分类或版本
-  - 参考 Codex Skills 的搜索列表与详情弹窗结构，沿用 AIOMS 现有颜色和排版体系
+  - 参考 Codex Skills 的搜索列表与详情弹窗结构，沿用 AIOps 现有颜色和排版体系
 - [ ] **自动化检查与运行时验收**
   - Ruff、后端完整测试和前端生产构建通过后保持未勾选，等用户在真实对话中确认按需读取和 SKILLS 页展示正确再验收
 
@@ -142,9 +154,9 @@
 ## 单角色 root 只读沙箱 + 审批写网关
 
 - [ ] **目标服务器 root 只读沙箱**
-  - 同一个 `aioms` SSH 身份可通过固定无参数入口启动一次性 Docker 诊断容器，不再维护 `grep/find/rg` 等只读 Shell 语义白名单
+  - 同一个 `aiops` SSH 身份可通过固定无参数入口启动一次性 Docker 诊断容器，不再维护 `grep/find/rg` 等只读 Shell 语义白名单
   - 宿主机根文件系统在内部只读挂载，安全子挂载逐项只读加入；容器无网络、无 Docker/systemd 控制 socket、无调用方挂载参数，并遮蔽私钥、凭据、运行时控制面和数据库数据目录
-  - 后端可进入宿主机真实根目录核验 PATH、程序和文件，也可使用内部工具箱搜索宿主文件；执行语境不暴露给 Agent，遮蔽路径显示 `AIOMS_PATH_MASKED`，不得伪装成空目录
+  - 后端可进入宿主机真实根目录核验 PATH、程序和文件，也可使用内部工具箱搜索宿主文件；执行语境不暴露给 Agent，遮蔽路径显示 `AIOPS_PATH_MASKED`，不得伪装成空目录
   - 镜像在安装时构建，运行时只接受 root 持有配置中记录的不可变 image ID；命令只从 stdin JSON 传入，宿主机不 `eval`
 - [ ] **后端通用只读工具与审计**
   - root-read 作为统一 `investigate(area="host")` 的内部执行器，当前单一交互角色无需审批即可调用
@@ -222,7 +234,7 @@
   - 桌面端固定应用视口，主导航、服务树和详情区域保持同一底部基线，服务树与详情分别独立滚动
   - 服务器总览增加 1 小时 / 24 小时 / 7 天 CPU、内存和磁盘趋势，并提供带 instance 与时间范围的 Grafana Dashboard 深入查看入口
   - 代码、后端测试和前端构建完成后保持未勾选，等用户用真实 web-01 服务完成状态、日志和指标验收
-- [ ] **预警规则配置页面**：在 AIOMS 中手动维护 Prometheus 告警规则，并查看 Prometheus / Alertmanager 运行状态
+- [ ] **预警规则配置页面**：在 AIOps 中手动维护 Prometheus 告警规则，并查看 Prometheus / Alertmanager 运行状态
   - 规则保存到数据库，启用规则生成独立 YAML 并热重载 Prometheus；支持 PromQL 校验、严重级别、持续时间、摘要、说明和启停
   - `alert_rules` 数据库表是唯一配置源；Prometheus YAML 由后端启动和页面操作自动生成并热重载，生成文件不纳入 Git
   - 页面展示规则的正常 / 等待 / 触发状态与 Alertmanager 活跃告警数；Alertmanager 继续只负责告警路由、抑制和通知
@@ -237,13 +249,13 @@
 - [ ] **服务运行时身份与 web01 Alloy 日志接入**：把发现结果中的运行类型/运行对象正式存入服务实例，并提供目标服务器 Alloy 快速配置包
   - `service_instances` 增加 `runtime_type` / `runtime_name`，发现注册、CRUD API 和前端实例详情使用同一份身份；已有数据库通过随附 SQL 手动加列
   - `scripts/target-server/alloy/` 提供安装、配置模板、服务映射和检查说明；Alloy 部署在目标服务器，从 journald、Docker 和已明确登记的文件读取日志并推送中央 Loki
-  - 首次部署不再要求手填服务映射：先安装 discovery、基础指标和未启动的 Alloy；服务注册后由只读 Tool 生成映射预览，再由同一非 root AIOMS 身份和高风险审批 Tool 通过固定网关应用并重载
+  - 首次部署不再要求手填服务映射：先安装 discovery、基础指标和未启动的 Alloy；服务注册后由只读 Tool 生成映射预览，再由同一非 root AIOps 身份和高风险审批 Tool 通过固定网关应用并重载
   - Loki 新日志统一使用 `service/environment/server/runtime_type/runtime_name`，迁移期兼容旧 `service_name` 查询
-  - 代码和静态检查完成后保持未勾选，等用户在真实 `web01` 安装 Alloy 并从 AIOMS 查询到日志后再验收
+  - 代码和静态检查完成后保持未勾选，等用户在真实 `web01` 安装 Alloy 并从 AIOps 查询到日志后再验收
 - [ ] **业务资产扫描与目标服务器配置包**：默认盘点 systemd、Docker、TCP/UDP/Unix Socket 服务，只对监听 PID 补充进程详情，不再读取整机进程表
   - 提供目标服务器只读 Docker / 服务发现包装脚本、精确 sudoers 模板、安装脚本和逐项参数说明
   - 根目录新增白名单解析的 `deploy.conf` 与一键 `deploy.sh`，统一安装只读发现网关和可选 Alloy，并提供从打包、上传到验证的目标服务器配置指南
-  - 首次 bootstrap 在客户端生成一组 SSH 密钥和单角色包（一个公钥、角色脚本与校验清单），无需携带完整 target-server；服务器脚本只创建一个非 root `aioms` 账号、安装公钥和 root 所有的固定部署入口，运行包由管理员后续独立部署
+  - 首次 bootstrap 在客户端生成一组 SSH 密钥和单角色包（一个公钥、角色脚本与校验清单），无需携带完整 target-server；服务器脚本只创建一个非 root `aiops` 账号、安装公钥和 root 所有的固定部署入口，运行包由管理员后续独立部署
   - API、ORM 和服务器编辑页只保留 `ssh_user` / `ssh_key_filename`；旧双角色数据库列提供独立手工清理脚本，不在启动时自动删除
   - 服务器编辑页新增“环境部署”配置：保存非敏感参数，数据库密码仅在生成压缩包时一次性使用；后端生成不含私钥的一键安装包供下载
   - 首次安装把 root 固定运行包落到目标服务器；后续页面按钮或高风险审批 Tool 可上传校验后的配置并调用固定网关自动部署，数据库密码不落库，Tool 只复用远端已有凭据
@@ -260,11 +272,11 @@
   - 统一 Ops Agent 强制使用简体中文；命令、代码、PromQL、服务名和产品专有名词保留原文
   - 代码与自动化检查完成后保持未勾选，等用户在真实多轮对话中确认不再出现英文过渡语
 - [ ] **systemd / Docker 服务启动、停止和重启受控写工具**
-  - `start_service` / `stop_service` / `restart_service` 根据服务目录运行时身份统一控制 systemd 或 Docker，共用一个非 root AIOMS SSH 身份、固定写网关和 AIOMS 端白名单
+  - `start_service` / `stop_service` / `restart_service` 根据服务目录运行时身份统一控制 systemd 或 Docker，共用一个非 root AIOps SSH 身份、固定写网关和 AIOps 端白名单
   - 服务目录的 systemd / Docker 部署实例增加“控制授权”开关，默认关闭；只有实例已授权时 Agent 才能发起启停，修改运行时身份或删除目录项前必须先关闭授权
   - 用户确认开关后通过固定策略网关同步目标服务器 root 白名单，远端成功后才保存数据库状态；服务发现或目录注册不会自动扩大授权
   - 启动为中风险，只需审批卡片一次确认；停止、重启为高风险，先点审批卡片，再在展示目标与动作的弹窗中二次确认，后端拒绝缺少二次确认标记的高风险恢复请求
-  - 目标服务器新增 root 持有的 `aioms-service-control` 固定网关和第二层白名单，条目使用 `systemd:unit.service` 或 `docker:container` 明确区分运行时；sudoers 不开放任意 `systemctl`、Docker CLI 或 Shell
+  - 目标服务器新增 root 持有的 `aiops-service-control` 固定网关和第二层白名单，条目使用 `systemd:unit.service` 或 `docker:container` 明确区分运行时；sudoers 不开放任意 `systemctl`、Docker CLI 或 Shell
   - 代码与自动化检查完成后保持未勾选，等用户在真实 web-01 上分别验证拒绝、批准和状态复核
 - [ ] **通过 AI 对话创建预警规则**
   - `create_alert_rule` 登记为中风险写工具，审批后复用页面相同的 Pydantic 字段校验、PromQL 校验、数据库写入和 Prometheus 热重载
@@ -301,14 +313,14 @@
 - [x] **接 Loki**：把 `search_logs`（`backend/app/agents/tools/logs.py`）从 mock 换成真实日志查询（LogQL）
   - 数据源用 docker-compose 起的 Loki + Promtail（采集容器日志）+ fake-app（造带级别的假日志）；顺带加了 `list_log_services` / `list_metric_instances` 两个发现工具，让 agent 能先查"有哪些服务/实例"再查具体数据
 - [x] **接 Alertmanager**：`query_alerts`（`backend/app/agents/tools/alerts.py`）从种子数据换成查真实 firing 告警（先只读）
-  - 数据源用 docker-compose 起的 Alertmanager + AIOMS 托管的 Prometheus 告警规则；`query_alerts` 查 `/api/v2/alerts`，可按 severity/instance 过滤。`alert_events` 表 + 种子脚本按选型 C.4 保留不动，留给方向二告警生命周期状态机
+  - 数据源用 docker-compose 起的 Alertmanager + AIOps 托管的 Prometheus 告警规则；`query_alerts` 查 `/api/v2/alerts`，可按 severity/instance 过滤。`alert_events` 表 + 种子脚本按选型 C.4 保留不动，留给方向二告警生命周期状态机
 - [x] **Grafana 联动**（可选）：agent 能引用/生成 Grafana 面板链接，把结论落到统一仪表盘
   - `grafana_explore_link` 工具：按查询 + 时间窗拼 Grafana Explore 链接（纯字符串，不访问网络），支持 metrics（PromQL）/ logs（LogQL）/ alerts（Prometheus 的 ALERTS 指标）三种。docker-compose 加 grafana + 数据源 provisioning（固定 uid）。后续引入前端 md 渲染即可让链接可点击
 - [x] **关联原语**：实体模型（服务→实例）+ 时间窗对齐——给定告警/时间点，自动拉同一服务、同一窗口的 metrics + logs（+ traces）一起看
   - `correlate_incident` 工具：给定业务服务器名 + 时刻，`asyncio.gather` 并发拉齐指标(range)+日志+告警，同一时间窗对齐成横切面报告。实体映射优先使用规范化服务实例，旧 `servers.monitor_labels` 作为兼容回退。经对抗式审查加固（异常兜底、window 校验、自适应 step）。traces 暂缺（单机 PLG 无 Tempo）
 - [ ] **读工具 / 写工具边界划分**（survey 启发 #2）：把纯读诊断工具和有破坏力的写工具分成两类抽象，别混在一起
   - 已新增集中式 `catalog.py`，读工具与写工具分开注册且禁止重叠；原 SSH 白名单命令明确改为只读诊断工具，不再触发审批
-  - 已新增真实写工具 `start_service` / `stop_service` / `restart_service`：人工审批 + AIOMS/目标服务器双端 systemd 白名单，worker 不绑定写工具，执行节点也会拒绝缺少审批决议的调用
+  - 已新增真实写工具 `start_service` / `stop_service` / `restart_service`：人工审批 + AIOps/目标服务器双端 systemd 白名单，worker 不绑定写工具，执行节点也会拒绝缺少审批决议的调用
   - 单元测试、Ruff 和前端构建已通过；按计划表规则暂不勾选，等用户在运行中的前后端验证读诊断和写审批流程
 
 ### 方向二：从被动问答到事件驱动的主动诊断

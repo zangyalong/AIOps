@@ -266,7 +266,7 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(recreate_action["risk_level"], "high")
         self.assertEqual(recreate_action["kind"], "compose_service_recreate")
-        self.assertIn("aioms-compose-recreate sub2api", recreate_action["command"])
+        self.assertIn("aiops-compose-recreate sub2api", recreate_action["command"])
 
         rule_action = catalog.describe_write_action(
             {
@@ -338,7 +338,7 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(deployment_action["risk_level"], "high")
         self.assertEqual(deployment_action["kind"], "server_environment_deploy")
-        self.assertIn("aioms-target-deploy apply-config", deployment_action["command"])
+        self.assertIn("aiops-target-deploy apply-config", deployment_action["command"])
 
         config_patch_action = catalog.describe_write_action(
             {
@@ -514,10 +514,10 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.code, "service_target_changed")
         connect.assert_not_called()
 
-    async def test_service_control_executes_fixed_gateway_with_shared_aioms_identity(
+    async def test_service_control_executes_fixed_gateway_with_shared_aiops_identity(
         self,
     ) -> None:
-        """三种动作都通过同一个非 root AIOMS 身份调用固定网关。"""
+        """三种动作都通过同一个非 root AIOps 身份调用固定网关。"""
         server_id = uuid.uuid4()
         server = SimpleNamespace(id=server_id, name="demo", ip_address="127.0.0.1")
         instances = {
@@ -600,9 +600,9 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             connection.commands,
             [
-                "sudo -n -- /usr/local/sbin/aioms-service-control restart systemd nginx.service",
-                "sudo -n -- /usr/local/sbin/aioms-service-control start systemd bt.service",
-                "sudo -n -- /usr/local/sbin/aioms-service-control stop systemd bt.service",
+                "sudo -n -- /usr/local/sbin/aiops-service-control restart systemd nginx.service",
+                "sudo -n -- /usr/local/sbin/aiops-service-control start systemd bt.service",
+                "sudo -n -- /usr/local/sbin/aiops-service-control stop systemd bt.service",
             ],
         )
         self.assertTrue(restart_result.ok)
@@ -666,7 +666,7 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             connection.commands,
-            ["sudo -n -- /usr/local/sbin/aioms-service-control stop docker orders-api"],
+            ["sudo -n -- /usr/local/sbin/aiops-service-control stop docker orders-api"],
         )
         self.assertTrue(result.ok)
         self.assertIn("当前状态：exited", result.message)

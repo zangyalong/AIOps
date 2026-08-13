@@ -24,7 +24,7 @@ docker top <container>
 docker logs --tail 100 <container>
 ```
 
-在 AIOMS 对话里，应把这些命令映射为当前可用的只读调查能力，不假定存在任意 Docker Shell。
+在 AIOps 对话里，应把这些命令映射为当前可用的只读调查能力，不假定存在任意 Docker Shell。
 
 ## 形成结论
 

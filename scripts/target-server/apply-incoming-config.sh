@@ -17,13 +17,13 @@ for required_command in cp dirname flock install mktemp rm stat; do
         fail "目标服务器缺少命令：$required_command"
 done
 
-readonly INSTALL_DIR="/opt/aioms-target-server"
+readonly INSTALL_DIR="/opt/aiops-target-server"
 readonly DEPLOY_SCRIPT="$INSTALL_DIR/deploy.sh"
 readonly CONFIG_PATH="$INSTALL_DIR/deploy.conf"
-readonly INCOMING_DIR="/var/lib/aioms/incoming"
+readonly INCOMING_DIR="/var/lib/aiops/incoming"
 readonly INCOMING_CONFIG="$INCOMING_DIR/deploy.conf"
 readonly INCOMING_MANIFEST="$INCOMING_DIR/deployment.manifest"
-readonly LOCK_FILE="/run/lock/aioms-target-deploy.lock"
+readonly LOCK_FILE="/run/lock/aiops-target-deploy.lock"
 readonly MAX_CONFIG_SIZE=65536
 readonly MAX_SECRET_SIZE=4096
 
@@ -44,7 +44,7 @@ verify_upload() {
     local owner mode size
     [[ -f "$path" && ! -L "$path" ]] || fail "$label 不存在或不是普通文件"
     read -r owner mode size < <(stat -c '%u %a %s' "$path")
-    [[ "$owner" == "$SUDO_UID" ]] || fail "$label 必须由当前 AIOMS SSH 用户上传"
+    [[ "$owner" == "$SUDO_UID" ]] || fail "$label 必须由当前 AIOps SSH 用户上传"
     (( (8#$mode & 8#077) == 0 )) || fail "$label 不能允许 group/other 访问"
     ((size > 0 && size <= max_size)) || fail "$label 大小不合法"
 }
@@ -101,7 +101,7 @@ done
 exec 9>"$LOCK_FILE"
 flock -x 9
 
-backup_dir="$(mktemp -d /var/lib/aioms/.deployment-backup.XXXXXX)"
+backup_dir="$(mktemp -d /var/lib/aiops/.deployment-backup.XXXXXX)"
 cleanup() {
     rm -rf -- "$backup_dir"
     rm -f -- \
@@ -154,7 +154,7 @@ restore_previous_files() {
 }
 
 if "$DEPLOY_SCRIPT" --config "$CONFIG_PATH"; then
-    echo "AIOMS 目标服务器环境配置已自动部署完成。"
+    echo "AIOps 目标服务器环境配置已自动部署完成。"
     exit 0
 fi
 

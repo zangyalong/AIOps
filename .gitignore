@@ -8,7 +8,7 @@ backend/.venv/
 node_modules/
 frontend/dist/
 
-# Prometheus 规则由 AIOMS 根据数据库自动生成，不是人工配置源
+# Prometheus 规则由 AIOps 根据数据库自动生成，不是人工配置源
 /docker/prometheus-rules/managed_alert_rules.yml
 
 # 环境变量/密钥

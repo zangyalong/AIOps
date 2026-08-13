@@ -1041,7 +1041,7 @@ function serverStatusLabel(server: Server): string {
                   <span>
                     {{
                       instance.control_enabled
-                        ? 'AIOMS 与目标服务器白名单已同步授权'
+                        ? 'AIOps 与目标服务器白名单已同步授权'
                         : '开启后将同步服务器白名单；操作仍需人工审批'
                     }}
                   </span>

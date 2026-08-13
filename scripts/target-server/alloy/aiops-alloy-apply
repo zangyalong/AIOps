@@ -3,21 +3,21 @@
 set -euo pipefail
 
 fail() {
-    echo "aioms-alloy-apply: $*" >&2
+    echo "aiops-alloy-apply: $*" >&2
     exit 1
 }
 
 [[ $EUID -eq 0 ]] || fail "该应用器只能由固定 sudo 网关以 root 运行"
 [[ $# -eq 0 ]] || fail "该应用器不接受参数"
 
-readonly TARGET_CONFIG="/etc/aioms/alloy-target.conf"
-readonly GENERATOR="/usr/local/libexec/aioms/generate-alloy-config"
-readonly STATE_DIR="/var/lib/aioms"
+readonly TARGET_CONFIG="/etc/aiops/alloy-target.conf"
+readonly GENERATOR="/usr/local/libexec/aiops/generate-alloy-config"
+readonly STATE_DIR="/var/lib/aiops"
 readonly INCOMING_DIR="$STATE_DIR/incoming"
 readonly INCOMING_MAP="$INCOMING_DIR/services.map"
 readonly ALLOY_CONFIG_DIR="/etc/alloy"
 readonly ALLOY_CONFIG="$ALLOY_CONFIG_DIR/config.alloy"
-readonly INSTALLED_MAP="/etc/aioms/alloy-services.map"
+readonly INSTALLED_MAP="/etc/aiops/alloy-services.map"
 readonly MAX_MAP_BYTES=262144
 
 for required_command in alloy awk getent id install mktemp stat systemctl usermod; do
@@ -80,7 +80,7 @@ readonly USER_PATTERN='^[a-z_][a-z0-9_-]*[$]?$'
     fail "目标配置中的 ALLOW_DOCKER_SOCKET 只能是 true 或 false"
 [[ "$SSH_USER" =~ $USER_PATTERN ]] || fail "目标配置中的 SSH_USER 不合法"
 [[ "$SSH_USER" != "root" ]] || fail "目标配置中的 SSH_USER 不能是 root"
-id "$SSH_USER" >/dev/null 2>&1 || fail "AIOMS SSH 用户不存在：$SSH_USER"
+id "$SSH_USER" >/dev/null 2>&1 || fail "AIOps SSH 用户不存在：$SSH_USER"
 id alloy >/dev/null 2>&1 || fail "Alloy 用户不存在，请先完成基础安装"
 
 [[ -d "$STATE_DIR" && ! -L "$STATE_DIR" ]] || fail "部署状态目录不存在"
@@ -125,7 +125,7 @@ if map_uses_source docker; then
     usermod -aG "$docker_group" alloy
 fi
 
-generated_config="$(mktemp /tmp/aioms-alloy-config.XXXXXX)"
+generated_config="$(mktemp /tmp/aiops-alloy-config.XXXXXX)"
 cleanup() {
     rm -f -- "$generated_config"
 }

@@ -34,16 +34,16 @@ while (($# > 0)); do
 done
 
 [[ $EUID -eq 0 ]] || fail "请使用 root 或 sudo 运行"
-[[ "$SSH_USER" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] || fail "AIOMS SSH 用户格式不合法"
-[[ "$SSH_USER" != "root" ]] || fail "AIOMS SSH 用户不能是 root"
-id "$SSH_USER" >/dev/null 2>&1 || fail "AIOMS SSH 用户不存在：$SSH_USER"
+[[ "$SSH_USER" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] || fail "AIOps SSH 用户格式不合法"
+[[ "$SSH_USER" != "root" ]] || fail "AIOps SSH 用户不能是 root"
+id "$SSH_USER" >/dev/null 2>&1 || fail "AIOps SSH 用户不存在：$SSH_USER"
 command -v visudo >/dev/null 2>&1 || fail "找不到 visudo"
 
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-readonly GATEWAY_SOURCE="$SCRIPT_DIR/aioms-service-control"
-readonly COMPOSE_GATEWAY_SOURCE="$SCRIPT_DIR/aioms-compose-recreate"
-readonly POLICY_SOURCE="$SCRIPT_DIR/aioms-service-policy"
-readonly SUDOERS_TEMPLATE="$SCRIPT_DIR/aioms-service-control.sudoers"
+readonly GATEWAY_SOURCE="$SCRIPT_DIR/aiops-service-control"
+readonly COMPOSE_GATEWAY_SOURCE="$SCRIPT_DIR/aiops-compose-recreate"
+readonly POLICY_SOURCE="$SCRIPT_DIR/aiops-service-policy"
+readonly SUDOERS_TEMPLATE="$SCRIPT_DIR/aiops-service-control.sudoers"
 [[ -f "$GATEWAY_SOURCE" ]] || fail "缺少固定服务控制包装器"
 [[ -f "$COMPOSE_GATEWAY_SOURCE" ]] || fail "缺少固定 Compose 重建包装器"
 [[ -f "$POLICY_SOURCE" ]] || fail "缺少固定服务授权策略包装器"
@@ -82,14 +82,14 @@ for raw in "${targets[@]}"; do
 done
 sort -u -o "$allowlist_tmp" "$allowlist_tmp"
 
-install -d -o root -g root -m 0755 /etc/aioms
-install -o root -g root -m 0755 "$GATEWAY_SOURCE" /usr/local/sbin/aioms-service-control
-install -o root -g root -m 0755 "$COMPOSE_GATEWAY_SOURCE" /usr/local/sbin/aioms-compose-recreate
-install -o root -g root -m 0755 "$POLICY_SOURCE" /usr/local/sbin/aioms-service-policy
-install -o root -g root -m 0644 "$allowlist_tmp" /etc/aioms/service-control.allowlist
+install -d -o root -g root -m 0755 /etc/aiops
+install -o root -g root -m 0755 "$GATEWAY_SOURCE" /usr/local/sbin/aiops-service-control
+install -o root -g root -m 0755 "$COMPOSE_GATEWAY_SOURCE" /usr/local/sbin/aiops-compose-recreate
+install -o root -g root -m 0755 "$POLICY_SOURCE" /usr/local/sbin/aiops-service-policy
+install -o root -g root -m 0644 "$allowlist_tmp" /etc/aiops/service-control.allowlist
 
-sed "s/__AIOMS_SSH_USER__/$SSH_USER/g" "$SUDOERS_TEMPLATE" >"$sudoers_tmp"
+sed "s/__AIOPS_SSH_USER__/$SSH_USER/g" "$SUDOERS_TEMPLATE" >"$sudoers_tmp"
 visudo -cf "$sudoers_tmp" >/dev/null
-install -o root -g root -m 0440 "$sudoers_tmp" /etc/sudoers.d/aioms-service-control
+install -o root -g root -m 0440 "$sudoers_tmp" /etc/sudoers.d/aiops-service-control
 
-echo "统一服务控制网关已安装；允许运行对象数：$(wc -l < /etc/aioms/service-control.allowlist)"
+echo "统一服务控制网关已安装；允许运行对象数：$(wc -l < /etc/aiops/service-control.allowlist)"

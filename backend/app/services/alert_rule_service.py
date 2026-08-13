@@ -36,8 +36,8 @@ class AlertRuleApplyError(RuntimeError):
     pass
 
 
-_MANAGED_GROUP = "aioms-managed-alerts"
-_REVISION_ANNOTATION = "aioms_revision"
+_MANAGED_GROUP = "aiops-managed-alerts"
+_REVISION_ANNOTATION = "aiops_revision"
 _READY_RUNTIME_STATES = {"inactive", "pending", "firing"}
 
 

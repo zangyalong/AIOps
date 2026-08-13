@@ -37,8 +37,8 @@ _DISCOVERY_TIMEOUT_SECONDS = 20
 _SYSTEMD_COMMAND = (
     "systemctl list-units --type=service --state=running --no-pager --no-legend"
 )
-_DOCKER_READ_WRAPPER = "/usr/local/sbin/aioms-docker-read"
-_SERVICE_READ_WRAPPER = "/usr/local/sbin/aioms-service-read"
+_DOCKER_READ_WRAPPER = "/usr/local/sbin/aiops-docker-read"
+_SERVICE_READ_WRAPPER = "/usr/local/sbin/aiops-service-read"
 _DOCKER_COMMAND = f"sudo -n -- {_DOCKER_READ_WRAPPER} inventory"
 _INET_SOCKET_COMMAND = f"sudo -n -- {_SERVICE_READ_WRAPPER} inet-sockets"
 _UNIX_SOCKET_COMMAND = f"sudo -n -- {_SERVICE_READ_WRAPPER} unix-sockets"

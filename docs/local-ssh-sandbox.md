@@ -1,7 +1,7 @@
 # 本地 SSH 测试沙箱
 
 用 Docker 在 macOS 上起一个装了 SSH server 的轻量 Linux 容器，把它注册进 `servers` 表，
-然后在 AIOMS 对话界面里让统一 `investigate` 调查入口通过 SSH 获取真实运行状态，而不是
+然后在 AIOps 对话界面里让统一 `investigate` 调查入口通过 SSH 获取真实运行状态，而不是
 返回写死的模拟结果。模型只选择 `runtime` 证据领域；`commands.py` 中的探针是后端内部实现。
 
 **为什么用容器测，不直接连真实服务器**：这一步验证的是“Agent 调查 → 后端路由 → SSH
@@ -16,21 +16,21 @@
   docker info
   ```
   报错连不上就先把 Docker Desktop 打开。
-- 本地的 `aioms` 数据库和后端能正常跑起来（`servers` 表已经建好，参考 CLAUDE.md「常用命令」）。
+- 本地的 `aiops` 数据库和后端能正常跑起来（`servers` 表已经建好，参考 CLAUDE.md「常用命令」）。
 
 ## 第 1 步：生成一对测试用的 SSH 密钥
 
 ```bash
-cd /path/to/AIOMS   # 仓库根目录，跟 CLAUDE.md 同一层
-ssh-keygen -t ed25519 -f ssh/aioms-test -N "" -C "aioms-test-sandbox"
+cd /path/to/AIOps   # 仓库根目录，跟 CLAUDE.md 同一层
+ssh-keygen -t ed25519 -f ssh/aiops-test -N "" -C "aiops-test-sandbox"
 ```
 
 `-N ""` 是不给私钥设密码，图测试方便；真实服务器的私钥不要这样搞。执行完 `ssh/` 目录下
 会多两个文件：
 
-- `ssh/aioms-test`（私钥，`ssh-keygen` 生成的默认权限就是 600，`.gitignore` 已经把整个
+- `ssh/aiops-test`（私钥，`ssh-keygen` 生成的默认权限就是 600，`.gitignore` 已经把整个
   `ssh/` 目录挡在仓库外了，放心用）
-- `ssh/aioms-test.pub`（公钥）
+- `ssh/aiops-test.pub`（公钥）
 
 ## 第 2 步：起容器
 
@@ -40,37 +40,37 @@ openssh-server、写 sshd_config。
 
 ```bash
 docker run -d \
-  --name aioms-test-server \
+  --name aiops-test-server \
   -p 2222:2222 \
   -e PUID=1000 \
   -e PGID=1000 \
   -e TZ=Asia/Shanghai \
   -e USER_NAME=opsuser \
-  -e PUBLIC_KEY_FILE=/keys/aioms-test.pub \
+  -e PUBLIC_KEY_FILE=/keys/aiops-test.pub \
   -v "$(pwd)/ssh:/keys:ro" \
   lscr.io/linuxserver/openssh-server:latest
 ```
 
 - `-p 2222:2222`：容器内部固定监听 2222 端口（这个镜像写死的），映射到 Mac 本机的 2222 端口
 - `-v "$(pwd)/ssh:/keys:ro"`：把仓库的 `ssh/` 目录只读挂进容器，容器启动时从
-  `/keys/aioms-test.pub` 读公钥、自动写进 `authorized_keys`
+  `/keys/aiops-test.pub` 读公钥、自动写进 `authorized_keys`
 - 默认关掉密码登录和 sudo（镜像的 `PASSWORD_ACCESS`/`SUDO_ACCESS` 默认都是 `false`），
   只能用密钥登录——这次也用不上 sudo，白名单命令都是只读诊断命令
 
 跑起来后确认容器状态、看看有没有启动报错：
 
 ```bash
-docker ps --filter name=aioms-test-server
-docker logs aioms-test-server
+docker ps --filter name=aiops-test-server
+docker logs aiops-test-server
 ```
 
-## 第 3 步：先脱离 AIOMS，手动 SSH 验证链路通不通
+## 第 3 步：先脱离 AIOps，手动 SSH 验证链路通不通
 
-这一步很重要——先确认"Docker 容器 + 网络 + 密钥"这条链路本身是通的，后面 AIOMS 里
+这一步很重要——先确认"Docker 容器 + 网络 + 密钥"这条链路本身是通的，后面 AIOps 里
 连不上时能立刻判断是这一层的问题还是代码的问题。
 
 ```bash
-ssh -i ssh/aioms-test -p 2222 \
+ssh -i ssh/aiops-test -p 2222 \
   -o UserKnownHostsFile=/dev/null \
   -o StrictHostKeyChecking=no \
   opsuser@127.0.0.1
@@ -99,18 +99,18 @@ curl -X POST http://localhost:8010/servers \
     "description": "本地 Docker SSH 测试沙箱",
     "ssh_port": 2222,
     "ssh_user": "opsuser",
-    "ssh_key_filename": "aioms-test"
+    "ssh_key_filename": "aiops-test"
   }'
 ```
 
-- `ip_address` 填 `127.0.0.1`：AIOMS 后端是跑在 Mac 本机的（不是在 Docker 里），它连的是
+- `ip_address` 填 `127.0.0.1`：AIOps 后端是跑在 Mac 本机的（不是在 Docker 里），它连的是
   "本机 2222 端口"，Docker 已经把容器的 2222 映射到这里了
-- `ssh_key_filename` 只填文件名 `aioms-test`（不带路径、不带 `.pub`），后端会自动拼成
-  `settings.ssh_key_dir / "aioms-test"` 去找私钥（也就是 `ssh/aioms-test`）
+- `ssh_key_filename` 只填文件名 `aiops-test`（不带路径、不带 `.pub`），后端会自动拼成
+  `settings.ssh_key_dir / "aiops-test"` 去找私钥（也就是 `ssh/aiops-test`）
 
 ## 第 5 步：在对话界面里真的用一下
 
-打开 AIOMS 前端，问类似这样的问题：
+打开 AIOps 前端，问类似这样的问题：
 
 > 帮我看看 docker-test-01 这台服务器现在的负载和内存情况
 
@@ -118,15 +118,15 @@ curl -X POST http://localhost:8010/servers \
 后端再路由到内部 SSH 探针。界面只显示“调查运维证据”，结果会标明证据来源和目标服务器，
 不会展示内部函数名或命令白名单。
 
-这是纯读调查，因此不会弹人工审批卡片。当前测试容器没有安装 AIOMS root-read 网关，默认也
+这是纯读调查，因此不会弹人工审批卡片。当前测试容器没有安装 AIOps root-read 网关，默认也
 不运行 systemd，所以它只能验证普通 SSH 与部分运行时探针，不能验证宿主机 root 只读语境或
 systemd 服务控制；这两项应在专门、可重建的 Linux 测试机上验收。
 
 ## 写工具验收说明
 
 `start_service`、`stop_service`、`restart_service` 和 `recreate_compose_service` 与上面的读诊断工具走不同边界：模型提出
-操作后，LangGraph 会先挂起并等待人工批准；批准后，工具使用同一非 root AIOMS 身份调用固定网关，且
-AIOMS 与目标服务器两端都检查精确白名单。例如在专用测试机上允许控制 nginx：
+操作后，LangGraph 会先挂起并等待人工批准；批准后，工具使用同一非 root AIOps 身份调用固定网关，且
+AIOps 与目标服务器两端都检查精确白名单。例如在专用测试机上允许控制 nginx：
 
 ```dotenv
 SSH_SERVICE_CONTROL_ALLOWLIST=nginx.service
@@ -140,8 +140,8 @@ SSH_SERVICE_CONTROL_ALLOWLIST=nginx.service
 | 现象 | 大概率原因 |
 | --- | --- |
 | `REMOTE HOST IDENTIFICATION HAS CHANGED` / `Host key verification failed` | 容器 host key 每次重启都会变，`~/.ssh/known_hosts` 里缓存的是旧指纹。先 `ssh-keygen -R "[127.0.0.1]:2222"` 清掉旧缓存，再用第 3 步里带 `-o StrictHostKeyChecking=no` 的命令连接，以后就不会再撞上这个问题 |
-| `Permissions 0644 for 'ssh/aioms-test' are too open` | 私钥权限不对：`chmod 600 ssh/aioms-test` |
-| `Permission denied (publickey)` | 公钥没挂对，检查 `docker logs aioms-test-server` 有没有报错，或确认 `.pub` 文件内容完整 |
+| `Permissions 0644 for 'ssh/aiops-test' are too open` | 私钥权限不对：`chmod 600 ssh/aiops-test` |
+| `Permission denied (publickey)` | 公钥没挂对，检查 `docker logs aiops-test-server` 有没有报错，或确认 `.pub` 文件内容完整 |
 | `Connection refused` | 容器没起来或端口没映射对，`docker ps` 看一下状态 |
 | 工具回答"没有配置 SSH 连接信息" | servers 表这条记录的 `ssh_user`/`ssh_key_filename` 没填对，回第 4 步检查 |
 | 某个白名单命令报 "command not found" | 这个精简镜像里没装这个命令，属于正常情况——说明连接和执行链路本身是通的，只是这个命令这个镜像没有；真实服务器工具链更全一般不会有这个问题 |
@@ -161,8 +161,8 @@ SSH_SERVICE_CONTROL_ALLOWLIST=nginx.service
 ## 清理
 
 ```bash
-docker stop aioms-test-server
-docker rm aioms-test-server
+docker stop aiops-test-server
+docker rm aiops-test-server
 ```
 
 容器删了之后 `servers` 表里 `docker-test-01` 这条记录还在（只是连不上了），要一起清掉调用

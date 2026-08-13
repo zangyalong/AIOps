@@ -18,7 +18,7 @@ from app.services.ssh_service import (
     build_connect_params,
 )
 
-SERVICE_CONTROL_GATEWAY = "/usr/local/sbin/aioms-service-control"
+SERVICE_CONTROL_GATEWAY = "/usr/local/sbin/aiops-service-control"
 SERVICE_UNIT_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@:-]*\.service$")
 DOCKER_CONTAINER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 ServiceAction = Literal["start", "stop", "restart"]
@@ -118,7 +118,7 @@ async def control_resolved_service(
         params = build_connect_params(server)
     except SSHNotConfigured:
         return OperationResult.failure(
-            f"{server.name} 没有配置 AIOMS SSH 身份，无法{action_label}服务。"
+            f"{server.name} 没有配置 AIOps SSH 身份，无法{action_label}服务。"
             "请先配置 ssh_user / ssh_key_filename。",
             code="ssh_not_configured",
         )

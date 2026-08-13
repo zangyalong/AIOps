@@ -7,7 +7,7 @@ import ServersView from '../views/ServersView.vue'
 import SkillsView from '../views/SkillsView.vue'
 
 function lastChatPath(): string {
-  const path = localStorage.getItem('aioms:last-chat-path') || '/chat'
+  const path = localStorage.getItem('aiops:last-chat-path') || '/chat'
   return path === '/chat' || path.startsWith('/chat/') ? path : '/chat'
 }
 

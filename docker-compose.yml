@@ -1,7 +1,7 @@
 # 方向一「真实数据接入」的本地数据源，按任务逐步加进来（最小起步策略）。
 # - 任务1（Prometheus 指标）：prometheus + node-exporter
 # - 任务2（Loki 日志）：loki + promtail（采集容器日志）+ fake-app（造带级别的假应用日志）
-# - 任务3（Alertmanager 告警）：alertmanager + AIOMS 托管的 Prometheus 告警规则
+# - 任务3（Alertmanager 告警）：alertmanager + AIOps 托管的 Prometheus 告警规则
 # - 任务4（Grafana 可视化）：grafana（接 Prometheus/Loki，agent 生成 Explore 图表链接给用户点）
 # 方向二（事件驱动）：
 # - 后台任务队列：redis（arq 的 broker，告警自动诊断这类后台作业存这里）
@@ -16,7 +16,7 @@ services:
   # 时序指标数据库 + PromQL 查询引擎。后端的 query_metrics 工具就是打它的 HTTP API。
   prometheus:
     image: prom/prometheus:latest   # 先用 latest 保证能拉到；稳定后可以 pin 成具体版本
-    container_name: aioms-prometheus
+    container_name: aiops-prometheus
     ports:
       - "9090:9090"                 # 对应 backend config 里的 prometheus_base_url
     command:
@@ -38,7 +38,7 @@ services:
   # 在真正的 Linux 服务器上跑，报的就是宿主机真实指标。
   node-exporter:
     image: prom/node-exporter:latest
-    container_name: aioms-node-exporter
+    container_name: aiops-node-exporter
     ports:
       - "9100:9100"
     # 下面这组是 node_exporter 采集宿主机（Linux 上）真实指标的标准姿势：
@@ -60,7 +60,7 @@ services:
   # 用官方镜像自带的单体默认配置（filesystem 存储、无认证），开箱即用。
   loki:
     image: grafana/loki:latest
-    container_name: aioms-loki
+    container_name: aiops-loki
     ports:
       - "3100:3100"                 # 对应 backend config 里的 loki_base_url
     command: -config.file=/etc/loki/local-config.yaml
@@ -70,7 +70,7 @@ services:
   # 推送给 Loki。这样 search_logs 就能按 {container="xxx"} 查某个容器的日志。
   promtail:
     image: grafana/promtail:latest
-    container_name: aioms-promtail
+    container_name: aiops-promtail
     volumes:
       - ./docker/promtail.yml:/etc/promtail/config.yml:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro   # 发现容器 + 读日志都走这个 socket
@@ -81,10 +81,10 @@ services:
 
   # 造点带级别（INFO/WARN/ERROR）的假应用日志，让 search_logs 的关键词/级别过滤有真实内容
   # 可查——它之于「日志」，就像 node-exporter 之于「指标」，是个纯为验证工具而起的数据源。
-  # 生产环境当然不需要它。容器名 aioms-fake-app，promtail 会把它的日志打上 container=aioms-fake-app。
+  # 生产环境当然不需要它。容器名 aiops-fake-app，promtail 会把它的日志打上 container=aiops-fake-app。
   fake-app:
     image: busybox:latest
-    container_name: aioms-fake-app
+    container_name: aiops-fake-app
     # Loki 按摄入时刻给每行日志打时间戳，所以行里不用自己写时间。
     command:
       - sh
@@ -106,7 +106,7 @@ services:
   # /api/v2/alerts 拿当前正在触发的告警。receiver 配的是 null（只读演示，不往外发）。
   alertmanager:
     image: prom/alertmanager:latest
-    container_name: aioms-alertmanager
+    container_name: aiops-alertmanager
     ports:
       - "9093:9093"                 # 对应 backend config 里的 alertmanager_base_url
     volumes:
@@ -119,7 +119,7 @@ services:
   # 服务目录提供轻量趋势图，Grafana 提供可缩放的服务器 Dashboard 和 Agent Explore 链接。
   grafana:
     image: grafana/grafana:latest
-    container_name: aioms-grafana
+    container_name: aiops-grafana
     ports:
       - "3000:3000"                 # 对应 backend config 里的 grafana_base_url
     environment:
@@ -144,7 +144,7 @@ services:
   # arq（异步任务队列）的 broker。告警自动诊断这类后台作业存在这里，worker 从这里取来跑。
   redis:
     image: redis:7-alpine
-    container_name: aioms-redis
+    container_name: aiops-redis
     ports:
       - "6379:6379"                 # 对应 backend config 里的 redis_url
     restart: unless-stopped

@@ -43,7 +43,7 @@ done
 [[ $EUID -eq 0 ]] || fail "请使用 root 或 sudo 运行"
 [[ -f "$CONFIG_PATH" ]] || fail "找不到配置文件：$CONFIG_PATH（请先复制 deploy.conf.example）"
 
-AIOMS_SSH_USER=""
+AIOPS_SSH_USER=""
 SERVICE_CONTROL_ALLOWLIST=""
 ENABLE_ALLOY="true"
 SERVER_NAME=""
@@ -94,7 +94,7 @@ set_config_value() {
     local value="$2"
 
     case "$key" in
-        AIOMS_SSH_USER) AIOMS_SSH_USER="$value" ;;
+        AIOPS_SSH_USER) AIOPS_SSH_USER="$value" ;;
         SERVICE_CONTROL_ALLOWLIST) SERVICE_CONTROL_ALLOWLIST="$value" ;;
         ENABLE_ALLOY) ENABLE_ALLOY="$value" ;;
         SERVER_NAME) SERVER_NAME="$value" ;;
@@ -173,10 +173,10 @@ validate_http_url() {
         fail "$key 必须是没有空格的 http(s) URL"
 }
 
-[[ -n "$AIOMS_SSH_USER" ]] || fail "AIOMS_SSH_USER 不能为空"
-[[ "$AIOMS_SSH_USER" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] ||
-    fail "AIOMS_SSH_USER 格式不合法"
-[[ "$AIOMS_SSH_USER" != "root" ]] || fail "AIOMS_SSH_USER 不能是 root"
+[[ -n "$AIOPS_SSH_USER" ]] || fail "AIOPS_SSH_USER 不能为空"
+[[ "$AIOPS_SSH_USER" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] ||
+    fail "AIOPS_SSH_USER 格式不合法"
+[[ "$AIOPS_SSH_USER" != "root" ]] || fail "AIOPS_SSH_USER 不能是 root"
 validate_boolean "ENABLE_ALLOY" "$ENABLE_ALLOY"
 validate_boolean "ALLOW_DOCKER_SOCKET" "$ALLOW_DOCKER_SOCKET"
 validate_boolean "START_ALLOY" "$START_ALLOY"
@@ -209,13 +209,13 @@ if [[ "$ENABLE_ALLOY" == "true" ]]; then
     fi
     [[ -x "$SCRIPT_DIR/alloy/install.sh" ]] ||
         fail "缺少可执行的 Alloy 安装器：$SCRIPT_DIR/alloy/install.sh"
-    [[ -x "$SCRIPT_DIR/alloy/aioms-alloy-apply" ]] ||
-        fail "缺少固定 Alloy 配置应用器：$SCRIPT_DIR/alloy/aioms-alloy-apply"
+    [[ -x "$SCRIPT_DIR/alloy/aiops-alloy-apply" ]] ||
+        fail "缺少固定 Alloy 配置应用器：$SCRIPT_DIR/alloy/aiops-alloy-apply"
 
     alloy_args=(
         --server "$SERVER_NAME"
         --loki-url "$LOKI_PUSH_URL"
-        --ssh-user "$AIOMS_SSH_USER"
+        --ssh-user "$AIOPS_SSH_USER"
         --apt-repo-url "$ALLOY_APT_REPO_URL"
         --apt-gpg-key-url "$ALLOY_APT_GPG_KEY_URL"
         --rpm-repo-url "$ALLOY_RPM_REPO_URL"
@@ -348,19 +348,19 @@ if [[ "$metrics_enabled" == "true" ]]; then
     fi
 fi
 
-echo "[1/6] 安装 AIOMS root 只读诊断沙箱"
-"$SCRIPT_DIR/root-read/install.sh" "$AIOMS_SSH_USER"
+echo "[1/6] 安装 AIOps root 只读诊断沙箱"
+"$SCRIPT_DIR/root-read/install.sh" "$AIOPS_SSH_USER"
 
-echo "[2/6] 安装 AIOMS 只读服务发现网关"
-"$SCRIPT_DIR/discovery/install.sh" "$AIOMS_SSH_USER"
+echo "[2/6] 安装 AIOps 只读服务发现网关"
+"$SCRIPT_DIR/discovery/install.sh" "$AIOPS_SSH_USER"
 
-echo "[3/6] 安装 AIOMS 服务控制写网关"
+echo "[3/6] 安装 AIOps 服务控制写网关"
 "$SCRIPT_DIR/actions/install.sh" \
-    --ssh-user "$AIOMS_SSH_USER" \
+    --ssh-user "$AIOPS_SSH_USER" \
     --allowlist "$SERVICE_CONTROL_ALLOWLIST"
 
-echo "[4/6] 安装 AIOMS 受控文件访问网关"
-"$SCRIPT_DIR/files/install.sh" "$AIOMS_SSH_USER"
+echo "[4/6] 安装 AIOps 受控文件访问网关"
+"$SCRIPT_DIR/files/install.sh" "$AIOPS_SSH_USER"
 
 if [[ "$ENABLE_ALLOY" == "true" ]]; then
     if [[ -n "$ALLOY_SERVICE_MAP" ]]; then
@@ -383,7 +383,7 @@ fi
 
 echo "目标服务器配置完成。"
 echo "服务器：$SERVER_NAME"
-echo "SSH 用户：$AIOMS_SSH_USER"
+echo "SSH 用户：$AIOPS_SSH_USER"
 if [[ "$ENABLE_ALLOY" == "true" ]]; then
     echo "Alloy 检查：sudo $SCRIPT_DIR/alloy/check.sh"
 fi

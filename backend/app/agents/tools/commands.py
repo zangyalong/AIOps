@@ -29,8 +29,8 @@ _MAX_OUTPUT_CHARS = 12_000
 _SAFE_RESOURCE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.@:-]{0,127}")
 _SAFE_CONTAINER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 _SAFE_PID = re.compile(r"[1-9][0-9]{0,9}")
-_DOCKER_READ_WRAPPER = "/usr/local/sbin/aioms-docker-read"
-_SERVICE_READ_WRAPPER = "/usr/local/sbin/aioms-service-read"
+_DOCKER_READ_WRAPPER = "/usr/local/sbin/aiops-docker-read"
+_SERVICE_READ_WRAPPER = "/usr/local/sbin/aiops-service-read"
 
 # key 是模型可以提交的命令，value 是真正交给远端 shell 的规范化命令。systemctl 的几个短写
 # 会被自动补成 --no-pager 和有限范围，避免分页器卡住或无界输出。

@@ -295,7 +295,7 @@ const sortedServers = computed(() =>
       <div>
         <span class="view-kicker">INFRASTRUCTURE / NODES</span>
         <h1>服务器</h1>
-        <p class="subtitle">管理被 AIOMS 纳管的服务器，配置 SSH 后可测试连通性</p>
+        <p class="subtitle">管理被 AIOps 纳管的服务器，配置 SSH 后可测试连通性</p>
       </div>
       <button type="button" class="btn-primary" @click="openCreateModal">新增服务器</button>
     </header>
@@ -356,7 +356,7 @@ const sortedServers = computed(() =>
           <label>描述<input v-model="form.description" placeholder="可选" /></label>
 
           <div class="ssh-group">
-            <p class="group-title">AIOMS SSH 身份</p>
+            <p class="group-title">AIOps SSH 身份</p>
             <p class="group-hint">
               可选。使用一个非 root 用户完成只读查询和审批后的白名单操作；不会开放任意 systemctl、shell 或 root 登录。
             </p>
@@ -364,7 +364,7 @@ const sortedServers = computed(() =>
               <label>端口<input v-model.number="form.ssh_port" type="number" placeholder="22" /></label>
               <label>用户名<input v-model="form.ssh_user" placeholder="比如 opsuser" /></label>
             </div>
-            <label>私钥文件名<input v-model="form.ssh_key_filename" placeholder="ssh/ 目录下的文件名，比如 aioms-test" /></label>
+            <label>私钥文件名<input v-model="form.ssh_key_filename" placeholder="ssh/ 目录下的文件名，比如 aiops-test" /></label>
           </div>
 
           <TargetDeploymentConfigForm

@@ -132,8 +132,8 @@ def render_deploy_config(
 
     return "\n".join(
         [
-            "# 由 AIOMS 服务器编辑页生成；数据库密码保存在同包的独立凭据文件中。",
-            f"AIOMS_SSH_USER={server.ssh_user}",
+            "# 由 AIOps 服务器编辑页生成；数据库密码保存在同包的独立凭据文件中。",
+            f"AIOPS_SSH_USER={server.ssh_user}",
             f"SERVICE_CONTROL_ALLOWLIST={allowlist}",
             f"ENABLE_ALLOY={_bool(config.enable_alloy)}",
             f"SERVER_NAME={server.name}",
@@ -223,7 +223,7 @@ def _validate_server_identity(server: Server) -> None:
         or not SSH_USER_PATTERN.fullmatch(server.ssh_user)
         or server.ssh_user == "root"
     ):
-        raise DeploymentBundleError("AIOMS SSH 用户格式不合法且不能使用 root")
+        raise DeploymentBundleError("AIOps SSH 用户格式不合法且不能使用 root")
 
 
 def _deployment_ssh_key_paths(server: Server) -> tuple[Path, Path]:
@@ -296,7 +296,7 @@ async def build_deployment_bundle(
     except ValidationError as exc:
         raise DeploymentBundleError(f"服务器环境部署配置不合法：{exc}") from exc
 
-    temporary_root = Path(tempfile.mkdtemp(prefix="aioms-target-bundle-"))
+    temporary_root = Path(tempfile.mkdtemp(prefix="aiops-target-bundle-"))
     assets_dir = temporary_root / "assets"
     output_dir = temporary_root / "output"
     config_path = temporary_root / "deploy.conf"
@@ -356,7 +356,7 @@ async def build_deployment_bundle(
                 detail = stdout.decode("utf-8", errors="replace").strip()
             raise DeploymentBundleError(detail or "目标服务器打包脚本执行失败")
 
-        archive_path = output_dir / f"aioms-{server.name}.tar.gz"
+        archive_path = output_dir / f"aiops-{server.name}.tar.gz"
         if not archive_path.is_file():
             raise DeploymentBundleError("打包脚本未生成预期的压缩包")
 

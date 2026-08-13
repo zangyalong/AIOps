@@ -11,7 +11,7 @@ from app.services import server_service, service_catalog_service
 async def query_server_services(server: str) -> str:
     """查询服务目录中绑定到指定服务器的部署实例。
 
-    server 可以是 servers 表中的服务器名称或 IP。结果只代表 AIOMS 服务目录里的登记关系，
+    server 可以是 servers 表中的服务器名称或 IP。结果只代表 AIOps 服务目录里的登记关系，
     不等同于实时扫描服务器进程或 systemd / Docker 运行状态。
     """
     identifier = server.strip()
@@ -47,7 +47,7 @@ async def query_server_services(server: str) -> str:
         [
             f"## {target.name}（{target.ip_address}）上登记的服务",
             *lines,
-            "说明：以上来自 AIOMS 服务目录，不代表实时进程或容器运行状态。",
+            "说明：以上来自 AIOps 服务目录，不代表实时进程或容器运行状态。",
         ]
     )
 

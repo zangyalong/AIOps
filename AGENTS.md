@@ -1,4 +1,4 @@
-# AIOMS — AI 运维系统
+# AIOps — AI 运维系统
 
 > 一个用 AI Agent 辅助日常运维工作的学习型项目。目标不只是"做出来"，更是"过程中学会"。
 
@@ -6,7 +6,7 @@
 
 ## 1. 项目定位
 
-**是什么**：AIOMS（AI Operations Management System）是一个 AI 驱动的运维辅助系统。用户可以用自然语言让 Agent 去：查询服务器状态、检索/分析日志、诊断告警、执行常规运维脚本、总结值班报告等。
+**是什么**：AIOps（Artificial Intelligence for IT Operations）是一个 AI 驱动的运维辅助系统。用户可以用自然语言让 Agent 去：查询服务器状态、检索/分析日志、诊断告警、执行常规运维脚本、总结值班报告等。
 
 **为什么做**：作为学习者从 0 到 1 掌握 AI Agent + 全栈开发的载体项目。选运维方向是因为它天然有"工具调用"的场景（SSH、Prometheus、日志系统、K8s 等），能自然引出 Agent 的核心能力。
 
@@ -43,7 +43,7 @@
 ## 4. 目录结构（规划，随进度逐步落地）
 
 ```
-AIOMS/
+AIOps/
 ├── CLAUDE.md                # Claude 协作说明，与本文保持项目事实一致
 ├── AGENTS.md                # 本文档
 ├── README.md                # 面向新用户的说明（后期补）
@@ -121,7 +121,7 @@ AIOMS/
 ## 6. 安全红线（运维场景特别注意）
 
 - **AI 决定的破坏性操作必须人工确认**：重启服务、删除数据、修改防火墙等必须进入写操作审批；高风险操作还要二次确认，critical 操作只给建议、不能执行。
-- 通用 Shell 只允许在 `scripts/target-server/root-read/` 定义的 root 只读 Docker 沙箱中执行。后端可以选择进入目标服务器真实根目录核验宿主机 PATH、程序和文件，也可以使用内部工具箱搜索宿主文件；这个选择不暴露给 Agent。两种语境都无网络、宿主根只读、敏感路径以 `AIOMS_PATH_MASKED` 明示遮蔽并强制审计。宿主机写操作不能接受任意 Shell，只能走已登记参数协议、人工审批和固定写网关；普通文本用完整 diff 原子替换，dotenv/JSON 非敏感标量用目标机结构化补丁。文件编辑不得隐式触发配置校验、reload、服务重启或部署，这些操作必须使用各自的受控能力并独立审批。
+- 通用 Shell 只允许在 `scripts/target-server/root-read/` 定义的 root 只读 Docker 沙箱中执行。后端可以选择进入目标服务器真实根目录核验宿主机 PATH、程序和文件，也可以使用内部工具箱搜索宿主文件；这个选择不暴露给 Agent。两种语境都无网络、宿主根只读、敏感路径以 `AIOPS_PATH_MASKED` 明示遮蔽并强制审计。宿主机写操作不能接受任意 Shell，只能走已登记参数协议、人工审批和固定写网关；普通文本用完整 diff 原子替换，dotenv/JSON 非敏感标量用目标机结构化补丁。文件编辑不得隐式触发配置校验、reload、服务重启或部署，这些操作必须使用各自的受控能力并独立审批。
 - 服务器业务资产盘点默认按 systemd、Docker、TCP/UDP Socket、Unix Socket 扫描，只对监听结果中的纯数字 PID 定点补充详情，不默认读取整机 `ps` 进程表。
 - 目标服务器权限配置以 `scripts/target-server/` 为准：包装脚本必须由 `root:root` 持有且不可被 SSH 用户修改，sudoers 只授权固定入口，不能直接开放任意宿主机 `docker`、`systemctl`、`ss`、`ps` 或 shell。
 - LLM 的输出**永远视为不可信**，落库前做校验。
@@ -140,7 +140,7 @@ cd frontend && npm run dev
 
 # 起数据库：Postgres 走 Homebrew service，长期运行，一般不用手动起
 brew services list | grep postgres   # 确认 postgresql@18 是 started
-psql -d aioms                        # 连接 aioms 库
+psql -d aiops                        # 连接 aiops 库
 
 # 跑后端测试（覆盖统一调查、审批边界、服务发现和 worker 写工具隔离）
 cd backend && uv run python -m unittest discover -s tests -v
@@ -155,7 +155,7 @@ cd frontend && npm run build
 
 具体开发节奏、顺序、优先级由用户自己把控，不设固定阶段/路线图，Codex 不主动规划"接下来该做什么"。
 
-当用户开新对话说"继续做 AIOMS"时，默认动作是：
+当用户开新对话说"继续做 AIOps"时，默认动作是：
 
 1. 看 `git log` 最近的提交和当前代码状态，了解目前进度
 2. 用一段话简要回顾现状（做到哪了、最近改了什么）

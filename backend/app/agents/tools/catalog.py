@@ -95,7 +95,7 @@ def _service_control_action(
             "runtime_name": runtime_name,
         },
         "command": (
-            "sudo -n -- /usr/local/sbin/aioms-service-control "
+            "sudo -n -- /usr/local/sbin/aiops-service-control "
             f"{action} {shlex.quote(runtime_type)} {shlex.quote(runtime_name)}"
         ),
     }
@@ -123,7 +123,7 @@ def _recreate_compose_service_action(args: dict[str, Any]) -> dict[str, Any]:
         "service_name": container,
         "runtime_type": "docker-compose",
         "command": (
-            "sudo -n -- /usr/local/sbin/aioms-compose-recreate "
+            "sudo -n -- /usr/local/sbin/aiops-compose-recreate "
             f"{shlex.quote(container)}"
         ),
     }
@@ -195,7 +195,7 @@ def _deploy_server_environment_action(args: dict[str, Any]) -> dict[str, Any]:
         "server_name": server,
         "command": (
             "上传服务器页面保存的组件配置，并调用固定入口 "
-            "aioms-target-deploy apply-config"
+            "aiops-target-deploy apply-config"
         ),
     }
 
@@ -246,7 +246,7 @@ def _grant_server_file_write_access_action(args: dict[str, Any]) -> dict[str, An
         "path": path,
         "command": (
             "持久加入精确文件写白名单；后续每次文件修改仍需独立审批："
-            "sudo -n -- /usr/local/sbin/aioms-file-policy add write "
+            "sudo -n -- /usr/local/sbin/aiops-file-policy add write "
             f"{shlex.quote(path)}"
         ),
     }

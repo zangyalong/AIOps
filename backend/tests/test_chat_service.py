@@ -158,7 +158,7 @@ class _TruncatedToolLinkGraph(_FakeGraph):
         super().__init__()
         original = (
             "http://localhost:3000/explore?schemaVersion=1&"
-            "panes=%7B%22aioms%22%3A%7B%22datasource%22%3A%22prometheus%22%7D%7D"
+            "panes=%7B%22aiops%22%3A%7B%22datasource%22%3A%22prometheus%22%7D%7D"
             "&orgId=1"
         )
         self.original = original

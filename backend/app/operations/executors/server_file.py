@@ -13,8 +13,8 @@ from app.models.server import Server
 from app.operations.schemas import OperationResult
 from app.services.ssh_service import SSHConnectParams
 
-FILE_WRITE_GATEWAY = "/usr/local/sbin/aioms-file-write"
-REMOTE_INCOMING_DIR = "/var/lib/aioms/file-incoming"
+FILE_WRITE_GATEWAY = "/usr/local/sbin/aiops-file-write"
+REMOTE_INCOMING_DIR = "/var/lib/aiops/file-incoming"
 
 
 class RemoteFileSnapshot(Protocol):

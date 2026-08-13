@@ -101,7 +101,7 @@ class ComposeRecreateToolTest(unittest.IsolatedAsyncioTestCase):
                 return_value=SimpleNamespace(
                     host="192.0.2.10",
                     port=22,
-                    username="aioms",
+                    username="aiops",
                     client_keys=["test-key"],
                 ),
             ),
@@ -119,7 +119,7 @@ class ComposeRecreateToolTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(get_instance.await_args.kwargs["runtime_name"], "sub2api")
         self.assertEqual(
             connection.commands,
-            ["sudo -n -- /usr/local/sbin/aioms-compose-recreate sub2api"],
+            ["sudo -n -- /usr/local/sbin/aiops-compose-recreate sub2api"],
         )
         self.assertTrue(result.ok)
         self.assertIn("127.0.0.1:8081", result.message)
@@ -127,8 +127,8 @@ class ComposeRecreateToolTest(unittest.IsolatedAsyncioTestCase):
 
 class ComposeRecreateGatewayContractTest(unittest.TestCase):
     def test_gateway_is_fixed_and_does_not_accept_paths_or_flags(self) -> None:
-        gateway = (ACTIONS_DIR / "aioms-compose-recreate").read_text()
-        sudoers = (ACTIONS_DIR / "aioms-service-control.sudoers").read_text()
+        gateway = (ACTIONS_DIR / "aiops-compose-recreate").read_text()
+        sudoers = (ACTIONS_DIR / "aiops-service-control.sudoers").read_text()
         self.assertIn("[[ $# -eq 1 ]]", gateway)
         self.assertIn('grep -Fxq -- "docker:$CONTAINER_NAME"', gateway)
         self.assertIn("com.docker.compose.project.working_dir", gateway)
@@ -143,13 +143,13 @@ class ComposeRecreateGatewayContractTest(unittest.TestCase):
         self.assertIn("runuser -u", gateway)
         self.assertNotIn("eval ", gateway)
         self.assertNotIn("NOPASSWD: ALL", sudoers)
-        self.assertIn("/usr/local/sbin/aioms-compose-recreate *", sudoers)
+        self.assertIn("/usr/local/sbin/aiops-compose-recreate *", sudoers)
 
     def test_action_shell_scripts_parse(self) -> None:
         for script_name in (
-            "aioms-service-control",
-            "aioms-service-policy",
-            "aioms-compose-recreate",
+            "aiops-service-control",
+            "aiops-service-policy",
+            "aiops-compose-recreate",
             "install.sh",
         ):
             with self.subTest(script=script_name):

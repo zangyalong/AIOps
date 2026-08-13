@@ -45,7 +45,7 @@ async def grafana_explore_link(
     - kind："metrics"（看指标，走 Prometheus）| "logs"（看日志，走 Loki）| "alerts"（看告警时间线）
     - query：
         - kind=metrics：传 PromQL；也可直接传 cpu / memory / disk / up，会自动换成对应 PromQL。
-        - kind=logs：传 LogQL（如 {service_name="aioms-fake-app"}）；也可只传服务名会自动包成选择器；留空看所有服务。
+        - kind=logs：传 LogQL（如 {service_name="aiops-fake-app"}）；也可只传服务名会自动包成选择器；留空看所有服务。
         - kind=alerts：留空看所有正在触发的告警；也可传 critical / warning / info 只看某个级别。
     - minutes：图表时间窗，最近多少分钟，默认 60。
     - instance：仅 kind=metrics 使用；非空时给内置指标模板添加准确 instance 过滤。
@@ -85,7 +85,7 @@ def _build_explore_url(uid: str, ds_type: str, expr: str, minutes: int) -> str:
     """按 Grafana 11+ 的 Explore URL 格式（panes 参数）拼链接。已对着 Grafana 13 实测过。"""
     pane = {
         # pane 的 key 是任意 id，Grafana 只当它是这个 Explore 面板的标识
-        "aioms": {
+        "aiops": {
             "datasource": uid,
             "queries": [
                 {

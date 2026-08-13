@@ -65,7 +65,7 @@ class LogsToolCompatibilityTest(unittest.IsolatedAsyncioTestCase):
             side_effect=[
                 ["orders-api"],
                 ["orders-api", "legacy-worker"],
-                ["aioms-fake-app"],
+                ["aiops-fake-app"],
             ]
         )
 
@@ -75,14 +75,14 @@ class LogsToolCompatibilityTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(label_values.await_count, 3)
         self.assertEqual(result.count("- orders-api"), 1)
         self.assertIn("- legacy-worker", result)
-        self.assertIn("- aioms-fake-app", result)
+        self.assertIn("- aiops-fake-app", result)
 
     async def test_discover_log_services_returns_raw_service_names(self) -> None:
         label_values = AsyncMock(
             side_effect=[
                 ["orders-api"],
                 ["orders-api", "legacy-worker"],
-                ["aioms-fake-app"],
+                ["aiops-fake-app"],
             ]
         )
 
@@ -91,5 +91,5 @@ class LogsToolCompatibilityTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             services,
-            {"orders-api", "legacy-worker", "aioms-fake-app"},
+            {"orders-api", "legacy-worker", "aiops-fake-app"},
         )

@@ -93,7 +93,7 @@ async def lifespan(app: FastAPI):
         await app.state.arq_pool.close()
 
 
-app = FastAPI(title="AIOMS Backend", lifespan=lifespan)
+app = FastAPI(title="AIOps Backend", lifespan=lifespan)
 app.state.chat_graph = build_chat_graph()
 
 app.include_router(health.router)

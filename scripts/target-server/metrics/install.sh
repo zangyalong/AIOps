@@ -22,8 +22,8 @@ usage() {
     [--disable-all] \
     [--no-start]
 
-只传入需要启用的组件。安装器生成 /etc/aioms-exporters/compose.yaml，
-并通过 Docker Compose 管理 aioms-exporters 项目。
+只传入需要启用的组件。安装器生成 /etc/aiops-exporters/compose.yaml，
+并通过 Docker Compose 管理 aiops-exporters 项目。
 
 --image-mirror-prefix REGISTRY
                        仅本次拉取使用的镜像代理前缀；默认 m.daocloud.io，传空值则直连原仓库。
@@ -182,14 +182,14 @@ detect_compose() {
 }
 
 if [[ "$DISABLE_ALL" == "true" ]]; then
-    readonly EXISTING_CONFIG="/etc/aioms-exporters/compose.yaml"
+    readonly EXISTING_CONFIG="/etc/aiops-exporters/compose.yaml"
     if [[ ! -f "$EXISTING_CONFIG" ]]; then
-        echo "全部 exporter 已关闭，服务器上没有需要停止的 AIOMS 指标栈。"
+        echo "全部 exporter 已关闭，服务器上没有需要停止的 AIOps 指标栈。"
         exit 0
     fi
     detect_compose
-    "${COMPOSE[@]}" --project-name aioms-exporters -f "$EXISTING_CONFIG" down --remove-orphans
-    echo "全部 AIOMS exporter 已停止；配置和凭据备份仍保留在 /etc/aioms-exporters。"
+    "${COMPOSE[@]}" --project-name aiops-exporters -f "$EXISTING_CONFIG" down --remove-orphans
+    echo "全部 AIOps exporter 已停止；配置和凭据备份仍保留在 /etc/aiops-exporters。"
     exit 0
 fi
 
@@ -269,11 +269,11 @@ if [[ -n "$REDIS_IMAGE" ]]; then
     validate_database_network "Redis exporter" "$REDIS_NETWORK"
 fi
 
-readonly INSTALL_DIR="/etc/aioms-exporters"
+readonly INSTALL_DIR="/etc/aiops-exporters"
 readonly SECRETS_DIR="$INSTALL_DIR/secrets"
 readonly CONFIG_PATH="$INSTALL_DIR/compose.yaml"
-readonly GROUP_NAME="aioms-exporters"
-readonly TEMP_CONFIG="$(mktemp /tmp/aioms-exporters-compose.XXXXXX)"
+readonly GROUP_NAME="aiops-exporters"
+readonly TEMP_CONFIG="$(mktemp /tmp/aiops-exporters-compose.XXXXXX)"
 
 cleanup() {
     rm -f -- "$TEMP_CONFIG"
@@ -307,7 +307,7 @@ if [[ -n "$MYSQL_IMAGE" || -n "$POSTGRES_IMAGE" || -n "$REDIS_PASSWORD_FILE" ]];
 fi
 
 cat >"$TEMP_CONFIG" <<EOF
-# 由 AIOMS scripts/target-server/metrics/install.sh 生成。
+# 由 AIOps scripts/target-server/metrics/install.sh 生成。
 # 请修改 deploy.conf 和凭据文件后重新运行 deploy.sh，不要直接编辑。
 services:
 EOF
@@ -316,7 +316,7 @@ if [[ -n "$NODE_IMAGE" ]]; then
     cat >>"$TEMP_CONFIG" <<EOF
   node-exporter:
     image: $NODE_IMAGE
-    container_name: aioms-node-exporter
+    container_name: aiops-node-exporter
     network_mode: host
     pid: host
     restart: unless-stopped
@@ -332,9 +332,9 @@ if [[ -n "$NODE_IMAGE" ]]; then
     volumes:
       - /:/host:ro,rslave
     labels:
-      aioms.managed: "true"
-      aioms.server: $(yaml_quote "$SERVER_NAME")
-      aioms.environment: $(yaml_quote "$ENVIRONMENT")
+      aiops.managed: "true"
+      aiops.server: $(yaml_quote "$SERVER_NAME")
+      aiops.environment: $(yaml_quote "$ENVIRONMENT")
 
 EOF
 fi
@@ -343,7 +343,7 @@ if [[ -n "$CADVISOR_IMAGE" ]]; then
     cat >>"$TEMP_CONFIG" <<EOF
   cadvisor:
     image: $CADVISOR_IMAGE
-    container_name: aioms-cadvisor
+    container_name: aiops-cadvisor
     restart: unless-stopped
     privileged: true
     devices:
@@ -357,9 +357,9 @@ if [[ -n "$CADVISOR_IMAGE" ]]; then
       - $(yaml_quote "$DOCKER_ROOT_DIR:$DOCKER_ROOT_DIR:ro")
       - /dev/disk:/dev/disk:ro
     labels:
-      aioms.managed: "true"
-      aioms.server: $(yaml_quote "$SERVER_NAME")
-      aioms.environment: $(yaml_quote "$ENVIRONMENT")
+      aiops.managed: "true"
+      aiops.server: $(yaml_quote "$SERVER_NAME")
+      aiops.environment: $(yaml_quote "$ENVIRONMENT")
 
 EOF
 fi
@@ -368,7 +368,7 @@ if [[ -n "$MYSQL_IMAGE" ]]; then
     cat >>"$TEMP_CONFIG" <<EOF
   mysql-exporter:
     image: $MYSQL_IMAGE
-    container_name: aioms-mysql-exporter
+    container_name: aiops-mysql-exporter
 EOF
     if [[ "$MYSQL_NETWORK" == "host" ]]; then
         cat >>"$TEMP_CONFIG" <<EOF
@@ -396,9 +396,9 @@ EOF
     volumes:
       - $SECRETS_DIR/mysql-exporter.my.cnf:/.my.cnf:ro
     labels:
-      aioms.managed: "true"
-      aioms.server: $(yaml_quote "$SERVER_NAME")
-      aioms.environment: $(yaml_quote "$ENVIRONMENT")
+      aiops.managed: "true"
+      aiops.server: $(yaml_quote "$SERVER_NAME")
+      aiops.environment: $(yaml_quote "$ENVIRONMENT")
 
 EOF
 fi
@@ -407,7 +407,7 @@ if [[ -n "$POSTGRES_IMAGE" ]]; then
     cat >>"$TEMP_CONFIG" <<EOF
   postgres-exporter:
     image: $POSTGRES_IMAGE
-    container_name: aioms-postgres-exporter
+    container_name: aiops-postgres-exporter
 EOF
     if [[ "$POSTGRES_NETWORK" == "host" ]]; then
         cat >>"$TEMP_CONFIG" <<EOF
@@ -437,9 +437,9 @@ EOF
     volumes:
       - $SECRETS_DIR/postgres-exporter.password:/.postgres-exporter.password:ro
     labels:
-      aioms.managed: "true"
-      aioms.server: $(yaml_quote "$SERVER_NAME")
-      aioms.environment: $(yaml_quote "$ENVIRONMENT")
+      aiops.managed: "true"
+      aiops.server: $(yaml_quote "$SERVER_NAME")
+      aiops.environment: $(yaml_quote "$ENVIRONMENT")
 
 EOF
 fi
@@ -448,7 +448,7 @@ if [[ -n "$REDIS_IMAGE" ]]; then
     cat >>"$TEMP_CONFIG" <<EOF
   redis-exporter:
     image: $REDIS_IMAGE
-    container_name: aioms-redis-exporter
+    container_name: aiops-redis-exporter
 EOF
     if [[ "$REDIS_NETWORK" == "host" ]]; then
         cat >>"$TEMP_CONFIG" <<EOF
@@ -490,9 +490,9 @@ EOF
     fi
     cat >>"$TEMP_CONFIG" <<EOF
     labels:
-      aioms.managed: "true"
-      aioms.server: $(yaml_quote "$SERVER_NAME")
-      aioms.environment: $(yaml_quote "$ENVIRONMENT")
+      aiops.managed: "true"
+      aiops.server: $(yaml_quote "$SERVER_NAME")
+      aiops.environment: $(yaml_quote "$ENVIRONMENT")
 
 EOF
 fi
@@ -545,7 +545,7 @@ if [[ -n "$REDIS_PASSWORD_FILE" ]]; then
         "$REDIS_PASSWORD_FILE" "$SECRETS_DIR/redis-exporter.password"
 fi
 
-"${COMPOSE[@]}" --project-name aioms-exporters -f "$TEMP_CONFIG" config >/dev/null
+"${COMPOSE[@]}" --project-name aiops-exporters -f "$TEMP_CONFIG" config >/dev/null
 
 if [[ -f "$CONFIG_PATH" ]]; then
     backup_path="$CONFIG_PATH.backup.$(date +%Y%m%d%H%M%S)"
@@ -556,7 +556,7 @@ install -o root -g root -m 0640 "$TEMP_CONFIG" "$CONFIG_PATH"
 
 if [[ "$START_EXPORTERS" != true ]]; then
     echo "Exporter 配置已安装但未启动。审核后运行："
-    echo "  ${COMPOSE[*]} --project-name aioms-exporters -f $CONFIG_PATH up -d --remove-orphans"
+    echo "  ${COMPOSE[*]} --project-name aiops-exporters -f $CONFIG_PATH up -d --remove-orphans"
     exit 0
 fi
 
@@ -618,7 +618,7 @@ for image in \
     [[ -z "$image" ]] || pull_exporter_image "$image"
 done
 
-"${COMPOSE[@]}" --project-name aioms-exporters -f "$CONFIG_PATH" up -d --remove-orphans
-"${COMPOSE[@]}" --project-name aioms-exporters -f "$CONFIG_PATH" ps
+"${COMPOSE[@]}" --project-name aiops-exporters -f "$CONFIG_PATH" up -d --remove-orphans
+"${COMPOSE[@]}" --project-name aiops-exporters -f "$CONFIG_PATH" ps
 
 echo "目标服务器指标 exporter 已部署。下一步运行同目录 check.sh。"

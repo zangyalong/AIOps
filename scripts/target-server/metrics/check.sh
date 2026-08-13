@@ -10,7 +10,7 @@ fail() {
 [[ $EUID -eq 0 ]] || fail "请使用 root 或 sudo 运行"
 command -v docker >/dev/null 2>&1 || fail "找不到 docker"
 
-readonly CONFIG_PATH="/etc/aioms-exporters/compose.yaml"
+readonly CONFIG_PATH="/etc/aiops-exporters/compose.yaml"
 [[ -f "$CONFIG_PATH" ]] || fail "找不到 $CONFIG_PATH，请先部署指标 exporter"
 
 if docker compose version >/dev/null 2>&1; then
@@ -21,8 +21,8 @@ else
     fail "找不到 Docker Compose"
 fi
 
-"${COMPOSE[@]}" --project-name aioms-exporters -f "$CONFIG_PATH" config >/dev/null
-"${COMPOSE[@]}" --project-name aioms-exporters -f "$CONFIG_PATH" ps
+"${COMPOSE[@]}" --project-name aiops-exporters -f "$CONFIG_PATH" config >/dev/null
+"${COMPOSE[@]}" --project-name aiops-exporters -f "$CONFIG_PATH" ps
 
 if ! command -v curl >/dev/null 2>&1; then
     echo "未安装 curl，已跳过 HTTP /metrics 检查。"
@@ -30,7 +30,7 @@ if ! command -v curl >/dev/null 2>&1; then
 fi
 
 mapfile -t services < <(
-    "${COMPOSE[@]}" --project-name aioms-exporters -f "$CONFIG_PATH" config --services
+    "${COMPOSE[@]}" --project-name aiops-exporters -f "$CONFIG_PATH" config --services
 )
 
 check_endpoint() {

@@ -5,7 +5,7 @@ set -euo pipefail
 readonly CONTAINER_PATTERN='^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$'
 
 fail() {
-    echo "aioms-docker-read: $*" >&2
+    echo "aiops-docker-read: $*" >&2
     exit 64
 }
 
