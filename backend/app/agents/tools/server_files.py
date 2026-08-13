@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field, field_validator
 from app.db.session import AsyncSessionLocal
 from app.models.server import Server
 from app.operations.executors import server_file as server_file_executor
-from app.operations.schemas import OperationResult
+from app.operations.schemas import OperationCall, OperationContext, OperationResult
 from app.services import server_service
 from app.services.ssh_service import (
     SSHConnectParams,
@@ -99,14 +99,30 @@ class PreviewServerFileUpdateInput(ReadServerFileInput):
 
 
 class UpdateServerFileInput(PreviewServerFileUpdateInput):
-    expected_sha256: str = Field(min_length=64, max_length=64)
-    preview_hash: str = Field(min_length=64, max_length=64)
-    preview_diff: str = Field(max_length=MAX_DIFF_CHARS)
+    # 三项由 Operation Broker 在审批前根据本次 new_content 重建。保留在执行 schema 中，
+    # 是为了把冻结参数原样交给审批后的同一个 Tool；模型无需生成或复制它们。
+    expected_sha256: str = Field(
+        default="",
+        max_length=64,
+        description="由后端审批前填充，Agent 不要自行生成",
+    )
+    preview_hash: str = Field(
+        default="",
+        max_length=64,
+        description="由后端审批前填充，Agent 不要自行生成",
+    )
+    preview_diff: str = Field(
+        default="",
+        max_length=MAX_DIFF_CHARS,
+        description="由后端审批前填充，Agent 不要自行生成",
+    )
 
     @field_validator("expected_sha256", "preview_hash")
     @classmethod
     def validate_sha256(cls, value: str) -> str:
         value = value.strip().lower()
+        if not value:
+            return ""
         if not _SHA256_PATTERN.fullmatch(value):
             raise ValueError("必须是 64 位 SHA-256 十六进制摘要")
         return value
@@ -492,6 +508,50 @@ def _build_preview(snapshot: RemoteFileSnapshot, new_content: str) -> dict[str, 
     }
 
 
+async def resolve_update_server_file_call(
+    call: OperationCall,
+    context: OperationContext,
+) -> OperationCall:
+    """审批前按实际提交内容重建文件预览，避免模型复制哈希造成假冲突。
+
+    调查预览用于帮助模型和用户形成变更意图；真正进入审批门时，以写调用中的
+    ``new_content`` 为准重新读取目标文件并生成冻结差异。审批后执行器还会再次做同样
+    的复核，因此这里不会放宽文件并发变更或审批内容绑定。
+    """
+    del context
+    args = call.normalized_args()
+    new_content = str(args["new_content"])
+    content_error = _validate_new_content(new_content)
+    if content_error:
+        raise ValueError(f"已拒绝写入：{content_error}")
+
+    server, resolve_error = await _resolve_server(str(args["server_name"]))
+    if server is None:
+        raise ValueError(resolve_error or "服务器不存在")
+    snapshot, read_error = await _read_snapshot(server, str(args["path"]))
+    if snapshot is None:
+        raise ValueError(read_error or "读取失败")
+    if snapshot.redacted:
+        raise ValueError("当前文件包含敏感字段，禁止通过通用工具整文件覆盖")
+
+    preview = _build_preview(snapshot, new_content)
+    if not preview["changed"]:
+        raise ValueError("新旧内容相同，不需要提交文件更新审批")
+    if preview["diff_truncated"]:
+        raise ValueError("完整差异超过审批展示上限，已拒绝通过通用工具写入")
+
+    args.update(
+        {
+            "server_name": server.name,
+            "path": preview["path"],
+            "expected_sha256": preview["expected_sha256"],
+            "preview_hash": preview["preview_hash"],
+            "preview_diff": preview["preview_diff"],
+        }
+    )
+    return OperationCall(id=call.id, name=call.name, args=args)
+
+
 @tool(args_schema=FindServerFilesInput)
 async def find_server_files(
     server_name: str,
@@ -624,14 +684,15 @@ async def update_server_file(
     server_name: str,
     path: str,
     new_content: str,
-    expected_sha256: str,
-    preview_hash: str,
-    preview_diff: str,
+    expected_sha256: str = "",
+    preview_hash: str = "",
+    preview_diff: str = "",
 ) -> OperationResult:
     """审批后更新精确授权的服务器文本文件。
 
-    这是高风险写操作。执行前重新读取文件并核对旧哈希、预览哈希和差异；随后上传到固定暂存目录，
-    由 root 网关备份、保留所有权与权限并原子替换。不能写入敏感凭据或任意未授权路径。
+    这是高风险写操作。审批卡生成前，后端会按本次实际提交的 new_content 重新读取文件并重建
+    冻结预览；执行前再核对旧哈希、预览哈希和差异。随后上传到固定暂存目录，由 root 网关备份、
+    保留所有权与权限并原子替换。不能写入敏感凭据或任意未授权路径。
     """
     return await server_file_executor.update_server_file(
         server_name,

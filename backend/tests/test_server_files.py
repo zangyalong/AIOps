@@ -7,9 +7,9 @@ from types import SimpleNamespace
 from typing import Self
 from unittest.mock import AsyncMock, patch
 
-from app.agents.tools import server_files
+from app.agents.tools import catalog, server_files
 from app.operations.executors import server_file as server_file_executor
-from app.operations.schemas import OperationResult
+from app.operations.schemas import OperationCall, OperationContext, OperationResult
 from app.services import server_file_policy_service
 
 
@@ -118,6 +118,112 @@ class ServerFileToolValidationTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("+port=3307", payload["preview_diff"])
         self.assertFalse(payload["diff_truncated"])
         self.assertNotIn("write_tool", payload)
+
+    async def test_broker_rebuilds_file_preview_from_actual_submitted_content(
+        self,
+    ) -> None:
+        """末尾换行被模型改写时，审批前按实际内容重建哈希，不再陷入旧哈希重试。"""
+        server = SimpleNamespace(name="web-01")
+        snapshot = server_files.RemoteFileSnapshot(
+            path="/opt/app/app.conf",
+            sha256="a" * 64,
+            redacted=False,
+            content="port=3306\n",
+        )
+        preview_without_final_newline = server_files._build_preview(
+            snapshot,
+            "port=3307",
+        )
+        submitted_content = "port=3307\n"
+        expected_preview = server_files._build_preview(snapshot, submitted_content)
+        self.assertNotEqual(
+            preview_without_final_newline["preview_hash"],
+            expected_preview["preview_hash"],
+        )
+
+        with (
+            patch.object(
+                server_files,
+                "_resolve_server",
+                AsyncMock(return_value=(server, None)),
+            ),
+            patch.object(
+                server_files,
+                "_read_snapshot",
+                AsyncMock(return_value=(snapshot, None)),
+            ),
+        ):
+            prepared = await catalog.OPERATION_BROKER.aprepare(
+                OperationCall(
+                    id="update-app-conf",
+                    name="update_server_file",
+                    args={
+                        "server_name": "web-01",
+                        "path": snapshot.path,
+                        "new_content": submitted_content,
+                    },
+                ),
+                OperationContext(
+                    actor_id="operator-1",
+                    actor_role="operator",
+                    run_mode="interactive",
+                ),
+            )
+
+        self.assertEqual(prepared.decision.result, "approval_required")
+        self.assertEqual(prepared.call.args["expected_sha256"], snapshot.sha256)
+        self.assertEqual(
+            prepared.call.args["preview_hash"], expected_preview["preview_hash"]
+        )
+        self.assertEqual(
+            prepared.call.args["preview_diff"], expected_preview["preview_diff"]
+        )
+        self.assertEqual(
+            prepared.approval_view["command"], expected_preview["preview_diff"]
+        )
+
+    async def test_file_preview_resolver_rejects_unchanged_content_before_approval(
+        self,
+    ) -> None:
+        server = SimpleNamespace(name="web-01")
+        snapshot = server_files.RemoteFileSnapshot(
+            path="/opt/app/app.conf",
+            sha256="a" * 64,
+            redacted=False,
+            content="port=3306\n",
+        )
+        with (
+            patch.object(
+                server_files,
+                "_resolve_server",
+                AsyncMock(return_value=(server, None)),
+            ),
+            patch.object(
+                server_files,
+                "_read_snapshot",
+                AsyncMock(return_value=(snapshot, None)),
+            ),
+        ):
+            with self.assertRaisesRegex(ValueError, "不需要提交文件更新审批"):
+                await server_files.resolve_update_server_file_call(
+                    OperationCall(
+                        id="no-change",
+                        name="update_server_file",
+                        args={
+                            "server_name": "web-01",
+                            "path": snapshot.path,
+                            "new_content": snapshot.content,
+                            "expected_sha256": snapshot.sha256,
+                            "preview_hash": "b" * 64,
+                            "preview_diff": "占位预览",
+                        },
+                    ),
+                    OperationContext(
+                        actor_id="operator-1",
+                        actor_role="operator",
+                        run_mode="interactive",
+                    ),
+                )
 
     async def test_structured_preview_works_without_reading_redacted_file(self) -> None:
         server = SimpleNamespace(name="web-01")

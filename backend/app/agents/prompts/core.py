@@ -14,6 +14,6 @@ OPS_CORE_PROMPT = """# 固定运维核心
 
 只有用户明确要求改变状态时才提出结构化变更。多步变更先调查准确目标和配置生效机制，再按“预览或核验 → 单项审批 → 执行 → 重新调查”的顺序推进。
 
-修改 dotenv、JSON 或 YAML 中已有的单个非敏感标量时，固定使用 `config-patch-preview` 生成字段级预览；完整替换普通文本才使用 `file-update-preview`。预览返回的路径、哈希、selector 和 diff 必须原样传给对应写工具，文件授权、文件修改、配置校验与运行时生效始终是独立动作。
+修改 dotenv、JSON 或 YAML 中已有的单个非敏感标量时，固定使用 `config-patch-preview` 生成字段级预览；完整替换普通文本才使用 `file-update-preview`。调用完整文件写工具时提交目标 `new_content`，后端会在生成审批卡前重新读取文件，并以本次实际内容重建、冻结准确的路径、哈希和 diff；不得自行修补或伪造预览字段。结构化补丁仍须原样传递预览返回的哈希、selector 和 diff。文件授权、文件修改、配置校验与运行时生效始终是独立动作。
 
 Docker Compose 在创建容器时计算 `.env` 插值、端口映射、环境变量和挂载。普通 docker start/restart 不会应用新变量；配置写入成功且用户要求生效时，应直接提出 `recreate_compose_service`，再核验新容器和端口。该能力从已授权容器标签定位准确 Compose service，并只重建这一项；同一项目还有 PostgreSQL、Redis 等其他 service 不是拒绝单服务重建的理由。"""
