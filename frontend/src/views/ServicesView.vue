@@ -19,6 +19,7 @@ import {
 } from '../api/services'
 import { fetchServerObservability, fetchServers } from '../api/servers'
 import MetricTrendChart from '../components/MetricTrendChart.vue'
+import { confirmDialog } from '../composables/systemDialog'
 import type { Server, ServerObservability } from '../types/server'
 import type {
   ServiceInput,
@@ -416,7 +417,15 @@ async function addFileAccess(instance: ServiceInstance) {
     return
   }
   const label = draft.access_level === 'read' ? '可读目录或文件' : '精确可写文件'
-  if (!confirm(`确定为 ${instance.name} 授权${label}？\n\n${path}\n\n写入仍需在对话中预览差异并进行高风险二次确认。`)) return
+  const confirmed = await confirmDialog({
+    title: `授权${label}`,
+    message: '写入仍需在对话中预览差异并进行高风险二次确认。',
+    details: `${instance.name}\n${path}`,
+    detailsLabel: '实例与授权路径',
+    confirmLabel: '确认授权',
+    tone: 'warning',
+  })
+  if (!confirmed) return
   fileAccessSavingIds.value = new Set([...fileAccessSavingIds.value, instance.id])
   error.value = null
   try {
@@ -436,7 +445,15 @@ async function addFileAccess(instance: ServiceInstance) {
 }
 
 async function removeFileAccess(access: ServiceFileAccess) {
-  if (!confirm(`确定移除文件授权？\n\n${access.path}`)) return
+  const confirmed = await confirmDialog({
+    title: '移除文件授权',
+    message: '移除后，Agent 将不能再通过该授权读取或变更对应路径。',
+    details: access.path,
+    detailsLabel: '授权路径',
+    confirmLabel: '移除授权',
+    tone: 'danger',
+  })
+  if (!confirmed) return
   error.value = null
   try {
     await deleteServiceFileAccess(access.id)
@@ -449,12 +466,17 @@ async function removeFileAccess(access: ServiceFileAccess) {
 async function toggleControlAuthorization(instance: ServiceInstance) {
   if (!controlAuthorizationAvailable(instance)) return
   const enabled = !instance.control_enabled
-  const confirmation = enabled
-    ? `确定为 ${instance.runtime_name} 开启控制授权？\n\n系统会同步加入目标服务器 root 白名单；开启后，AI 可以在人工审批通过后发起启动、停止或重启。`
-    : `确定关闭 ${instance.runtime_name} 的控制授权？\n\n系统会同时从目标服务器 root 白名单移除该服务，之后 AI 将不能再发起启动、停止或重启。`
-  if (!confirm(confirmation)) {
-    return
-  }
+  const confirmed = await confirmDialog({
+    title: enabled ? '开启服务控制授权' : '关闭服务控制授权',
+    message: enabled
+      ? '系统会同步加入目标服务器 root 白名单；开启后，AI 可以在人工审批通过后发起启动、停止或重启。'
+      : '系统会同时从目标服务器 root 白名单移除该服务，之后 AI 将不能再发起启动、停止或重启。',
+    details: instance.runtime_name || instance.name,
+    detailsLabel: '运行对象',
+    confirmLabel: enabled ? '开启授权' : '关闭授权',
+    tone: enabled ? 'warning' : 'danger',
+  })
+  if (!confirmed) return
 
   controlAuthorizationSavingIds.value = new Set([
     ...controlAuthorizationSavingIds.value,
@@ -656,9 +678,15 @@ async function submitService() {
 }
 
 async function removeService(service: ServiceRecord) {
-  if (!confirm(`确定删除服务 ${service.name}/${service.environment}？它的实例也会删除。`)) {
-    return
-  }
+  const confirmed = await confirmDialog({
+    title: '删除服务',
+    message: '该服务下的部署实例也会一并删除，此操作无法恢复。',
+    details: `${service.name}\n${service.environment}`,
+    detailsLabel: '服务与环境',
+    confirmLabel: '删除服务',
+    tone: 'danger',
+  })
+  if (!confirmed) return
   error.value = null
   try {
     await deleteService(service.id)
@@ -748,7 +776,15 @@ async function submitInstance() {
 }
 
 async function removeInstance(instance: ServiceInstance) {
-  if (!confirm(`确定删除实例 ${instance.name}？`)) return
+  const confirmed = await confirmDialog({
+    title: '删除服务实例',
+    message: '实例记录删除后无法恢复，请确认没有仍需保留的运行时映射。',
+    details: instance.name,
+    detailsLabel: '待删除实例',
+    confirmLabel: '删除实例',
+    tone: 'danger',
+  })
+  if (!confirmed) return
   error.value = null
   try {
     await deleteServiceInstance(instance.id)

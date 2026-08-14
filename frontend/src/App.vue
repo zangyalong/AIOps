@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { RouterView } from 'vue-router'
 import NavSidebar from './components/NavSidebar.vue'
+import SystemDialog from './components/SystemDialog.vue'
 </script>
 
 <template>
@@ -10,6 +11,7 @@ import NavSidebar from './components/NavSidebar.vue'
       <RouterView />
     </main>
   </div>
+  <SystemDialog />
 </template>
 
 <style scoped>

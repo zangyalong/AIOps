@@ -10,6 +10,7 @@ import {
   updateServer,
 } from '../api/servers'
 import TargetDeploymentConfigForm from '../components/TargetDeploymentConfigForm.vue'
+import { confirmDialog } from '../composables/systemDialog'
 import {
   createDefaultDeploymentConfig,
   createEmptyDeploymentSecrets,
@@ -192,13 +193,15 @@ async function saveAndGenerateBundle() {
 }
 
 async function saveAndDeploy() {
-  if (
-    !confirm(
-      '确定保存并自动部署当前环境配置？\n\n部署会更新监控组件和服务控制白名单，属于高风险操作。',
-    )
-  ) {
-    return
-  }
+  const confirmed = await confirmDialog({
+    title: '保存并部署环境配置',
+    message: '部署会更新监控组件和服务控制白名单，属于高风险操作。',
+    details: editingServer.value?.name || form.name || '尚未命名的服务器',
+    detailsLabel: '目标服务器',
+    confirmLabel: '保存并部署',
+    tone: 'danger',
+  })
+  if (!confirmed) return
   deploying.value = true
   formError.value = null
   bundleMessage.value = null
@@ -218,13 +221,15 @@ async function saveAndDeploy() {
 }
 
 async function deploySavedConfiguration(server: Server) {
-  if (
-    !confirm(
-      `确定自动部署 ${server.name} 已保存的环境配置？\n\n数据库 exporter 将复用目标服务器已有凭据。`,
-    )
-  ) {
-    return
-  }
+  const confirmed = await confirmDialog({
+    title: '部署已保存的环境配置',
+    message: '数据库 exporter 将复用目标服务器已有凭据。请确认目标后再继续。',
+    details: `${server.name}\n${server.ip_address}`,
+    detailsLabel: '目标服务器',
+    confirmLabel: '开始部署',
+    tone: 'danger',
+  })
+  if (!confirmed) return
   deployingServerIds.value = new Set([...deployingServerIds.value, server.id])
   delete deploymentMessages[server.id]
   error.value = null
@@ -244,7 +249,15 @@ async function deploySavedConfiguration(server: Server) {
 }
 
 async function remove(server: Server) {
-  if (!confirm(`确定删除 ${server.name}？`)) return
+  const confirmed = await confirmDialog({
+    title: '删除服务器',
+    message: '服务器记录删除后无法恢复。',
+    details: `${server.name}\n${server.ip_address}`,
+    detailsLabel: '待删除服务器',
+    confirmLabel: '删除服务器',
+    tone: 'danger',
+  })
+  if (!confirmed) return
   try {
     await deleteServer(server.id)
     delete liveResults[server.id]

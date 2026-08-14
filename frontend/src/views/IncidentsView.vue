@@ -8,6 +8,7 @@ import {
   resolveIncident,
 } from '../api/incidents'
 import MarkdownContent from '../components/MarkdownContent.vue'
+import { confirmDialog, promptDialog } from '../composables/systemDialog'
 import type {
   AlertOccurrence,
   Incident,
@@ -156,7 +157,19 @@ async function goToPage(nextPage: number) {
 }
 
 async function acknowledge(incident: Incident) {
-  const operator = prompt('请输入认领人名称')?.trim()
+  const operator = (
+    await promptDialog({
+      title: '认领事件',
+      message: '填写本次事件的认领人，系统会记录认领时间和处理状态。',
+      details: `${incident.alertname}\n${incident.instance || '未关联实例'}`,
+      detailsLabel: '事件',
+      inputLabel: '认领人',
+      placeholder: '例如：张三',
+      confirmLabel: '确认认领',
+      required: true,
+      maxLength: 100,
+    })
+  )?.trim()
   if (!operator) return
 
   pendingAction.value = incident.id
@@ -172,7 +185,15 @@ async function acknowledge(incident: Incident) {
 }
 
 async function resolve(incident: Incident) {
-  if (!confirm(`确定将事件“${incident.alertname}”标记为已解决？`)) return
+  const confirmed = await confirmDialog({
+    title: '将事件标记为已解决',
+    message: '确认后事件会退出待处理列表。请确保故障已经恢复或完成了人工处置。',
+    details: `${incident.alertname}\n${incident.instance || '未关联实例'}`,
+    detailsLabel: '事件',
+    confirmLabel: '标记已解决',
+    tone: 'warning',
+  })
+  if (!confirmed) return
 
   pendingAction.value = incident.id
   error.value = null
@@ -191,13 +212,15 @@ async function remove(incident: Incident) {
     error.value = '待处理或已认领事件不能删除，请先将事件标记为已解决'
     return
   }
-  if (
-    !confirm(
-      `确定删除事件“${incident.alertname}”？关联的原始告警历史快照也会删除，且无法撤销。`,
-    )
-  ) {
-    return
-  }
+  const confirmed = await confirmDialog({
+    title: '删除事件记录',
+    message: '关联的原始告警历史快照也会删除，此操作无法撤销。',
+    details: `${incident.alertname}\n${incident.instance || '未关联实例'}`,
+    detailsLabel: '待删除事件',
+    confirmLabel: '删除记录',
+    tone: 'danger',
+  })
+  if (!confirmed) return
 
   pendingAction.value = incident.id
   error.value = null

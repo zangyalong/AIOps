@@ -7,6 +7,7 @@ import {
   fetchAlertRules,
   updateAlertRule,
 } from '../api/alertRules'
+import { confirmDialog } from '../composables/systemDialog'
 import type {
   AlertRule,
   AlertRuleInput,
@@ -161,7 +162,15 @@ async function toggleRule(rule: AlertRule) {
 }
 
 async function removeRule(rule: AlertRule) {
-  if (!confirm(`确定删除预警规则“${rule.name}”？`)) return
+  const confirmed = await confirmDialog({
+    title: '删除预警规则',
+    message: '规则删除后会重新同步 Prometheus，之后不再产生对应预警。',
+    details: `${rule.name}\n${rule.expression}`,
+    detailsLabel: '待删除规则',
+    confirmLabel: '删除规则',
+    tone: 'danger',
+  })
+  if (!confirmed) return
   pending.value = rule.id
   error.value = null
   success.value = null

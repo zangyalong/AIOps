@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { deleteConversation, fetchConversations } from '../api/conversations'
+import { confirmDialog, messageDialog } from '../composables/systemDialog'
 import type { ConversationSummary } from '../types/chat'
 
 defineProps<{
@@ -26,13 +27,26 @@ async function refresh() {
 }
 
 async function remove(c: ConversationSummary) {
-  if (!confirm(`删除对话「${c.title}」？此操作不可恢复。`)) return
+  const confirmed = await confirmDialog({
+    title: '删除历史对话',
+    message: '对话及其消息记录将被删除，此操作无法恢复。',
+    details: c.title,
+    detailsLabel: '对话',
+    confirmLabel: '删除对话',
+    tone: 'danger',
+  })
+  if (!confirmed) return
   try {
     await deleteConversation(c.id)
     emit('deleted', c.id)
     await refresh()
   } catch (e) {
-    alert(e instanceof Error ? e.message : String(e))
+    await messageDialog({
+      title: '删除对话失败',
+      message: e instanceof Error ? e.message : String(e),
+      confirmLabel: '关闭',
+      tone: 'danger',
+    })
   }
 }
 
