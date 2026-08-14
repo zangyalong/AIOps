@@ -84,7 +84,7 @@ ssh_key_filename=web01-aiops
 ssh -p 22 -i ssh/web01-aiops aiops@服务器地址 'id'
 ```
 
-同一 SSH 身份降低了学习项目的配置复杂度，但不会降低网关边界：审批属于 AIOps 应用层，
+同一 SSH 身份降低了部署和维护复杂度，但不会降低网关边界：审批属于 AIOps 应用层，
 目标服务器 sudoers 和 root 所有包装器负责最终阻止任意命令执行。
 
 如果目标服务器曾配置旧的 `aiops-deploy` 双角色，确认新单角色安装和读写网关都可用后，再由

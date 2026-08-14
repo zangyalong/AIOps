@@ -51,10 +51,10 @@ cp metrics/redis-exporter.password.example metrics/redis-exporter.password
 填写它所在的已有 Docker 网络名，连接地址改为容器名，例如：
 
 ```ini
-POSTGRES_EXPORTER_NETWORK=sub2api_default
-POSTGRES_EXPORTER_URI=sub2api-postgres:5432/postgres?sslmode=disable
-REDIS_EXPORTER_NETWORK=sub2api_default
-REDIS_EXPORTER_ADDRESS=redis://sub2api-redis:6379
+POSTGRES_EXPORTER_NETWORK=example-api_default
+POSTGRES_EXPORTER_URI=example-api-postgres:5432/postgres?sslmode=disable
+REDIS_EXPORTER_NETWORK=example-api_default
+REDIS_EXPORTER_ADDRESS=redis://example-api-redis:6379
 ```
 
 部署脚本只接入已存在的网络，不创建或修改业务 Docker 网络。

@@ -18,7 +18,7 @@ class LogsToolCompatibilityTest(unittest.IsolatedAsyncioTestCase):
             },
             "values": [["1000000000", "INFO request completed"]],
         }
-        promtail_stream = {
+        legacy_container_stream = {
             "stream": {"container": "orders-api"},
             "values": [["2000000000", "WARN legacy stream"]],
         }
@@ -26,7 +26,7 @@ class LogsToolCompatibilityTest(unittest.IsolatedAsyncioTestCase):
             side_effect=[
                 [alloy_stream],
                 [alloy_stream],
-                [promtail_stream],
+                [legacy_container_stream],
             ]
         )
 
@@ -49,14 +49,14 @@ class LogsToolCompatibilityTest(unittest.IsolatedAsyncioTestCase):
             await logs.search_logs.ainvoke(
                 {
                     "server": "web-01",
-                    "service": "pixel-forge-backend",
-                    "keyword": '{service="pixel-forge-backend"}',
+                    "service": "example-api",
+                    "keyword": '{service="example-api"}',
                 }
             )
 
         logql = query.await_args_list[0].args[0]
         self.assertIn('server="web-01"', logql)
-        self.assertIn('service="pixel-forge-backend"', logql)
+        self.assertIn('service="example-api"', logql)
         self.assertIn(r'|~ "(?i)\\{service=', logql)
         self.assertNotIn(r'|~ "(?i)\{service=', logql)
 
@@ -65,7 +65,7 @@ class LogsToolCompatibilityTest(unittest.IsolatedAsyncioTestCase):
             side_effect=[
                 ["orders-api"],
                 ["orders-api", "legacy-worker"],
-                ["aiops-fake-app"],
+                ["legacy-container"],
             ]
         )
 
@@ -75,14 +75,14 @@ class LogsToolCompatibilityTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(label_values.await_count, 3)
         self.assertEqual(result.count("- orders-api"), 1)
         self.assertIn("- legacy-worker", result)
-        self.assertIn("- aiops-fake-app", result)
+        self.assertIn("- legacy-container", result)
 
     async def test_discover_log_services_returns_raw_service_names(self) -> None:
         label_values = AsyncMock(
             side_effect=[
                 ["orders-api"],
                 ["orders-api", "legacy-worker"],
-                ["aiops-fake-app"],
+                ["legacy-container"],
             ]
         )
 
@@ -91,5 +91,5 @@ class LogsToolCompatibilityTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             services,
-            {"orders-api", "legacy-worker", "aiops-fake-app"},
+            {"orders-api", "legacy-worker", "legacy-container"},
         )

@@ -2,16 +2,50 @@
 
 跟踪多步骤任务的进度。这不是项目路线图，只在用户明确列出一批任务时才新增/更新——规则见 [CLAUDE.md](../CLAUDE.md) 「与 Claude 的协作模式」第 9 条。
 
+## MIT 许可证与项目展示
+
+- [x] **以 MIT License 正式开源**
+  - 根目录加入标准 MIT 文本，README、贡献指南、包元数据和项目结构统一标注许可证
+  - 项目公开定位改为正常开源 AIOps 项目，不再使用“学习型项目”作为品牌描述，同时保留真实安全成熟度说明
+- [x] **README 核心页面截图**
+  - 从当前运行中的真实前端选择少量核心页面，统一视口并确认不泄露真实资产、日志或凭据
+  - 截图存入 `docs/images/`，README 使用相对路径、可读标题和准确替代文本展示
+- [ ] **文档与视觉验收**
+  - 检查 MIT 文本、Markdown 链接、敏感信息、截图清晰度、后端 Ruff/测试与前端生产构建
+  - 不启动额外服务；截图和静态检查完成后仍由维护者确认 GitHub 展示效果
+
+## 本地演示组件清理与计划复核
+
+- [x] **移除已弃用的本地演示数据源**
+  - 删除 Compose 中的 `fake-app`、Promtail 和本地 `node-exporter`，同步删除专用配置、种子脚本与示例残留
+  - 保留纳管服务器的 node_exporter 部署和指标解析能力；它仍是服务器 CPU、内存、磁盘等指标的真实数据来源
+- [x] **逐项复核开发计划状态**
+  - 对照当前代码、自动化测试和已有 QA 记录核对所有勾选框；只勾选证据完整的实现项
+  - 明确要求真实服务器、浏览器或审批链运行时验证且缺少现成记录的项目继续保持未勾选，并注明剩余验收条件
+
+## 阶段总结与开源整理
+
+- [x] **仓库结构与文档体检**
+  - 从根目录检查目录边界、文档入口、配置示例、生成物忽略规则和项目事实一致性
+  - 只修复本次审查能够明确确认的问题，不扩展阶段范围或重构业务代码
+- [x] **开源仓库基础材料**
+  - 参考同类高关注开源项目的 README 信息架构，补充根目录项目介绍、能力边界、架构、快速开始、验证方式和安全说明
+  - 明确项目当前成熟度、适用范围及尚未完成真实环境验收的内容，避免制造可直接用于生产的印象
+  - README、CONTRIBUTING、SECURITY 和 MIT LICENSE 已补齐
+- [ ] **静态检查与人工验收**
+  - 检查 Markdown 链接、敏感文件跟踪状态、后端 Ruff/测试与前端生产构建，静态检查通过后仍保持未勾选
+  - 等用户审阅 README 并确认仓库公开展示效果后再验收
+
 ## Agent Memory 系统
 
-- [ ] **持久化 LangGraph 工作记忆**
+- [x] **持久化 LangGraph 工作记忆**
   - 使用 PostgreSQL checkpointer 保存图执行状态，等待审批的 Chat Run 可跨后端重启恢复
   - 只恢复尚未执行且 checkpoint/操作审计完全匹配的审批断点；执行中断仍失败关闭，不自动重放写操作
-- [ ] **跨会话长期记忆**
+- [x] **跨会话长期记忆**
   - 从成功 Chat Run 的用户正文和最终回答提炼偏好、稳定环境约定、已确认决策和可复用经验
   - 按稳定键执行新增、更新、删除和跳过，过滤凭据、日志原文、瞬时指标/告警/运行状态和未经确认的猜测
   - 每轮检索少量相关记忆注入 Prompt；基础设施记忆只作历史线索，当前事实仍必须调用调查工具核验
-- [ ] **上下文预算与记忆治理**
+- [x] **上下文预算与记忆治理**
   - 完整聊天记录继续保留在 `messages`，送给模型的近期历史按完整用户轮次裁剪，不拆散工具协议
   - 提供记忆列表、单条遗忘和全部清空 API；保留以后用 pgvector 替换关键词检索的接口
 - [ ] **自动化检查与真实交互验收**
@@ -19,13 +53,13 @@
 
 ### Memory 作用域、管理界面与会话压缩
 
-- [ ] **全局 / 服务器两级长期记忆**
+- [x] **全局 / 服务器两级长期记忆**
   - 全局记忆按可信 actor 跨会话生效；服务器记忆额外绑定已纳管服务器 UUID，删除服务器时不提升为全局记忆
   - 每轮始终检索全局记忆，只在界面默认目标或用户正文唯一命中已纳管服务器时检索该服务器记忆；目标歧义时不猜测
-- [ ] **Memory 管理界面**
+- [x] **Memory 管理界面**
   - 主菜单增加 Memory 页面，支持按全局或服务器查看、搜索、手动新增和单条删除长期记忆
   - 手动写入继续执行类别、长度、敏感信息和瞬时状态校验，记忆稳定键由后端生成
-- [ ] **会话滚动摘要压缩**
+- [x] **会话滚动摘要压缩**
   - 原始 `messages` 永久保留；上下文超过阈值后，用“旧摘要 + 被淘汰的完整轮次”生成新摘要，并保留近期原文
   - 摘要作为不可信历史概括注入，实时运维事实仍需工具核验；摘要失败不影响已经完成的 Chat Run
 - [ ] **迁移、自动化检查与运行时验收**
@@ -34,9 +68,9 @@
 
 ## 统一项目名称为 AIOps
 
-- [ ] **统一产品展示名称与说明**
+- [x] **统一产品展示名称与说明**
   - 前后端界面、提示词、API 标题、文档和示例统一使用 `AIOps`
-- [ ] **统一代码与部署技术标识**
+- [x] **统一代码与部署技术标识**
   - Python 包、Docker 资源、Grafana/Prometheus 标识、环境变量、SSH 用户、目标机目录和固定网关统一使用 `aiops` / `AIOPS_*`
   - 同步改名目标机脚本文件及其安装引用，避免名称与实际路径不一致
 - [ ] **自动化检查与现有环境迁移验收**
@@ -46,7 +80,7 @@
 
 ## Exporter 镜像代理失败时复用本地镜像
 
-- [ ] **镜像准备允许安全回退**
+- [x] **镜像准备允许安全回退**
   - 优先从配置的镜像代理拉取；拉取失败时只复用目标机已有的精确原始镜像引用
   - 代理与本地镜像都不可用时仍然失败关闭，不把真正缺失镜像的部署标记为成功
 - [ ] **自动化检查与目标机验收**
@@ -54,14 +88,14 @@
 
 ## 对话快捷功能与默认服务器上下文
 
-- [ ] **输入 `/` 打开核心运维功能菜单**
+- [x] **输入 `/` 打开核心运维功能菜单**
   - 斜杠菜单提供服务器状态、服务列表、服务发现与注册、资源趋势、日志和告警等常用任务模板
   - 选择功能只填入可编辑的自然语言意图，继续复用统一 Ops Agent、调查工具和写操作审批链
   - 支持输入过滤、方向键选择、Enter 应用和 Escape 关闭
-- [ ] **输入框通过 `+` 选择默认服务器**
+- [x] **输入框通过 `+` 选择默认服务器**
   - 复用已纳管服务器 API，显示服务器名称、IP 和最近状态；选中目标以标签形式显示并可清除
   - 选择结果按对话保存在浏览器中，每轮以 `default_server_id` 结构化发送，不修改用户消息正文
-- [ ] **运行时系统提示词注入可信服务器上下文**
+- [x] **运行时系统提示词注入可信服务器上下文**
   - 后端按 UUID 重新查询服务器，只把真实目录记录注入本轮 Prompt；无效或已删除目标直接拒绝
   - 用户没有明确点名其他服务器时使用默认服务器，明确点名时以本轮消息为准；默认目标不扩大工具权限或审批范围
 - [ ] **自动化检查与真实交互验收**
@@ -69,7 +103,7 @@
 
 ## 服务控制白名单解析修复
 
-- [ ] **规范条目不再被重复添加 systemd 前缀**
+- [x] **规范条目不再被重复添加 systemd 前缀**
   - 控制、授权策略和安装脚本先解析 `systemd:` / `docker:` 类型，再兼容旧的裸 `.service` 条目
   - 策略同步时自动把历史 `systemd:systemd:...` 脏条目归一化并去重
 - [ ] **自动化检查与目标机验收**
@@ -77,34 +111,34 @@
 
 ## 写工具参数审批前解析
 
-- [ ] **Operation Broker 增加异步语义预检**
+- [x] **Operation Broker 增加异步语义预检**
   - 固定按 schema 规范化、目录解析、策略判断、审批冻结的顺序准备操作；执行前使用相同解析重新核对
-- [ ] **服务控制使用业务服务选择条件**
+- [x] **服务控制使用业务服务选择条件**
   - Agent 只提交服务器、业务服务名及可选环境/实例名；真实实例 ID、runtime type/name 由后端解析且不向模型开放
   - 找不到、歧义、未授权时不生成审批；审批卡展示真实 systemd 单元或 Docker 容器
-- [ ] **审批后运行时身份变化时拒绝执行**
+- [x] **审批后运行时身份变化时拒绝执行**
   - 审批哈希冻结解析后的实例和运行时身份；恢复执行时目录或授权变化必须失败关闭
 - [ ] **自动化检查与真实对话验收**
   - Ruff、后端测试和前端构建通过后保持未勾选，等真实服务启动对话验证后验收
 
 ## 工具原始链接防截断
 
-- [ ] **最终回答不再破坏工具返回的长链接**
+- [x] **最终回答不再破坏工具返回的长链接**
   - 模型不得复制或用省略号改写工具 URL；后端在流式输出和消息落库前，使用工具原始结果确定性恢复被截断的 Markdown 链接
   - 只在截断链接能唯一匹配工具原始 URL 时恢复，避免多链接结果误配
-- [ ] **工具卡直接提供原始链接入口**
-  - 从工具真实输出提取 HTTP(S) URL，在折叠状态下也显示可点击入口，不依赖模型复述
+- [x] **可视化调查工具卡直接提供原始链接入口**
+  - 从 `investigate(area="visualization")` 的真实输出提取 HTTP(S) URL，在折叠状态下也显示可点击入口，不依赖模型复述
 - [ ] **自动化检查与真实对话验收**
   - Ruff、后端测试和前端构建通过后保持未勾选，等用户重新生成 Grafana 链接并确认可打开后验收
 
 ## 统一调查工具参数协议修复
 
-- [ ] **让 metrics 参数对 Agent 自描述**
+- [x] **让 metrics 参数对 Agent 自描述**
   - `parameters` 从任意字典改为字段化 schema，明确 `target_type=server|instance` 及每个字段适用的 area
   - 明确当前指标值走 metrics、时间趋势走 visualization，禁止猜测 time/instance/monitor_labels
   - visualization 指标趋势按 target 自动解析并限定 Prometheus instance，避免生成全实例图表
   - 主机指标实例按“显式映射 → 服务目录 node-exporter → Prometheus node_uname_info”解析，不按端口惯例猜测
-- [ ] **失败后提供确定的纠正路径**
+- [x] **失败后提供确定的纠正路径**
   - metrics 参数错误返回服务器当前值、instance 当前值与最近 60 分钟趋势的可复制调用示例
   - Prompt 限制同类协议错误只能按纠正结构重试一次，不再连续发明新字段
   - Operation Broker 不再把未传入的嵌套参数默认值注入调用；图节点阻断完全相同的无效调查重试
@@ -113,16 +147,16 @@
 
 ## 运行时提示词与运维 Skills
 
-- [ ] **把统一 Ops Agent 提示词改为运行时组装**
+- [x] **把统一 Ops Agent 提示词改为运行时组装**
   - 固定保留运维核心职责和不可被 Skill 覆盖的安全边界；工具可用性、运行模式、回答契约和 Skill 上下文按每轮状态拼装
   - 移除 `chat_graph.py` 中整块写死的系统提示词，继续保持交互对话可写、无人值守 worker 禁写的硬边界
-- [ ] **新增 Pi 风格的 AIOps Skill 发现与按需读取机制**
+- [x] **新增 Pi 风格的 AIOps Skill 发现与按需读取机制**
   - 从独立 `SKILL.md` 发现名称、描述与正文，运行时只把名称、描述和文件位置索引拼入 Prompt
   - 模型语义判断后调用 `read_skill` 读取全文；用户可用 `/skill:名称` 强制展开，不使用后端关键词路由
-- [ ] **提供首批内置运维 Skills**
+- [x] **提供首批内置运维 Skills**
   - Docker、Docker Compose、systemd 和配置分析分别记录证据顺序、常用只读方法和常见误判
   - 强制安全规则和必须执行的审批/生效流程继续固定在 Ops Prompt、LangGraph 与 Operation Broker 中
-- [ ] **SKILLS 页展示已安装说明文档**
+- [x] **SKILLS 页展示已安装说明文档**
   - 主导航使用 `SKILLS`；页面只展示名称、描述和正文，不外显路径、触发词、关联工具、分类或版本
   - 参考 Codex Skills 的搜索列表与详情弹窗结构，沿用 AIOps 现有颜色和排版体系
 - [ ] **自动化检查与运行时验收**
@@ -130,15 +164,15 @@
 
 ## 后端静态检查与运维对话流重塑
 
-- [ ] **把 Ruff 纳入后端项目开发依赖**
-  - 使用 `uv` 开发依赖和锁文件固定 Ruff 版本，在 `pyproject.toml` 固定 Python 3.12、检查范围和规则集
+- [x] **把 Ruff 纳入后端项目开发依赖**
+  - 使用 `uv` 开发依赖和锁文件固定 Ruff 版本，在 `pyproject.toml` 固定 Python 3.12 和规则集；项目命令明确检查 `app tests`
   - README 使用 `uv run ruff check` / `uv run ruff format --check`，不再依赖临时 `uvx`
-- [ ] **聊天输入框支持自然换行**
+- [x] **聊天输入框支持自然换行**
   - 单行输入改为随内容增高的 textarea，宽度不足时自动折行，Enter 发送、Shift+Enter 手工换行
-- [ ] **按 Claude Desktop / Pi Agent 的外在形式重塑对话流**
+- [x] **按 Claude Desktop / Pi Agent 的外在形式重塑对话流**
   - 最终回答保持正文优先；工具调用显示真实工具名、关键参数和状态，默认紧凑并可点击展开参数与真实输出
   - 实时 SSE 补充工具参数、结果和失败状态，历史对话继续从已落库的 tool call / result 重建
-- [ ] **把文件变更预览改为编辑器式 diff**
+- [x] **把文件变更预览改为编辑器式 diff**
   - 审批卡片将动作、风险、目标和 diff 分层，不再把整段 diff 挤在单行 code 中
   - diff 展示 hunk、旧/新行号、增删底色及行内字符变化；结构化补丁由目标机返回实际变更行号
 - [ ] **构建、测试与视觉验收**
@@ -146,10 +180,10 @@
 
 ## 对话调查可用性与 Compose 变更闭环
 
-- [ ] **修复宿主机只读调查的 `/dev/null` 重定向**
+- [x] **修复宿主机只读调查的 `/dev/null` 重定向**
   - root-read 仍遮蔽宿主机完整 `/dev`，仅向 chroot 语境单独提供可丢弃输出的 `/dev/null`
   - 安装自检覆盖 `2>/dev/null`，避免常见 Shell 只读查询在运行时失败
-- [ ] **压缩专家旁白与最终总结**
+- [x] **压缩专家旁白与最终总结**
   - 旁白只保留当前调查目标或一条新证据与下一步，不把自我复盘写给用户
   - 最终回答只保留结论、已完成项和实际待确认/失败项，同一事实不重复出现
 - [ ] **增加 Docker Compose 单服务受控 recreate**
@@ -164,15 +198,17 @@
   - 新增统一调查门面，模型只描述证据类型、调查目标和必要筛选条件；Prometheus、Loki、服务目录、运行时探针与 root-read 保持内部执行器分工
   - `run_diagnostic_command`、`run_root_read_command`、`/host`、容器 PATH 和命令白名单不再直接出现在 Agent Prompt 或用户结果中
   - 调查结果统一标明“证据来源 / 目标服务器 / 是否完整”，root-read 的敏感路径遮蔽与输出脱敏继续由后端硬约束
+  - 当前已统一来源与目标，但尚未给所有调查结果增加一致的“是否完整”字段，因此保持未勾选
 - [ ] **阶段二：简化为单一 Ops Agent 编排**
   - 移除 Supervisor 与四专家 handoff，改为 `ops_agent → tools/approval → ops_agent → final` 的单图流程
-  - 保留工具调用上限、完整 Tool 协议修复、无人值守禁写、逐操作审批绑定和最终答案压缩
+  - 保留图递归保护、完整 Tool 协议修复、无人值守禁写、逐操作审批绑定和最终答案压缩
   - 专家旁白继续实时展示，但只表达“正在调查什么 / 新证据与下一步”，不展示内部执行器和安全实现
-- [ ] **阶段三：统一调查与变更的策略、审计和展示**
+  - 单 Agent 图已经落地；当前只有较高的图递归保护，没有独立且有意义的每轮工具调用预算，因此保持未勾选
+- [x] **阶段三：统一调查与变更的策略、审计和展示**
   - 统一调查入口自动允许并按独立执行 ID 进入读审计，交互对话与无人值守 worker 都覆盖；所有结构化变更继续由 Operation Broker 判定并进入人工审批
-  - 工具显示名称从内部函数名改为用户可理解的“调查服务器 / 查询可观测性 / 变更服务”等文案
+  - 工具卡主标题使用“调查服务器 / 查询可观测性 / 变更服务”等用户文案，同时保留原始函数名作为技术信息
   - 审批卡片继续展示冻结后的准确目标、参数摘要和风险，不开放任意 root 写 Shell
-- [ ] **阶段四：适配聊天服务、前端和无人值守任务**
+- [x] **阶段四：适配聊天服务、前端和无人值守任务**
   - SSE 继续按真实顺序发送“专家旁白 → 调查状态 → 最终回答”，去除 Supervisor/专家名称相关判断
   - worker 复用同一个 Ops Agent 图并硬关闭写工具，事件自动诊断不再依赖专家交接提示
   - 历史消息、审批恢复和失败现场保持协议兼容
@@ -183,12 +219,12 @@
 
 ## 单角色 root 只读沙箱 + 审批写网关
 
-- [ ] **目标服务器 root 只读沙箱**
+- [x] **目标服务器 root 只读沙箱**
   - 同一个 `aiops` SSH 身份可通过固定无参数入口启动一次性 Docker 诊断容器，不再维护 `grep/find/rg` 等只读 Shell 语义白名单
   - 宿主机根文件系统在内部只读挂载，安全子挂载逐项只读加入；容器无网络、无 Docker/systemd 控制 socket、无调用方挂载参数，并遮蔽私钥、凭据、运行时控制面和数据库数据目录
   - 后端可进入宿主机真实根目录核验 PATH、程序和文件，也可使用内部工具箱搜索宿主文件；执行语境不暴露给 Agent，遮蔽路径显示 `AIOPS_PATH_MASKED`，不得伪装成空目录
   - 镜像在安装时构建，运行时只接受 root 持有配置中记录的不可变 image ID；命令只从 stdin JSON 传入，宿主机不 `eval`
-- [ ] **后端通用只读工具与审计**
+- [x] **后端通用只读工具与审计**
   - root-read 作为统一 `investigate(area="host")` 的内部执行器，当前单一交互角色无需审批即可调用
   - 工具结果统一携带证据来源和目标；宿主机事实必须在真实宿主机语境核验，工具箱内容不能冒充宿主机事实
   - root-read 的完整命令、操作者、服务器、起止时间、退出码、超时和脱敏输出摘要进入 `operation_records`
@@ -209,7 +245,7 @@
 
 ## Agent 操作执行架构重构
 
-- [ ] **架构验收问题修复**
+- [x] **架构验收问题修复**
   - 多写操作的审批决议逐项绑定到 `tool_call_id + operation_id`，禁止一次批准放行整批操作
   - 补齐非生产环境中风险自动放行的持久化执行链路
   - 统一写执行器成功/失败结果与审计状态
@@ -218,23 +254,23 @@
 - [ ] **阶段一：统一操作模型与策略引擎**
   - 新增与 LangGraph、LangChain 解耦的操作描述、审批决议和策略结果模型
   - 工具目录统一提供读写属性与风险等级；把 allow / approval_required / deny 判断从图节点抽到纯策略模块
-  - 已保持现有审批中断、工具实现、SSH 调用和目标服务器网关行为不变；代码、Ruff 和 116 项后端测试已通过，仍保持未勾选，等用户运行时验收
+  - 已保持现有审批中断、工具实现、SSH 调用和目标服务器网关行为不变；自动化检查通过，仍保持未勾选，等用户运行时验收
 - [ ] **阶段二：引入统一 Operation Broker**
   - Broker 统一完成工具调用规范化、策略判断、审批准备和执行调度
   - LangGraph 只负责 Agent 编排以及审批挂起/恢复，不再包含具体安全规则
-  - 已新增中央 Registry、全局 Broker 和按专家获配工具构造的作用域 Broker；Ruff 和 121 项后端测试已通过，仍保持未勾选，等用户运行时验收
+  - 已新增中央 Registry、全局 Broker 和按当前运行模式构造的作用域 Broker；自动化检查通过，仍保持未勾选，等用户运行时验收
 - [ ] **阶段三：拆分工具定义与操作执行器**
   - `agents/tools/` 只保留给模型使用的工具定义；数据库校验、SSH 和业务执行迁移到 `operations/executors/`
   - 服务控制、文件更新、环境部署、日志配置、预警规则和服务目录逐项迁移，目标服务器固定网关继续作为最终安全边界
-  - 六类写操作已迁入独立执行器，原 Tool 变为参数协议与委托层；核心 Ruff 检查和 121 项后端测试已通过，仍保持未勾选，等用户运行时验收
+  - 当前登记的写操作已迁入独立执行器，原 Tool 变为参数协议与委托层；自动化检查通过，仍保持未勾选，等用户运行时验收
 - [ ] **阶段四：操作请求持久化与不可变审批绑定**
   - 保存规范化参数、参数摘要、风险、审批决议、执行状态和结果，审批只允许执行原始冻结请求
   - 增加独立审计查询能力，并处理过期审批和执行前状态复核
-  - 已新增 `operation_records` 状态机、15 分钟审批有效期、请求摘要绑定、执行前行锁和 `GET /operations` 审计接口；核心 Ruff 检查和 128 项后端测试已通过，仍保持未勾选，等用户运行时验收
+  - 已新增 `operation_records` 状态机、15 分钟审批有效期、不可变请求摘要绑定、执行前行锁和 `GET /operations` 审计接口；这里的“不可变”只指审批请求绑定，不代表审计存储不可篡改；自动化检查通过，仍保持未勾选，等用户运行时验收
 - [ ] **阶段五：按用户、环境和运行模式扩展策略**
   - 在统一策略入口支持用户角色、生产/测试环境、人工会话/无人值守任务和可配置自动放行规则
   - 高危不可逆操作保持拒绝或仅生成建议，不开放任意 Shell 执行
-  - 已接入服务端可信操作者身份、角色审批权限、环境分类、运行模式和非生产 medium 自动放行开关；critical 永久拒绝，未声明环境参数不能影响策略；核心 Ruff、135 项后端测试和前端生产构建已通过，仍保持未勾选，等用户运行时验收
+  - 已接入服务端可信操作者身份、角色审批权限、环境分类、运行模式和非生产 medium 自动放行开关；critical 永久拒绝，未声明环境参数不能影响策略；自动化检查通过，仍保持未勾选，等用户按真实审批角色和环境验收
 
 ## 前端导航与对话可靠性
 
@@ -249,7 +285,7 @@
 - [ ] **持久化每轮 Chat Run（方案 B）**：`chat_runs` 只记录一轮请求的状态、LangGraph thread 和错误，消息正文继续只存在 `messages`
   - `messages.run_id` 关联具体 Run；用户、Tool 调用、Tool 结果和最终回答逐步落库，失败 Run 的现场可从历史查看
   - 再次喂给 LLM 时只保留完整配对的 `tool_calls → tool results`；不完整片段仅供前端展示，避免历史触发协议 400
-  - 仍使用内存 checkpointer，后端重启会把遗留运行标为失败而不能续批；代码检查后保持未勾选，等真实对话完成成功、失败和审批场景验收
+  - PostgreSQL checkpoint 可恢复审计完全匹配的等待审批断点；执行中的 Run 和 SSE 事件缓冲仍不能跨后端重启恢复。代码检查后保持未勾选，等真实对话完成成功、失败、重连和审批重启场景验收
 - [ ] **AI 消息 Markdown 渲染与横向溢出治理**：使用成熟解析器渲染标题、列表、链接、表格和代码；长 URL、代码块、表格不能撑破消息白框或产生页面横向滚动条
   - 已封装 `MarkdownContent.vue`，对话回复和事件中心 AI 诊断复用同一套 markdown-it + DOMPurify 安全渲染；消息项禁止 flex 纵向压缩，外层列表独立纵向滚动；代码与前端构建完成后仍保持未勾选，等用户运行时验收
 
@@ -325,11 +361,12 @@
   - 模型绑定前从原始 Pydantic Schema 构造最终出站定义，保留 LangChain 子模型裁剪会丢失的正则、示例和 `additionalProperties=false`，同时隐藏后端解析器注入的哈希与运行时身份
   - 契约测试逐个检查已注册工具的最终出站 Schema；代码与自动化检查完成后保持未勾选，等用户真实对话验证错误参数会自动纠正
 
-- [X] **扩充运维工具 + 给工具调用循环加步数上限**
+- [x] **扩充运维调查工具**
   - 照 `query_servers`（`backend/app/agents/tools/servers.py`）的样子，再写几个运维领域工具（日志检索、告警查询、白名单命令执行等）
-  - `call_model ↔ call_tools` 这个循环现在没有步数上限——`reflect` 重试有 `MAX_ATTEMPTS` 兜底，但工具调用这一圈没有，模型如果一直坚持调工具会死循环，要补一个上限
   - 后续更名为只读的 `run_diagnostic_command`：从占位模拟升级成真实 asyncssh 执行，本地用 Docker 沙箱端到端验证过（对话触发、AI 正确执行命令并返回真实数据）
-- [X] **前端展示工具调用过程**
+- [ ] **给当前单 Agent 的工具调用循环增加独立预算**
+  - 当前只有较高的 LangGraph 递归保护，没有面向单轮调查的明确工具调用预算；需在不截断合理多步调查的前提下补充上限和失败提示
+- [x] **前端展示工具调用过程**
   - 给 `chat_service.py` 的 SSE 事件流加 `tool_start`/`tool_end`（或类似）事件类型
   - 前端渲染成"正在调用 XXX 工具"这类过程提示，不再是纯黑盒等最终回答
 - [ ] **统一 Ops Agent（取代早期多 Agent 方案）**
@@ -341,26 +378,28 @@
 
 ## 生产级演进路线（方向一~五）
 
-背景：agent 骨架（ReAct + Reflexion）已成型，但仍偏 demo，两个根因——① 数据半 mock（`search_logs` 全假、`query_alerts` 是种子数据、无 metrics 工具）；② 纯被动（只有"用户问→答"，没有"告警来→自动诊断"的事件驱动闭环）。这五个方向把它往生产级推。设计取舍反复参考 [aiops-feature-survey.md](aiops-feature-survey.md)（Keep/OpenSRE 源码级调研）。
+> **历史背景**：本节保留项目从聊天 Demo 向真实运维闭环演进时的起点。当时日志和告警仍是模拟数据、尚无 metrics 和事件驱动；当前状态应以下方勾选记录、根目录 README 与代码为准。
+
+这五个方向记录当时的演进思路。设计取舍反复参考 [aiops-feature-survey.md](aiops-feature-survey.md)（Keep/OpenSRE 源码级调研）。
 
 **数据栈已选定**：PLG 组合 —— Prometheus（Metrics）+ Loki（日志）+ Grafana（仪表盘）+ Alertmanager（告警分发）。云原生轻量全家桶，方向一按这个接。
 
 **建议顺序**（仅建议，节奏自己把控）：方向一先切一小片（Prometheus metrics 工具 + 时间窗/实体关联原语）→ 方向二（告警自动诊断）；**只要打算加写操作工具，方向三的审计 + 真审批必须先落地**。
 
-### 方向一：真实数据接入 + 三支柱关联（PLG）
+### 方向一：真实数据接入 + 指标/日志/告警关联（PLG）
 
 把 mock 换成真实数据源，并建立"关联"能力——这是 AI SRE 和 chatbot 的分水岭。可对照调研过的 HolmesGPT 看它怎么组织关联。
 
-- [x] **接 Prometheus**：新增 metrics 查询工具（PromQL 查 CPU/内存/延迟等时序）——当前 metrics 能力为零，最该补的洞
-  - `query_metrics` 工具（cpu/memory/disk/up 模板 + PromQL 逃生口），数据源用 docker-compose 起的 Prometheus + node_exporter；踩过一个坑：本地 Prometheus 请求被环境 `HTTP_PROXY` 劫持，共享 httpx client 设 `trust_env=False` 解决
+- [x] **接 Prometheus**：提供 metrics 查询工具，支持常用指标模板和 PromQL
+  - `query_metrics` 工具（cpu/memory/disk/up 模板 + PromQL 逃生口），数据源使用本地 Prometheus 和纳管服务器指标目标；踩过一个坑：本地 Prometheus 请求被环境 `HTTP_PROXY` 劫持，共享 httpx client 设 `trust_env=False` 解决
 - [x] **接 Loki**：把 `search_logs`（`backend/app/agents/tools/logs.py`）从 mock 换成真实日志查询（LogQL）
-  - 数据源用 docker-compose 起的 Loki + Promtail（采集容器日志）+ fake-app（造带级别的假日志）；顺带加了 `list_log_services` / `list_metric_instances` 两个发现工具，让 agent 能先查"有哪些服务/实例"再查具体数据
+  - 日志数据源使用本地 Loki 与纳管服务器 Alloy；顺带加了 `list_log_services` / `list_metric_instances` 两个发现工具，让 agent 能先查"有哪些服务/实例"再查具体数据
 - [x] **接 Alertmanager**：`query_alerts`（`backend/app/agents/tools/alerts.py`）从种子数据换成查真实 firing 告警（先只读）
-  - 数据源用 docker-compose 起的 Alertmanager + AIOps 托管的 Prometheus 告警规则；`query_alerts` 查 `/api/v2/alerts`，可按 severity/instance 过滤。`alert_events` 表 + 种子脚本按选型 C.4 保留不动，留给方向二告警生命周期状态机
+  - 数据源使用 Compose 中的 Alertmanager 与 AIOps 托管的 Prometheus 告警规则；`query_alerts` 查 `/api/v2/alerts`，可按 severity/instance 过滤；webhook、事件和 occurrence 已在方向二落地
 - [x] **Grafana 联动**（可选）：agent 能引用/生成 Grafana 面板链接，把结论落到统一仪表盘
-  - `grafana_explore_link` 工具：按查询 + 时间窗拼 Grafana Explore 链接（纯字符串，不访问网络），支持 metrics（PromQL）/ logs（LogQL）/ alerts（Prometheus 的 ALERTS 指标）三种。docker-compose 加 grafana + 数据源 provisioning（固定 uid）。后续引入前端 md 渲染即可让链接可点击
-- [x] **关联原语**：实体模型（服务→实例）+ 时间窗对齐——给定告警/时间点，自动拉同一服务、同一窗口的 metrics + logs（+ traces）一起看
-  - `correlate_incident` 工具：给定业务服务器名 + 时刻，`asyncio.gather` 并发拉齐指标(range)+日志+告警，同一时间窗对齐成横切面报告。实体映射优先使用规范化服务实例，旧 `servers.monitor_labels` 作为兼容回退。经对抗式审查加固（异常兜底、window 校验、自适应 step）。traces 暂缺（单机 PLG 无 Tempo）
+  - `grafana_explore_link` 工具：按查询 + 时间窗拼 Grafana Explore 链接（纯字符串，不访问网络），支持 metrics（PromQL）/ logs（LogQL）/ alerts（Prometheus 的 ALERTS 指标）三种；Compose 提供 Grafana 和固定 uid 的数据源 provisioning，前端 Markdown 与工具卡均可打开链接
+- [x] **关联原语**：实体模型（服务→实例）+ 时间窗对齐——给定告警/时间点，自动拉同一服务、同一窗口的 metrics、logs 和 alerts 一起看
+  - `correlate_incident` 工具：给定业务服务器名 + 时刻，`asyncio.gather` 并发拉齐指标(range)、日志和告警，同一时间窗对齐成横切面报告。实体映射优先使用规范化服务实例，旧 `servers.monitor_labels` 作为兼容回退。经对抗式审查加固（异常兜底、window 校验、自适应 step）；当前没有 Tempo 或 traces 数据源。
 - [ ] **读工具 / 写工具边界划分**（survey 启发 #2）：把纯读诊断工具和有破坏力的写工具分成两类抽象，别混在一起
   - 已新增集中式 `catalog.py`，读工具与写工具分开注册且禁止重叠；原 SSH 白名单命令明确改为只读诊断工具，不再触发审批
   - 已新增真实写工具 `start_service` / `stop_service` / `restart_service`：人工审批 + AIOps/目标服务器双端 systemd 白名单，worker 不绑定写工具，执行节点也会拒绝缺少审批决议的调用
@@ -372,13 +411,13 @@ CLAUDE.md 项目定位里"值班/告警诊断"的核心闭环。
 
 - [x] **告警 ingestion 层**：webhook 端点接收 Alertmanager 推送 → 落 `alert_events` 表
   - `POST /alerts/webhook` 接收 Alertmanager 推送，按 fingerprint upsert 落库（firing/resolved 更新同一行，天然去重）；`GET /alerts` 列出。`alert_events` 表重塑成真实告警结构（fingerprint/alertname/severity/status/summary/labels/instance/starts_at/ends_at）。alertmanager.yml 的 receiver 从 null 改成 webhook（host.docker.internal:8010）。旧 mock 结构 + seed_alerts.py 废弃
-- [x] **后台任务 runner**：当前是纯请求-响应，需要 background/scheduled 能力（告警触发的诊断、定时值班报告都要它）
-  - 用 arq + Redis 搭任务队列：webhook 落库时把「新触发」的告警入队，独立的 arq worker 进程（`app.worker.WorkerSettings`）消费。以后定时值班报告也挂这个 runner
-- [x] **告警自动 triage**：告警落库后自动触发 agent 调查（拉 metrics/logs）→ 诊断结果推 Slack/IM
-  - worker 的 `triage_incident` 复用统一 Ops Agent 并硬关闭写工具：载入事件 → 按 `service_instances.metric_instance` 解析服务与服务器（旧 monitor_labels 回退）→ `investigate` 调查 → 诊断回填事件。**推 Slack/IM 这步先缓**（诊断已落库、`GET /incidents` 可查，通知渠道以后单接）
+- [x] **事件型后台任务 runner**：使用 arq + Redis 承载告警触发的后台诊断
+  - webhook 落库时把新触发的告警入队，独立的 arq worker 进程（`app.worker.WorkerSettings`）消费；当前尚未实现定时值班报告或 scheduled job
+- [x] **告警自动 triage**：告警落库后自动触发 Agent 调查并回填事件诊断
+  - worker 的 `triage_incident` 复用统一 Ops Agent 并硬关闭写工具：载入事件 → 按 `service_instances.metric_instance` 解析服务与服务器（旧 monitor_labels 回退）→ `investigate` 调查 → 诊断回填事件；通知渠道仍属于未完成的“值班报告与通知”任务
 - [x] **去重/关联层用规则引擎**（CEL 或等价），不用 LLM——survey 启发 #1，Keep 最成熟的实现就是纯规则，快/可解释/好测；这是 agent 之前的确定性预处理
   - `app/services/correlation.py`：用 CEL（celpy）写匹配条件 + group_by 归组，算出 `group_key`（同 key = 同一事件）。当前规则 by-instance：带 instance 的 critical/warning 告警按 `[instance, alertname]` 归组（同机同种告警去重、不同种各成事件）。ingest 时算 group_key 落库，**只有事件的第一条 firing 才入队诊断**，同事件其余静默归入——治好「同台机多条告警重复诊断」。dedup（按 fingerprint）本就有
-- [x] **事件生命周期状态机**：`alert_events` 从平铺一条记录升级成 `FIRING/ACK/RESOLVED` 状态机（谁认领、后续如何）——survey 模块 6 / 启发 #6
+- [x] **事件生命周期状态机**：新增 `incidents` 的 `firing/acknowledged/resolved` 状态机，原始告警继续保存在 `alert_events`
   - 新建 `incidents` 一等实体（status firing/acknowledged/resolved、acked_by/acked_at、resolved_at、代表信息、diagnosis），`alert_events` 挂 `incident_id`（诊断从告警搬到事件级）。ingest 按 group_key 创建/关联活跃事件，告警全 resolved 时事件**自动 resolve**；triage 改成诊断事件（`triage_incident`）。API：`GET /incidents`、`POST /{id}/ack`、`POST /{id}/resolve`。经对抗式审查（并发建重复事件的低概率竞态已加 TODO 注释标注）
 - [ ] **事件中心前端**：列表展示事件、状态筛选、诊断详情、认领与人工解决
   - 前端代码与静态检查完成后仍保持未勾选，等用户用运行中的前后端和真实事件完成验收再勾选
@@ -387,7 +426,8 @@ CLAUDE.md 项目定位里"值班/告警诊断"的核心闭环。
 
 对照 survey 模块 5（调研最大的收获：Keep/OpenSRE 的"审批"都是假的、字段声明了没接线）。**只要打算加写操作工具，这一块必须先落地。**
 
-- [ ] **审计日志**：每次工具调用/命令记录 谁/何时/哪台/结果，不可篡改——`run_diagnostic_command` 和服务控制写工具现在真连 SSH 执行却零审计，这是生产红线
+- [x] **结构化操作审计**：`operation_records` 记录操作者、时间、目标、冻结参数、状态、结果、退出码和超时，并提供查询 API
+- [ ] **不可篡改审计存储**：当前审计位于普通 PostgreSQL 表，尚未接入追加写、WORM 或外部审计系统，不能宣称不可篡改
 - [ ] **纳管服务器文件访问**：按服务实例登记可读目录/可写文件；通过 root 固定网关提供文件查找、脱敏读取、差异预览和高风险受控写入，禁止任意 Shell 与敏感凭据原文进入 Agent
   - 普通文本保留完整 diff、哈希锁、备份和原子替换；dotenv/JSON 增加只改已有非敏感标量的结构化补丁，真实密钥留在目标机，YAML 等固定保格式解析器就绪后再增加驱动
   - 文件编辑与服务控制保持解耦：文件网关不执行配置校验、reload、重启或部署；如需生效，由 Agent 在修改成功后调用独立能力并重新审批写操作
@@ -399,9 +439,9 @@ CLAUDE.md 项目定位里"值班/告警诊断"的核心闭环。
 
 ### 方向四：agent 本身的工程化
 
-- [ ] **可观测性**：tracing（LangSmith 之类）+ token 成本/延迟/工具成功率（当前只有 `print` 日志）
-- [ ] **工具调用超时/熔断**：一个卡住的 SSH 不该把整个 agent 拖死
-- [ ] **评估集（eval harness）**：一组运维场景的离线测试，改 prompt/换模型时能量化回归（当前验证全靠手跑）
+- [ ] **Agent 可观测性**：已有 Chat Run 轨迹和结构化操作审计，但尚无模型 tracing、token 成本、端到端延迟和工具成功率指标
+- [ ] **统一超时与熔断**：HTTP、SSH、root-read 和 worker 已有局部 timeout，但尚无统一 deadline、失败率开路与恢复策略
+- [ ] **评估集（eval harness）**：已有确定性的 Agent/工具协议单元测试，仍缺面向真实模型输出的场景集、量化评分和回归基线
 - [ ] **迁移工具 + 集成/eval 测试**：多环境同步时把 Alembic（或等价）补回来；在现有后端单元测试基础上补真实数据源集成测试和 Agent eval
 
 ### 方向五：知识 / RAG（不急）

@@ -5,9 +5,8 @@ from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# .env 固定在 backend/ 目录下。不能写成相对路径 ".env"——它是相对“进程启动时的工作目录”解析的，
-# 而不是相对这个文件。我们的 uvicorn 是从仓库根目录用 `uv run --project backend ...` 启动的，
-# CWD 是仓库根目录，写相对路径会找不到 backend/.env（之前 DEEPSEEK_API_KEY 一直读不到就是这个原因）。
+# .env 固定在 backend/ 目录下。不能写成相对路径 ".env"——它会相对进程工作目录解析，
+# 而项目既支持从 backend/ 启动，也支持在根目录使用 `uv run --project backend ...`。
 ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env"
 # 仓库根目录：从这个文件（backend/app/core/config.py）往上数 4 层。
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -16,7 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding="utf-8")
 
-    database_url: str = "postgresql+psycopg://leishaohui@localhost:5432/aiops"
+    database_url: str = "postgresql+psycopg://localhost:5432/aiops"
     database_echo: bool = False
     database_pool_size: int = 10
     database_max_overflow: int = 20

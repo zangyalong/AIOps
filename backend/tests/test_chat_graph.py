@@ -557,7 +557,7 @@ class OpsAgentGraphTest(unittest.IsolatedAsyncioTestCase):
         finish.assert_awaited_once()
 
     async def test_approved_file_grant_returns_to_preview_and_finishes(self) -> None:
-        path = "/home/OnlineAPI/deploy/docker-compose.yml"
+        path = "/home/example-app/deploy/docker-compose.yml"
         chat_graph._ops_llm = _fake_ops_factory(
             [
                 AIMessage(
@@ -567,12 +567,12 @@ class OpsAgentGraphTest(unittest.IsolatedAsyncioTestCase):
                             "name": "grant_server_file_write_access",
                             "args": {
                                 "server_name": "web-01",
-                                "service_name": "sub2api",
+                                "service_name": "example-api",
                                 "environment": "prod",
-                                "instance_name": "sub2api",
+                                "instance_name": "example-api",
                                 "path": path,
                             },
-                            "id": "grant-sub2api-compose",
+                            "id": "grant-example-api-compose",
                             "type": "tool_call",
                         }
                     ],
@@ -591,7 +591,7 @@ class OpsAgentGraphTest(unittest.IsolatedAsyncioTestCase):
                                     "new_content": "services: {}\n",
                                 },
                             },
-                            "id": "preview-sub2api-compose",
+                            "id": "preview-example-api-compose",
                             "type": "tool_call",
                         }
                     ],
@@ -640,7 +640,7 @@ class OpsAgentGraphTest(unittest.IsolatedAsyncioTestCase):
                 Command(
                     resume={
                         "decisions": {
-                            "grant-sub2api-compose": {
+                            "grant-example-api-compose": {
                                 "approved": True,
                                 "approver_id": "approver-1",
                                 "approver_role": "admin",
@@ -651,7 +651,7 @@ class OpsAgentGraphTest(unittest.IsolatedAsyncioTestCase):
                 config=config,
             )
 
-        self.assertEqual(_file_access_grants, [("web-01", "sub2api", path)])
+        self.assertEqual(_file_access_grants, [("web-01", "example-api", path)])
         self.assertEqual(
             result["messages"][-1].content,
             "写授权已生效，文件修改预览已经生成。",
@@ -659,7 +659,7 @@ class OpsAgentGraphTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(
             any(
                 isinstance(message, ToolMessage)
-                and message.tool_call_id == "preview-sub2api-compose"
+                and message.tool_call_id == "preview-example-api-compose"
                 for message in result["messages"]
             )
         )

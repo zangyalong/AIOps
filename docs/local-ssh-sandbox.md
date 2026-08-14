@@ -129,11 +129,12 @@ systemd 服务控制；这两项应在专门、可重建的 Linux 测试机上�
 AIOps 与目标服务器两端都检查精确白名单。例如在专用测试机上允许控制 nginx：
 
 ```dotenv
-SSH_SERVICE_CONTROL_ALLOWLIST=nginx.service
+SSH_SERVICE_CONTROL_ALLOWLIST=systemd:nginx.service
 ```
 
-目标测试账号还必须能非交互执行 `sudo -n -- systemctl restart -- nginx`。不要在生产服务器上直接
-做首次验收；当前项目尚未完成鉴权、RBAC、主机指纹校验和不可篡改审计日志。
+专用测试机必须先安装 `scripts/target-server/` 中由 root 持有的网关，并让目标测试账号只能非交互执行
+`sudo -n -- /usr/local/sbin/aiops-service-control restart systemd nginx.service`。不要直接授权
+`systemctl`，也不要在生产服务器上做首次验收；当前项目尚未完成鉴权、RBAC、主机指纹校验和不可篡改审计日志。
 
 ## 排错
 
@@ -148,7 +149,7 @@ SSH_SERVICE_CONTROL_ALLOWLIST=nginx.service
 
 ## 关于安全的两个提醒
 
-- `app/agents/tools/commands.py` 里连接时传的是 `known_hosts=None`，也就是不校验目标主机
+- 当前后端所有 SSH 连接都使用 `known_hosts=None`，也就是不校验目标主机
   的身份——这对一次性的本地测试沙箱没问题（流量根本没出这台 Mac），但**绝对不能带着这个设置去连真实/生产服务器**，那样谁都能冒充目标主机。真要接真实服务器，要么提前把
   host key 指纹加进 known_hosts，要么显式传一个真实的 `known_hosts` 路径。
 - 模型不会直接提交 `_ALLOWED_COMMANDS` 中的内部运行时命令；它只提交结构化的调查领域、目标和

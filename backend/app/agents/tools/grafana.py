@@ -45,7 +45,7 @@ async def grafana_explore_link(
     - kind："metrics"（看指标，走 Prometheus）| "logs"（看日志，走 Loki）| "alerts"（看告警时间线）
     - query：
         - kind=metrics：传 PromQL；也可直接传 cpu / memory / disk / up，会自动换成对应 PromQL。
-        - kind=logs：传 LogQL（如 {service_name="aiops-fake-app"}）；也可只传服务名会自动包成选择器；留空看所有服务。
+        - kind=logs：传 LogQL（如 {service_name="orders-api"}）；也可只传服务名会自动包成选择器；留空看所有服务。
         - kind=alerts：留空看所有正在触发的告警；也可传 critical / warning / info 只看某个级别。
     - minutes：图表时间窗，最近多少分钟，默认 60。
     - instance：仅 kind=metrics 使用；非空时给内置指标模板添加准确 instance 过滤。

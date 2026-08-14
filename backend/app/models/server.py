@@ -29,9 +29,8 @@ class Server(Base, UUIDMixin, TimestampMixin):
     )
 
     # 这台服务器在监控系统里对应的标签，供关联工具（correlate_incident）把业务名翻译成监控标签用，
-    # 形如 {"instance": "node-exporter:9100", "service": "aiops-fake-app"}：
+    # 形如 {"instance": "192.0.2.10:9100", "service": "orders-api"}：
     # instance 用来查 Prometheus 指标 / Alertmanager 告警，service 用来查 Loki 日志。可空。
-    # 注：create_all 不会给已有表加列，新增这列要手动 ALTER（见 scripts/seed_monitor_labels.py）。
     monitor_labels: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     # 目标服务器首次部署的非敏感参数。数据库 exporter 密码不会写入这里，生成安装包时

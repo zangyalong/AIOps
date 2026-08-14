@@ -39,9 +39,15 @@ async def main() -> None:
             )
         )
         # 3. 诊断字段搬到 incidents 了，从 alert_events 删掉
-        await conn.execute(text("ALTER TABLE alert_events DROP COLUMN IF EXISTS diagnosis"))
-        await conn.execute(text("ALTER TABLE alert_events DROP COLUMN IF EXISTS triaged_at"))
-    print("done：incidents 表已建；alert_events 加 incident_id、删 diagnosis/triaged_at")
+        await conn.execute(
+            text("ALTER TABLE alert_events DROP COLUMN IF EXISTS diagnosis")
+        )
+        await conn.execute(
+            text("ALTER TABLE alert_events DROP COLUMN IF EXISTS triaged_at")
+        )
+    print(
+        "done：incidents 表已建；alert_events 加 incident_id、删 diagnosis/triaged_at"
+    )
 
 
 if __name__ == "__main__":

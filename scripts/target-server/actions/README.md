@@ -13,7 +13,7 @@ Docker Compose 用 `.env` 插值的配置变化不能通过普通 `docker restar
 生效。独立的 `recreate_compose_service` 高风险工具会调用：
 
 ```text
-aiops-compose-recreate sub2api
+aiops-compose-recreate example-api
 ```
 
 网关不接受 Compose 路径、project、service 或附加 flags；它只从已授权容器的
@@ -47,7 +47,7 @@ sudoers 只授权三个 root 所有的固定包装器，不开放任意 `systemc
 初始白名单由目标服务器 `deploy.conf` 配置：
 
 ```ini
-SERVICE_CONTROL_ALLOWLIST=systemd:bt.service,systemd:nginx.service,docker:orders-api
+SERVICE_CONTROL_ALLOWLIST=systemd:example-app.service,systemd:nginx.service,docker:orders-api
 ```
 
 兼容旧的裸 `.service` 配置并自动规范为 `systemd:` 条目。留空表示拒绝全部服务控制。服务目录

@@ -43,10 +43,22 @@ AIOps 的 Vue 3 前端，用于统一 Ops Agent 运维对话、事件处理、�
 
 ### 服务器
 
-- 查看和新增纳管服务器
-- 配置 SSH 用户、端口和私钥文件名
+- 查看、新增、编辑和删除纳管服务器
+- 配置 SSH 用户、端口、私钥文件名和目标服务器部署参数
 - 测试 SSH 连通性
-- 删除服务器记录
+- 生成首次安装包，或通过受控入口应用已经保存的目标服务器配置
+
+### Memory
+
+- 按全局或服务器作用域查看、搜索长期记忆
+- 手动添加经过后端安全校验的稳定信息
+- 删除单条记忆；Agent 也会从成功对话中提炼可复用信息
+
+### Skills
+
+- 搜索并查看后端实际安装的运维 Skill
+- 在详情弹窗中阅读完整 Markdown 方法说明
+- 只展示名称、描述和正文，不暴露内部路径或工具绑定
 
 ## 技术栈
 
@@ -209,17 +221,12 @@ npm run preview
 
 ```text
 src/
-├── api/          # chat、conversations、incidents、alertRules、services、servers API 客户端
-├── components/   # 导航和会话列表等复用组件
-│   └── MarkdownContent.vue # AI Markdown 安全渲染与防横向溢出样式
-├── router/       # /chat、/chat/:conversationId、/incidents、/alert-rules、/services、/servers
+├── api/          # 各业务域的后端 API / SSE 客户端
+├── components/   # 对话、审批、差异预览、弹窗和导航等复用组件
+├── composables/  # 跨组件但不需要全局 store 的组合式状态
+├── router/       # 对话、事件、预警、服务、服务器、Memory 和 Skills 路由
 ├── types/        # 与后端 schema 对应的 TypeScript 类型
-├── views/
-│   ├── ChatView.vue
-│   ├── AlertRulesView.vue
-│   ├── IncidentsView.vue
-│   ├── ServicesView.vue
-│   └── ServersView.vue
+├── views/        # 页面级视图
 ├── App.vue       # 应用布局和 RouterView 出口
 ├── main.ts       # Vue 入口
 └── style.css     # “日光控制室”设计令牌、全局控件与可访问性基础样式
@@ -273,5 +280,5 @@ POST /api/chat/resume
 
 - 没有登录、用户身份和前端 RBAC。
 - 事件认领人暂时由用户自由输入，后续应由登录身份提供。
-- 运行中的事件重放依赖当前 FastAPI 进程；后端重启后无法恢复尚未完成的 Chat Run。
+- 正在执行工具或生成回答的 Chat Run 仍依赖当前 FastAPI 进程，后端重启后会失败关闭；只有尚未执行、正等待人工审批且 checkpoint/审计完全匹配的断点可以恢复。
 - 生产部署需要自行配置静态文件托管和 `/api` 反向代理。

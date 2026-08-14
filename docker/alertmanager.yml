@@ -8,7 +8,7 @@
 
 route:
   receiver: "aiops-backend"
-  # 同类告警攒一攒再处理的窗口，本地演示给小一点，让告警尽快推过来。
+  # 同类告警攒一攒再处理的窗口，本地开发配置给小一点，让告警尽快推过来。
   group_wait: 5s
   group_interval: 10s
   repeat_interval: 1h

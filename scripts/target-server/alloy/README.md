@@ -141,7 +141,7 @@ sudo journalctl -u alloy -n 100 --no-pager
 中央 Loki 可检查：
 
 ```logql
-{server="web01", service="pixel-forge-backend", environment="prod"}
+{server="web01", service="example-api", environment="prod"}
 ```
 
 - 提示没有服务映射：先完成服务发现和目录注册。

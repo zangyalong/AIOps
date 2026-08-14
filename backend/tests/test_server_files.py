@@ -255,7 +255,7 @@ class ServerFileToolValidationTest(unittest.IsolatedAsyncioTestCase):
             result = await server_files.preview_server_config_patch.ainvoke(
                 {
                     "server_name": "web-01",
-                    "path": "/sub2api-deploy/.env",
+                    "path": "/example-api-deploy/.env",
                     "config_format": "dotenv",
                     "selector": "SERVER_PORT",
                     "value": "8081",
@@ -272,7 +272,7 @@ class ServerFileToolValidationTest(unittest.IsolatedAsyncioTestCase):
         run_gateway.assert_awaited_once_with(
             server,
             "config-preview",
-            "/sub2api-deploy/.env",
+            "/example-api-deploy/.env",
             "dotenv",
             "SERVER_PORT",
             '"8081"',
@@ -282,7 +282,7 @@ class ServerFileToolValidationTest(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         server = SimpleNamespace(name="web-01")
-        selector = "/services/sub2api/ports/0"
+        selector = "/services/example-api/ports/0"
         before = "${SERVER_PORT:-8080}:8080"
         after = "${SERVER_PORT:-8081}:8080"
         gateway_payload = json.dumps(
@@ -313,7 +313,7 @@ class ServerFileToolValidationTest(unittest.IsolatedAsyncioTestCase):
             result = await server_files.preview_server_config_patch.ainvoke(
                 {
                     "server_name": "web-01",
-                    "path": "/home/OnlineAPI/deploy/docker-compose.yml",
+                    "path": "/home/example-app/deploy/docker-compose.yml",
                     "config_format": "yaml",
                     "selector": selector,
                     "value": after,
@@ -328,7 +328,7 @@ class ServerFileToolValidationTest(unittest.IsolatedAsyncioTestCase):
         run_gateway.assert_awaited_once_with(
             server,
             "config-preview",
-            "/home/OnlineAPI/deploy/docker-compose.yml",
+            "/home/example-app/deploy/docker-compose.yml",
             "yaml",
             selector,
             json.dumps(after),
@@ -339,7 +339,7 @@ class ServerFileToolValidationTest(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         server = SimpleNamespace(name="web-01")
         preview = server_files.ConfigPatchPreview(
-            path="/sub2api-deploy/.env",
+            path="/example-api-deploy/.env",
             config_format="dotenv",
             selector="SERVER_PORT",
             line=74,
@@ -404,9 +404,9 @@ class ServerFileToolValidationTest(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         server = SimpleNamespace(name="web-01")
         preview = server_files.ConfigPatchPreview(
-            path="/home/OnlineAPI/deploy/docker-compose.yml",
+            path="/home/example-app/deploy/docker-compose.yml",
             config_format="yaml",
-            selector="/services/sub2api/ports/0",
+            selector="/services/example-api/ports/0",
             line=5,
             before="${SERVER_PORT:-8080}:8080",
             after="${SERVER_PORT:-8081}:8080",
@@ -414,7 +414,7 @@ class ServerFileToolValidationTest(unittest.IsolatedAsyncioTestCase):
             output_sha256="b" * 64,
             preview_hash="c" * 64,
             preview_diff=(
-                "@@ yaml /services/sub2api/ports/0 @@\n"
+                "@@ yaml /services/example-api/ports/0 @@\n"
                 '-"${SERVER_PORT:-8080}:8080"\n'
                 '+"${SERVER_PORT:-8081}:8080"'
             ),
@@ -476,7 +476,7 @@ class ServerFileToolValidationTest(unittest.IsolatedAsyncioTestCase):
         result = await server_files.preview_server_config_patch.ainvoke(
             {
                 "server_name": "web-01",
-                "path": "/sub2api-deploy/.env",
+                "path": "/example-api-deploy/.env",
                 "config_format": "dotenv",
                 "selector": "POSTGRES_PASSWORD",
                 "value": "new-secret",

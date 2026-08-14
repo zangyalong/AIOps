@@ -3,6 +3,13 @@ __pycache__/
 *.pyc
 .venv/
 backend/.venv/
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 
 # Node
 node_modules/
@@ -11,10 +18,26 @@ frontend/dist/
 # Prometheus 规则由 AIOps 根据数据库自动生成，不是人工配置源
 /docker/prometheus-rules/managed_alert_rules.yml
 
+# Prometheus 真实抓取目标属于环境配置，可能包含公网 IP、主机名和业务标识，不进入 Git。
+/docker/prometheus-targets/*
+!/docker/prometheus-targets/README.md
+!/docker/prometheus-targets/*.yml.example
+
 # 环境变量/密钥
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+id_ecdsa
+id_dsa
+
+# 日志
+*.log
 
 # SSH 私钥（本地测试沙箱用），只保留说明文件，不提交任何密钥内容
 /ssh/*

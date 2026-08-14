@@ -92,7 +92,7 @@ class ConfigPatchHelperTest(unittest.TestCase):
             output = Path(directory) / "updated"
             content = (
                 "services:\n"
-                "  sub2api:\n"
+                "  example-api:\n"
                 "    # 只修改宿主机端口，容器端口保持 8080\n"
                 "    ports:\n"
                 '      - "${SERVER_PORT:-8080}:8080"\n'
@@ -106,7 +106,7 @@ class ConfigPatchHelperTest(unittest.TestCase):
                 "preview",
                 str(source),
                 "yaml",
-                "/services/sub2api/ports/0",
+                "/services/example-api/ports/0",
                 '"${SERVER_PORT:-8081}:8080"',
             )
             applied = self._run(
@@ -114,7 +114,7 @@ class ConfigPatchHelperTest(unittest.TestCase):
                 str(source),
                 str(output),
                 "yaml",
-                "/services/sub2api/ports/0",
+                "/services/example-api/ports/0",
                 '"${SERVER_PORT:-8081}:8080"',
             )
 

@@ -2,7 +2,7 @@
 
 AIOps 的 FastAPI 后端，负责业务 API、LangGraph Ops Agent 工作流、工具调用、告警接入和后台自动诊断。
 
-当前后端已经接入 PostgreSQL、Prometheus、Loki、Alertmanager、Grafana、Redis/arq 和受控 SSH 工具，不再是只有模拟数据的聊天 Demo。
+当前后端已经接入 PostgreSQL、Prometheus、Loki、Alertmanager、Grafana、Redis/arq 和受控 SSH 工具，覆盖持久化对话、证据调查、事件诊断与审批受控变更。
 
 ## 当前能力
 
@@ -52,7 +52,7 @@ Agent 对外只认识“调查”和“变更”。`investigate` 是统一运维
 - PostgreSQL 16+
 - DeepSeek API Key
 - Redis：告警自动诊断队列需要
-- Docker Desktop：本地 PLG 数据栈和 SSH 测试沙箱需要
+- Docker Engine + Compose plugin，或 Docker Desktop：本地 PLG 数据栈和 SSH 测试沙箱需要
 
 PostgreSQL 当前不在 `docker-compose.yml` 中，项目默认连接宿主机上的 `aiops` 数据库。
 
@@ -93,6 +93,13 @@ cd backend
 uv run python scripts/migrate_chat_runs.py
 ```
 
+更早版本的 `servers` 表如果还没有 `monitor_labels` 兼容字段，运行：
+
+```bash
+cd backend
+uv run python scripts/migrate_server_monitor_labels.py
+```
+
 已经运行过基础 Memory 版本的开发库，还需要增加全局/服务器作用域、Chat Run 服务器绑定和
 会话滚动摘要字段：
 
@@ -101,7 +108,7 @@ cd backend
 uv run python scripts/migrate_memory_scopes.py
 ```
 
-两个脚本都使用幂等 DDL，可以重复执行。全新数据库不需要手动迁移，启动时会直接创建完整表结构。
+这些脚本都使用幂等 DDL，可以重复执行。全新数据库不需要手动迁移，启动时会直接创建完整表结构。
 
 LangGraph checkpoint 使用同一个 PostgreSQL 数据库。后端重启后会恢复仍在等待人工确认、且
 checkpoint 与 `operation_records` 完整匹配的审批断点；执行中的 Run 和操作结果未知，仍失败关闭并
@@ -169,15 +176,14 @@ docker compose ps
 它会启动：
 
 - Prometheus `:9090`
-- node_exporter `:9100`
 - Loki `:3100`
-- Promtail
-- fake-app 测试日志源
 - Alertmanager `:9093`
 - Grafana `:3000`
 - Redis `:6379`
 
-这套 Compose 不包含 PostgreSQL、FastAPI 和 Vue 前端。
+这套 Compose 不包含 PostgreSQL、FastAPI 和 Vue 前端。新 clone 默认只有 Prometheus 自身指标；
+按 [`docker/prometheus-targets/README.md`](../docker/prometheus-targets/README.md) 复制示例后，真实指标目标才会从本机 Git 忽略的
+`managed-targets.yml` 读取。日志由纳管服务器 Alloy 或其他外部采集端写入 Loki。
 
 ## 启动后端与 Worker
 
@@ -308,7 +314,7 @@ tests/             # 不依赖外部服务的自动化测试
 
 - `create_alert_rule` 是中风险写工具：人工审批后复用预警规则页面相同的字段校验、PromQL 校验、数据库写入和 Prometheus 热重载流程。
 - 工具执行节点会再次校验审批决议和高风险二次确认，不能只靠模型是否正确路由；后台 worker 设置 `allow_write_tools=False`，从模型绑定和执行节点两层禁止写工具。
-- 本地 SSH 沙箱当前使用 `known_hosts=None`，只适用于一次性本地容器，不能直接用于生产服务器。
+- 当前所有 SSH 连接都使用 `known_hosts=None`，尚未校验目标主机指纹；这只适用于本地或受控测试环境，不能直接用于生产服务器。
 - 当前仍缺少 API 鉴权、RBAC、正式密钥管理和不可篡改审计日志；服务控制工具只用于受控开发环境验证，不应直接暴露到生产网络。
 - Chat Run 和事件重放目前保存在单个 FastAPI 进程内：浏览器断开不影响生成，但后端重启会中断运行；多进程或生产部署需要改用 Redis/持久化任务状态。
 

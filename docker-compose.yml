@@ -1,16 +1,15 @@
-# 方向一「真实数据接入」的本地数据源，按任务逐步加进来（最小起步策略）。
-# - 任务1（Prometheus 指标）：prometheus + node-exporter
-# - 任务2（Loki 日志）：loki + promtail（采集容器日志）+ fake-app（造带级别的假应用日志）
-# - 任务3（Alertmanager 告警）：alertmanager + AIOps 托管的 Prometheus 告警规则
-# - 任务4（Grafana 可视化）：grafana（接 Prometheus/Loki，agent 生成 Explore 图表链接给用户点）
-# 方向二（事件驱动）：
-# - 后台任务队列：redis（arq 的 broker，告警自动诊断这类后台作业存这里）
+# AIOps 本地依赖：Prometheus、Loki、Alertmanager、Grafana 和 Redis。
+# 指标抓取目标来自 docker/prometheus-targets/ 下被 Git 忽略的本地配置；日志由纳管服务器上的
+# Alloy 或其他外部采集端写入 Loki。这里不再捆绑仅供演示的指标、日志发生器。
 #
 # 用法：
 #   docker compose up -d          # 后台起
 #   docker compose ps             # 看状态
 #   docker compose logs -f        # 看日志
 #   docker compose down           # 停并删容器（数据在容器里，删了重来即可，纯本地开发无所谓）
+#
+# 所有宿主机端口只绑定 127.0.0.1。这套配置包含无认证服务和匿名 Grafana Editor，
+# 只用于本地开发或受控测试，不能直接改成 0.0.0.0 暴露到局域网/公网。
 
 services:
   # 时序指标数据库 + PromQL 查询引擎。后端的 query_metrics 工具就是打它的 HTTP API。
@@ -18,7 +17,7 @@ services:
     image: prom/prometheus:latest   # 先用 latest 保证能拉到；稳定后可以 pin 成具体版本
     container_name: aiops-prometheus
     ports:
-      - "9090:9090"                 # 对应 backend config 里的 prometheus_base_url
+      - "127.0.0.1:9090:9090"       # 对应 backend config 里的 prometheus_base_url
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--web.enable-lifecycle"
@@ -27,34 +26,9 @@ services:
       - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       # UI 管理规则单独挂载目录，原子替换规则文件后容器仍能看到新 inode。
       - ./docker/prometheus-rules:/etc/prometheus/rules:ro
+      # 真实服务器抓取目标保存在 Git 忽略的本地目录，避免把资产地址提交到仓库。
+      - ./docker/prometheus-targets:/etc/prometheus/targets:ro
     restart: unless-stopped
-
-  # 主机指标导出器：把 CPU/内存/磁盘/网络等暴露成 Prometheus 能抓的 /metrics。
-  # 它是 query_metrics 工具里 cpu/memory/disk 那几个 PromQL 模板的数据来源。
-  #
-  # ⚠️ macOS 说明：Docker Desktop 跑在一个 Linux 虚拟机里，所以这里的 node_exporter
-  # 报的是「那台 Linux VM」的指标，不是你 macOS 宿主机的真实指标。对学这个工具怎么写、
-  # 怎么解析 PromQL 完全够用（数据是真的、会实时变化），只是别把数字当成你 Mac 的真实负载。
-  # 在真正的 Linux 服务器上跑，报的就是宿主机真实指标。
-  node-exporter:
-    image: prom/node-exporter:latest
-    container_name: aiops-node-exporter
-    ports:
-      - "9100:9100"
-    # 下面这组是 node_exporter 采集宿主机（Linux 上）真实指标的标准姿势：
-    # 把宿主机的 /proc、/sys、/ 只读挂进容器，并用 --path.rootfs 指过去。
-    command:
-      - "--path.procfs=/host/proc"
-      - "--path.sysfs=/host/sys"
-      - "--path.rootfs=/rootfs"
-      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
-    volumes:
-      - /proc:/host/proc:ro
-      - /sys:/host/sys:ro
-      - /:/rootfs:ro
-    restart: unless-stopped
-
-  # ---- 任务2：Loki 日志 ----
 
   # 日志聚合库 + LogQL 查询引擎。后端的 search_logs 工具打它的 HTTP API。
   # 用官方镜像自带的单体默认配置（filesystem 存储、无认证），开箱即用。
@@ -62,58 +36,22 @@ services:
     image: grafana/loki:latest
     container_name: aiops-loki
     ports:
-      - "3100:3100"                 # 对应 backend config 里的 loki_base_url
+      - "127.0.0.1:3100:3100"       # 对应 backend config 里的 loki_base_url
     command: -config.file=/etc/loki/local-config.yaml
     restart: unless-stopped
 
-  # 日志采集器：通过 Docker socket 发现本机所有容器、读它们的日志，打上 container 标签
-  # 推送给 Loki。这样 search_logs 就能按 {container="xxx"} 查某个容器的日志。
-  promtail:
-    image: grafana/promtail:latest
-    container_name: aiops-promtail
-    volumes:
-      - ./docker/promtail.yml:/etc/promtail/config.yml:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro   # 发现容器 + 读日志都走这个 socket
-    command: -config.file=/etc/promtail/config.yml
-    depends_on:
-      - loki
-    restart: unless-stopped
-
-  # 造点带级别（INFO/WARN/ERROR）的假应用日志，让 search_logs 的关键词/级别过滤有真实内容
-  # 可查——它之于「日志」，就像 node-exporter 之于「指标」，是个纯为验证工具而起的数据源。
-  # 生产环境当然不需要它。容器名 aiops-fake-app，promtail 会把它的日志打上 container=aiops-fake-app。
-  fake-app:
-    image: busybox:latest
-    container_name: aiops-fake-app
-    # Loki 按摄入时刻给每行日志打时间戳，所以行里不用自己写时间。
-    command:
-      - sh
-      - -c
-      - |
-        while true; do
-          echo "INFO  handled request path=/api/orders latency=210ms"
-          sleep 3
-          echo "WARN  slow query 812ms on orders table"
-          sleep 3
-          echo "ERROR connect timeout to db-01:5432 after 3s"
-          sleep 4
-        done
-    restart: unless-stopped
-
-  # ---- 任务3：Alertmanager 告警 ----
-
   # 告警分发器：接收 Prometheus 推来的 firing 告警。后端的 query_alerts 工具查它的
-  # /api/v2/alerts 拿当前正在触发的告警。receiver 配的是 null（只读演示，不往外发）。
+  # /api/v2/alerts 拿当前正在触发的告警；webhook receiver 同时把告警推给后端事件入口。
   alertmanager:
     image: prom/alertmanager:latest
     container_name: aiops-alertmanager
     ports:
-      - "9093:9093"                 # 对应 backend config 里的 alertmanager_base_url
+      - "127.0.0.1:9093:9093"       # 对应 backend config 里的 alertmanager_base_url
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./docker/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
     restart: unless-stopped
-
-  # ---- 任务4：Grafana 可视化 ----
 
   # 指标/日志的图形前端。它自己不存数据，接到 Prometheus + Loki 上把数据画成图表。
   # 服务目录提供轻量趋势图，Grafana 提供可缩放的服务器 Dashboard 和 Agent Explore 链接。
@@ -121,7 +59,7 @@ services:
     image: grafana/grafana:latest
     container_name: aiops-grafana
     ports:
-      - "3000:3000"                 # 对应 backend config 里的 grafana_base_url
+      - "127.0.0.1:3000:3000"       # 对应 backend config 里的 grafana_base_url
     environment:
       # 本地开发图省事：开匿名访问，点链接不用登录就能看图。
       # 角色给 Editor 而不是 Viewer——Grafana 的 Explore 页默认只对 Editor/Admin 开放，
@@ -139,12 +77,10 @@ services:
       - loki
     restart: unless-stopped
 
-  # ---- 方向二：后台任务队列 ----
-
   # arq（异步任务队列）的 broker。告警自动诊断这类后台作业存在这里，worker 从这里取来跑。
   redis:
     image: redis:7-alpine
     container_name: aiops-redis
     ports:
-      - "6379:6379"                 # 对应 backend config 里的 redis_url
+      - "127.0.0.1:6379:6379"       # 对应 backend config 里的 redis_url
     restart: unless-stopped

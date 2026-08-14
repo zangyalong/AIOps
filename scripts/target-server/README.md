@@ -207,7 +207,7 @@ cp metrics/redis-exporter.password.example metrics/redis-exporter.password
 
 ```ini
 AIOPS_SSH_USER=aiops
-SERVICE_CONTROL_ALLOWLIST=systemd:bt.service,systemd:nginx.service,docker:orders-api
+SERVICE_CONTROL_ALLOWLIST=systemd:example-app.service,systemd:nginx.service,docker:orders-api
 ENABLE_ALLOY=true
 SERVER_NAME=web01
 LOKI_PUSH_URL=http://监控服务器:3100/loki/api/v1/push
@@ -414,7 +414,7 @@ sudo ./alloy/check.sh
 最后在中央 Loki 查询稳定标签，例如：
 
 ```logql
-{server="web01", service="pixel-forge-backend", environment="prod"}
+{server="web01", service="example-api", environment="prod"}
 ```
 
 ### 3. 验证指标 exporter（仅启用时）

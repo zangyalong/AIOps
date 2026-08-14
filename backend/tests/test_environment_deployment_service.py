@@ -38,7 +38,7 @@ class EnvironmentDeploymentServiceTests(unittest.IsolatedAsyncioTestCase):
             SimpleNamespace(
                 control_enabled=True,
                 runtime_type="systemd",
-                runtime_name="bt.service",
+                runtime_name="example-app.service",
             ),
             SimpleNamespace(
                 control_enabled=True,
@@ -64,7 +64,7 @@ class EnvironmentDeploymentServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             result,
-            "docker:orders-api,systemd:bt.service,systemd:nginx.service",
+            "docker:orders-api,systemd:example-app.service,systemd:nginx.service",
         )
         list_instances.assert_awaited_once_with(db, server_id=server.id)
 
@@ -81,14 +81,16 @@ class EnvironmentDeploymentServiceTests(unittest.IsolatedAsyncioTestCase):
             server,
             config,
             secrets,
-            service_control_allowlist=("systemd:bt.service,systemd:mysqld.service"),
+            service_control_allowlist=(
+                "systemd:example-app.service,systemd:mysqld.service"
+            ),
         )
 
         self.assertIn("MYSQL_SECRET=replace\n", payload.manifest)
         self.assertIn("POSTGRES_SECRET=delete\n", payload.manifest)
         self.assertIn("REDIS_SECRET=preserve\n", payload.manifest)
         self.assertIn(
-            "SERVICE_CONTROL_ALLOWLIST=systemd:bt.service,systemd:mysqld.service\n",
+            "SERVICE_CONTROL_ALLOWLIST=systemd:example-app.service,systemd:mysqld.service\n",
             payload.config,
         )
         self.assertIn(
@@ -130,7 +132,7 @@ class EnvironmentDeploymentServiceTests(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 environment_deployment_service,
                 "service_control_allowlist_for_server",
-                AsyncMock(return_value="bt.service"),
+                AsyncMock(return_value="example-app.service"),
             ),
             patch.object(
                 environment_deployment_service,

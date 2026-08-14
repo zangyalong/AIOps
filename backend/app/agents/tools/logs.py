@@ -1,7 +1,7 @@
 """日志检索工具（方向一·任务2）：查 Loki。
 
 新 Alloy 节点使用 ``service`` 作为统一身份标签，并在迁移期同时写 ``service_name``。这里兼容
-旧 ``service_name`` 以及本地 Promtail 只有 ``container`` 的历史流，合并时按完整标签、时间戳和
+旧 ``service_name`` 以及只有 ``container`` 标签的历史流，合并时按完整标签、时间戳和
 日志正文去重。级别和关键词都用行过滤实现，不依赖 detected_level 自动识别。
 """
 
@@ -32,7 +32,7 @@ async def search_logs(
     """搜索最近 N 分钟的日志，数据来自 Loki。
 
     - server：按 AIOps 服务器标签过滤（如 "web-01"）。
-    - service：按服务名过滤（如 "aiops-fake-app"）。不传则查该服务器所有服务的日志。
+    - service：按服务名过滤（如 "orders-api"）。不传则查该服务器所有服务的日志。
     - keyword：只保留包含该关键词的行（大小写不敏感）。
     - level：只看某个级别，取 error / warn / info 之一（按日志文本匹配）。
     - minutes：往前查多少分钟，默认 60。

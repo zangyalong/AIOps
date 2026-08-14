@@ -167,14 +167,14 @@ class ServiceInstanceResolutionTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_control_target_resolves_unique_authorized_runtime(self) -> None:
         server_id = uuid.uuid4()
-        service = _service("pixel-forge-frontend")
+        service = _service("example-web")
         instance = SimpleNamespace(
             id=uuid.uuid4(),
             service_id=service.id,
             server_id=server_id,
-            name="pixel-forge-frontend",
+            name="example-web",
             runtime_type="systemd",
-            runtime_name="pixel-forge-frontend.service",
+            runtime_name="example-web.service",
             control_enabled=True,
         )
         with (
@@ -192,11 +192,11 @@ class ServiceInstanceResolutionTest(unittest.IsolatedAsyncioTestCase):
             resolved = await service_catalog_service.resolve_control_target(
                 object(),
                 server_id=server_id,
-                service_name="pixel-forge-frontend",
+                service_name="example-web",
                 environment="prod",
             )
 
-        self.assertEqual(resolved.instance.runtime_name, "pixel-forge-frontend.service")
+        self.assertEqual(resolved.instance.runtime_name, "example-web.service")
 
     async def test_control_target_requires_instance_name_when_ambiguous(self) -> None:
         server_id = uuid.uuid4()

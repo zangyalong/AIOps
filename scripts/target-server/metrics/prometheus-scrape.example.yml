@@ -53,7 +53,7 @@
       labels:
         server: web01
         environment: prod
-        service: sub2api-postgres
+        service: example-api-postgres
         runtime_type: docker
         runtime_name: aiops-postgres-exporter
 
@@ -63,6 +63,6 @@
       labels:
         server: web01
         environment: prod
-        service: sub2api-redis
+        service: example-api-redis
         runtime_type: docker
         runtime_name: aiops-redis-exporter

@@ -1,0 +1,40 @@
+# 192.0.2.0/24 是 RFC 5737 文档保留网段，不对应真实服务器。
+# 复制成本目录下的 managed-targets.yml 后，再在本机填写真实地址与标签。
+- targets: ["192.0.2.10:9100"]
+  labels:
+    server: example-01
+    environment: example
+    service: node-exporter
+    runtime_type: docker
+    runtime_name: aiops-node-exporter
+
+- targets: ["192.0.2.10:8080"]
+  labels:
+    server: example-01
+    environment: example
+    service: example-api
+    runtime_type: docker
+
+- targets: ["192.0.2.10:9104"]
+  labels:
+    server: example-01
+    environment: example
+    service: mysql
+    runtime_type: docker
+    runtime_name: aiops-mysql-exporter
+
+- targets: ["192.0.2.10:9187"]
+  labels:
+    server: example-01
+    environment: example
+    service: example-api-postgres
+    runtime_type: docker
+    runtime_name: aiops-postgres-exporter
+
+- targets: ["192.0.2.10:9121"]
+  labels:
+    server: example-01
+    environment: example
+    service: example-api-redis
+    runtime_type: docker
+    runtime_name: aiops-redis-exporter

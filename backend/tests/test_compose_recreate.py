@@ -31,7 +31,7 @@ class _Connection:
         return SimpleNamespace(
             exit_status=0,
             stdout=(
-                "已受控重建 Compose 服务 sub2api/sub2api（容器 sub2api）。\n"
+                "已受控重建 Compose 服务 example-api/example-api（容器 example-api）。\n"
                 "当前状态：running；健康状态：none。\n"
                 "8080/tcp -> 127.0.0.1:8081\n"
             ),
@@ -70,7 +70,7 @@ class ComposeRecreateToolTest(unittest.IsolatedAsyncioTestCase):
             patch.object(compose_recreate.asyncssh, "connect") as connect,
         ):
             result = await actions.recreate_compose_service.ainvoke(
-                {"server_name": "web-01", "container_name": "sub2api"}
+                {"server_name": "web-01", "container_name": "example-api"}
             )
 
         self.assertFalse(result.ok)
@@ -112,14 +112,14 @@ class ComposeRecreateToolTest(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             result = await actions.recreate_compose_service.ainvoke(
-                {"server_name": "web-01", "container_name": "sub2api"}
+                {"server_name": "web-01", "container_name": "example-api"}
             )
 
         self.assertEqual(get_instance.await_args.kwargs["runtime_type"], "docker")
-        self.assertEqual(get_instance.await_args.kwargs["runtime_name"], "sub2api")
+        self.assertEqual(get_instance.await_args.kwargs["runtime_name"], "example-api")
         self.assertEqual(
             connection.commands,
-            ["sudo -n -- /usr/local/sbin/aiops-compose-recreate sub2api"],
+            ["sudo -n -- /usr/local/sbin/aiops-compose-recreate example-api"],
         )
         self.assertTrue(result.ok)
         self.assertIn("127.0.0.1:8081", result.message)

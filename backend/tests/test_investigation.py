@@ -72,7 +72,7 @@ class InvestigationFacadeTest(unittest.IsolatedAsyncioTestCase):
                     "target": "web-01",
                     "query": "connection refused",
                     "parameters": {
-                        "service": "pixel-forge-backend",
+                        "service": "example-api",
                         "minutes": 60,
                     },
                 }
@@ -82,7 +82,7 @@ class InvestigationFacadeTest(unittest.IsolatedAsyncioTestCase):
         search.assert_awaited_once_with(
             {
                 "server": "web-01",
-                "service": "pixel-forge-backend",
+                "service": "example-api",
                 "keyword": "connection refused",
                 "level": "",
                 "minutes": 60,
@@ -102,7 +102,7 @@ class InvestigationFacadeTest(unittest.IsolatedAsyncioTestCase):
                 {
                     "area": "logs",
                     "target": "web-01",
-                    "query": '{service="pixel-forge-backend"}',
+                    "query": '{service="example-api"}',
                     "parameters": {"minutes": 60},
                 }
             )
@@ -111,7 +111,7 @@ class InvestigationFacadeTest(unittest.IsolatedAsyncioTestCase):
         search.assert_awaited_once_with(
             {
                 "server": "web-01",
-                "service": "pixel-forge-backend",
+                "service": "example-api",
                 "keyword": "",
                 "level": "",
                 "minutes": 60,
@@ -122,7 +122,7 @@ class InvestigationFacadeTest(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         search = AsyncMock(return_value="日志结果")
-        discover = AsyncMock(return_value={"pixel-forge-backend", "nginx"})
+        discover = AsyncMock(return_value={"example-api", "nginx"})
         with (
             patch.object(investigation, "discover_log_services", discover),
             patch.object(
@@ -135,7 +135,7 @@ class InvestigationFacadeTest(unittest.IsolatedAsyncioTestCase):
                 {
                     "area": "logs",
                     "target": "web-01",
-                    "query": "pixel-forge-backend",
+                    "query": "example-api",
                     "parameters": {"minutes": 60},
                 }
             )
@@ -145,7 +145,7 @@ class InvestigationFacadeTest(unittest.IsolatedAsyncioTestCase):
         search.assert_awaited_once_with(
             {
                 "server": "web-01",
-                "service": "pixel-forge-backend",
+                "service": "example-api",
                 "keyword": "",
                 "level": "",
                 "minutes": 60,
@@ -154,7 +154,7 @@ class InvestigationFacadeTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_logs_keeps_unmatched_bare_query_as_body_keyword(self) -> None:
         search = AsyncMock(return_value="日志结果")
-        discover = AsyncMock(return_value={"pixel-forge-backend"})
+        discover = AsyncMock(return_value={"example-api"})
         with (
             patch.object(investigation, "discover_log_services", discover),
             patch.object(
@@ -223,8 +223,8 @@ class InvestigationFacadeTest(unittest.IsolatedAsyncioTestCase):
         for field, value in (
             ("time", "1h"),
             ("minutes", 60),
-            ("instance", "139.196.175.226:9100"),
-            ("monitor_labels", {"instance": "139.196.175.226:9100"}),
+            ("instance", "192.0.2.10:9100"),
+            ("monitor_labels", {"instance": "192.0.2.10:9100"}),
         ):
             with self.subTest(field=field):
                 result = await investigation.investigate.ainvoke(
@@ -315,7 +315,7 @@ class InvestigationFacadeTest(unittest.IsolatedAsyncioTestCase):
             result = await investigation.investigate.ainvoke(
                 {
                     "area": "metrics",
-                    "target": "139.196.175.226:9100",
+                    "target": "192.0.2.10:9100",
                     "query": "memory",
                     "parameters": {"target_type": "instance"},
                 }
@@ -326,7 +326,7 @@ class InvestigationFacadeTest(unittest.IsolatedAsyncioTestCase):
         query_instance.assert_awaited_once_with(
             {
                 "metric": "memory",
-                "instance": "139.196.175.226:9100",
+                "instance": "192.0.2.10:9100",
             }
         )
 
@@ -335,7 +335,7 @@ class InvestigationFacadeTest(unittest.IsolatedAsyncioTestCase):
         resolve_instance = AsyncMock(
             return_value=(
                 SimpleNamespace(name="web-01"),
-                "139.196.175.226:9100",
+                "192.0.2.10:9100",
                 None,
             )
         )
@@ -362,7 +362,7 @@ class InvestigationFacadeTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result.ok)
         self.assertIn(
-            "web-01 → 139.196.175.226:9100",
+            "web-01 → 192.0.2.10:9100",
             result.message,
         )
         resolve_instance.assert_awaited_once_with("web-01")
@@ -371,7 +371,7 @@ class InvestigationFacadeTest(unittest.IsolatedAsyncioTestCase):
                 "kind": "metrics",
                 "query": "memory",
                 "minutes": 60,
-                "instance": "139.196.175.226:9100",
+                "instance": "192.0.2.10:9100",
             }
         )
 
@@ -483,7 +483,7 @@ class InvestigationFacadeTest(unittest.IsolatedAsyncioTestCase):
                     "target": "web-01",
                     "query": "config-patch-preview",
                     "parameters": {
-                        "path": "/sub2api-deploy/.env",
+                        "path": "/example-api-deploy/.env",
                         "config_format": "dotenv",
                         "selector": "SERVER_PORT",
                         "value": "8081",
@@ -495,7 +495,7 @@ class InvestigationFacadeTest(unittest.IsolatedAsyncioTestCase):
         preview.assert_awaited_once_with(
             {
                 "server_name": "web-01",
-                "path": "/sub2api-deploy/.env",
+                "path": "/example-api-deploy/.env",
                 "config_format": "dotenv",
                 "selector": "SERVER_PORT",
                 "value": "8081",
@@ -517,7 +517,7 @@ class InvestigationFacadeTest(unittest.IsolatedAsyncioTestCase):
                     "target": "web-01",
                     "query": "file-update-preview",
                     "parameters": {
-                        "path": "/sub2api-deploy/.env",
+                        "path": "/example-api-deploy/.env",
                         "config_format": "dotenv",
                         "selector": "SERVER_PORT",
                         "value": "8081",

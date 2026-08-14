@@ -219,7 +219,7 @@ class OperationBrokerTest(unittest.IsolatedAsyncioTestCase):
             OperationCall(
                 id="start-1",
                 name="service.start",
-                args={"service": "pixel-forge-frontend"},
+                args={"service": "example-web"},
             ),
             OperationContext(
                 actor_id="operator-1",
@@ -230,11 +230,11 @@ class OperationBrokerTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             prepared.call.normalized_args()["runtime_name"],
-            "pixel-forge-frontend.service",
+            "example-web.service",
         )
         self.assertEqual(
             prepared.approval_view,
-            {"runtime_name": "pixel-forge-frontend.service"},
+            {"runtime_name": "example-web.service"},
         )
 
     def test_registry_rejects_write_operation_without_approval_builder(self) -> None:

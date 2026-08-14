@@ -157,7 +157,7 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
             default_server=DefaultServerContext(
                 id="server-id",
                 name='web-01"><unsafe',
-                ip_address="139.196.175.226",
+                ip_address="192.0.2.10",
             ),
         )
 
@@ -234,10 +234,10 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
                 "name": "grant_server_file_write_access",
                 "args": {
                     "server_name": "web-01",
-                    "service_name": "sub2api",
+                    "service_name": "example-api",
                     "environment": "prod",
-                    "instance_name": "sub2api",
-                    "path": "/home/OnlineAPI/deploy/docker-compose.yml",
+                    "instance_name": "example-api",
+                    "path": "/home/example-app/deploy/docker-compose.yml",
                 },
             }
         )
@@ -260,13 +260,13 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
                 "name": "recreate_compose_service",
                 "args": {
                     "server_name": "demo",
-                    "container_name": "sub2api",
+                    "container_name": "example-api",
                 },
             }
         )
         self.assertEqual(recreate_action["risk_level"], "high")
         self.assertEqual(recreate_action["kind"], "compose_service_recreate")
-        self.assertIn("aiops-compose-recreate sub2api", recreate_action["command"])
+        self.assertIn("aiops-compose-recreate example-api", recreate_action["command"])
 
         rule_action = catalog.describe_write_action(
             {
@@ -346,7 +346,7 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
                 "name": "patch_server_config",
                 "args": {
                     "server_name": "web01",
-                    "path": "/sub2api-deploy/.env",
+                    "path": "/example-api-deploy/.env",
                     "config_format": "dotenv",
                     "selector": "SERVER_PORT",
                     "value": "8081",
@@ -426,12 +426,12 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
             ip_address="127.0.0.1",
         )
         resolved = SimpleNamespace(
-            service=SimpleNamespace(name="pixel-forge-frontend", environment="prod"),
+            service=SimpleNamespace(name="example-web", environment="prod"),
             instance=SimpleNamespace(
                 id=instance_id,
-                name="pixel-forge-frontend",
+                name="example-web",
                 runtime_type="systemd",
-                runtime_name="pixel-forge-frontend.service",
+                runtime_name="example-web.service",
                 control_enabled=True,
             ),
         )
@@ -454,11 +454,11 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         ):
             prepared = await catalog.OPERATION_BROKER.aprepare(
                 OperationCall(
-                    id="start-pixel-forge",
+                    id="start-example-web",
                     name="start_service",
                     args={
                         "server_name": "web-01",
-                        "service_name": "pixel-forge-frontend",
+                        "service_name": "example-web",
                         "environment": "prod",
                     },
                 ),
@@ -472,12 +472,12 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
         frozen = prepared.call.normalized_args()
         self.assertEqual(frozen["service_instance_id"], str(instance_id))
         self.assertEqual(frozen["runtime_type"], "systemd")
-        self.assertEqual(frozen["runtime_name"], "pixel-forge-frontend.service")
-        self.assertIn("pixel-forge-frontend.service", prepared.approval_view["title"])
+        self.assertEqual(frozen["runtime_name"], "example-web.service")
+        self.assertIn("example-web.service", prepared.approval_view["title"])
         self.assertNotIn("service_instance_id", prepared.approval_view["args"])
         self.assertEqual(
             prepared.approval_view["args"]["service_name"],
-            "pixel-forge-frontend",
+            "example-web",
         )
 
     async def test_restart_service_rejects_unresolved_direct_call_before_ssh(
@@ -550,11 +550,11 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
                 runtime_name="nginx.service",
                 control_enabled=True,
             ),
-            "bt.service": SimpleNamespace(
+            "example-app.service": SimpleNamespace(
                 id=uuid.uuid4(),
                 server_id=server_id,
                 runtime_type="systemd",
-                runtime_name="bt.service",
+                runtime_name="example-app.service",
                 control_enabled=True,
             ),
         }
@@ -603,19 +603,19 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
             start_result = await actions.start_service.ainvoke(
                 {
                     "server_name": "demo",
-                    "service_name": "bt",
-                    "service_instance_id": str(instances["bt.service"].id),
+                    "service_name": "example-app",
+                    "service_instance_id": str(instances["example-app.service"].id),
                     "runtime_type": "systemd",
-                    "runtime_name": "bt.service",
+                    "runtime_name": "example-app.service",
                 }
             )
             stop_result = await actions.stop_service.ainvoke(
                 {
                     "server_name": "demo",
-                    "service_name": "bt",
-                    "service_instance_id": str(instances["bt.service"].id),
+                    "service_name": "example-app",
+                    "service_instance_id": str(instances["example-app.service"].id),
                     "runtime_type": "systemd",
-                    "runtime_name": "bt.service",
+                    "runtime_name": "example-app.service",
                 }
             )
 
@@ -623,8 +623,8 @@ class ToolBoundaryTest(unittest.IsolatedAsyncioTestCase):
             connection.commands,
             [
                 "sudo -n -- /usr/local/sbin/aiops-service-control restart systemd nginx.service",
-                "sudo -n -- /usr/local/sbin/aiops-service-control start systemd bt.service",
-                "sudo -n -- /usr/local/sbin/aiops-service-control stop systemd bt.service",
+                "sudo -n -- /usr/local/sbin/aiops-service-control start systemd example-app.service",
+                "sudo -n -- /usr/local/sbin/aiops-service-control stop systemd example-app.service",
             ],
         )
         self.assertTrue(restart_result.ok)

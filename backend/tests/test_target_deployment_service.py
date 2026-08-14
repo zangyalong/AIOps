@@ -96,7 +96,7 @@ class TargetDeploymentServiceTests(unittest.TestCase):
 
         with patch(
             "app.services.target_deployment_service.settings.ssh_service_control_allowlist",
-            "bt.service,nginx.service",
+            "example-app.service,nginx.service",
         ):
             rendered = render_deploy_config(
                 make_server(), config, redis_has_password=False
@@ -110,7 +110,7 @@ class TargetDeploymentServiceTests(unittest.TestCase):
         self.assertIn("START_ALLOY=false\n", rendered)
         self.assertIn("EXPORTER_IMAGE_MIRROR_PREFIX=m.daocloud.io\n", rendered)
         self.assertIn(
-            "SERVICE_CONTROL_ALLOWLIST=systemd:bt.service,systemd:nginx.service\n",
+            "SERVICE_CONTROL_ALLOWLIST=systemd:example-app.service,systemd:nginx.service\n",
             rendered,
         )
         self.assertNotIn("database-secret-value", rendered)

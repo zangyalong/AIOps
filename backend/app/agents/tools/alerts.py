@@ -22,7 +22,7 @@ async def query_alerts(severity: str = "", instance: str = "") -> str:
     """查询当前正在触发（firing）的告警，数据来自 Alertmanager。
 
     - severity：按级别过滤（如 critical / warning / info）。不传则各级别都返回。
-    - instance：按实例过滤（如 "node-exporter:9100"）。不传则所有实例。
+    - instance：按实例过滤（如 "192.0.2.10:9100"）。不传则所有实例。
     只返回 active（正在烧）、未被静默/抑制的告警。
     """
     try:

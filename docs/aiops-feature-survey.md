@@ -1,7 +1,7 @@
 # AI 运维系统功能调研：从 Keep 和 OpenSRE 看
 
 > **调研方法**：直接读两个开源项目的源码，不是官网/README 的营销话术，逐条核实"文档里说的功能"是不是真的落地了。
-> **调研对象**：`keephq/keep`（本地 `/Users/leishaohui/Desktop/zyl/keep-main`）、`opensre`（本地 `/Users/leishaohui/Desktop/zyl/opensre-main`）。
+> **调研对象**：`keephq/keep` 与 `opensre` 的独立源码快照；本地检出路径不写入仓库。
 > **日期**：2026-07-03。
 
 ---

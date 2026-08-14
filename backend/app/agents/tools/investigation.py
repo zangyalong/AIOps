@@ -346,7 +346,7 @@ def _validate_parameters(
                 "parameters 只能为空或填写 target_type。服务器当前值示例："
                 '{"area":"metrics","target":"web-01","query":"memory",'
                 '"parameters":{}}。Prometheus instance 当前值示例：'
-                '{"area":"metrics","target":"139.196.175.226:9100",'
+                '{"area":"metrics","target":"192.0.2.10:9100",'
                 '"query":"memory","parameters":{"target_type":"instance"}}。'
                 "最近 60 分钟趋势图示例："
                 '{"area":"visualization","target":"web-01","query":"memory",'

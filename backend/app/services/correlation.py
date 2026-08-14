@@ -35,7 +35,7 @@ _COMPILED = [
 def compute_group_key(labels: dict | None) -> str | None:
     """按归组规则算这条告警的 group_key。
 
-    命中第一条规则就返回 "规则名:标签=值,..."（如 "by-instance:instance=node-exporter:9100"）；
+    命中第一条规则就返回 "规则名:标签=值,..."（如 "by-instance:instance=192.0.2.10:9100"）；
     没有规则命中返回 None（不参与关联，独立成组、照常单独诊断）。
     """
     labels = labels or {}

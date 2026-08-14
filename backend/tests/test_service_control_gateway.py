@@ -82,9 +82,7 @@ class ServiceControlGatewayTest(unittest.TestCase):
             state = root / "systemd.state"
             allowlist = root / "aiops" / "service-control.allowlist"
             allowlist.parent.mkdir()
-            allowlist.write_text(
-                "systemd:pixel-forge-frontend.service\n", encoding="utf-8"
-            )
+            allowlist.write_text("systemd:example-web.service\n", encoding="utf-8")
             _write_executable(
                 bin_dir / "systemctl",
                 """#!/bin/bash
@@ -109,7 +107,7 @@ fi
                     str(script),
                     "start",
                     "systemd",
-                    "pixel-forge-frontend.service",
+                    "example-web.service",
                 ],
                 capture_output=True,
                 check=False,
@@ -134,10 +132,10 @@ fi
             allowlist.write_text(
                 "\n".join(
                     (
-                        "systemd:pixel-forge-frontend.service",
+                        "systemd:example-web.service",
                         "systemd:systemd:systemd:mysqld.service",
                         "systemd:systemd:nginx.service",
-                        "systemd:systemd:pixel-forge-frontend.service",
+                        "systemd:systemd:example-web.service",
                     )
                 )
                 + "\n",
@@ -158,7 +156,7 @@ fi
                     str(script),
                     "add",
                     "systemd",
-                    "pixel-forge-frontend.service",
+                    "example-web.service",
                 ],
                 capture_output=True,
                 check=False,
@@ -170,9 +168,9 @@ fi
             self.assertEqual(
                 allowlist.read_text(encoding="utf-8").splitlines(),
                 [
+                    "systemd:example-web.service",
                     "systemd:mysqld.service",
                     "systemd:nginx.service",
-                    "systemd:pixel-forge-frontend.service",
                 ],
             )
 

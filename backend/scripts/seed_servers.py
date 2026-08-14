@@ -21,14 +21,30 @@ from app.schemas.server import ServerCreate  # noqa: E402
 from app.services import server_service  # noqa: E402
 
 MOCK_SERVERS = [
-    ServerCreate(name="web-01", ip_address="10.0.1.11", description="Nginx 反向代理 + 静态资源"),
-    ServerCreate(name="web-02", ip_address="10.0.1.12", description="Nginx 反向代理 + 静态资源"),
-    ServerCreate(name="app-01", ip_address="10.0.2.11", description="FastAPI 应用服务器"),
-    ServerCreate(name="app-02", ip_address="10.0.2.12", description="FastAPI 应用服务器"),
-    ServerCreate(name="db-primary", ip_address="10.0.3.10", description="PostgreSQL 主库"),
-    ServerCreate(name="db-replica", ip_address="10.0.3.11", description="PostgreSQL 只读副本"),
+    ServerCreate(
+        name="web-01", ip_address="10.0.1.11", description="Nginx 反向代理 + 静态资源"
+    ),
+    ServerCreate(
+        name="web-02", ip_address="10.0.1.12", description="Nginx 反向代理 + 静态资源"
+    ),
+    ServerCreate(
+        name="app-01", ip_address="10.0.2.11", description="FastAPI 应用服务器"
+    ),
+    ServerCreate(
+        name="app-02", ip_address="10.0.2.12", description="FastAPI 应用服务器"
+    ),
+    ServerCreate(
+        name="db-primary", ip_address="10.0.3.10", description="PostgreSQL 主库"
+    ),
+    ServerCreate(
+        name="db-replica", ip_address="10.0.3.11", description="PostgreSQL 只读副本"
+    ),
     ServerCreate(name="cache-01", ip_address="10.0.4.10", description="Redis 缓存"),
-    ServerCreate(name="monitor-01", ip_address="10.0.5.10", description="Prometheus + Grafana 监控"),
+    ServerCreate(
+        name="monitor-01",
+        ip_address="10.0.5.10",
+        description="Prometheus + Grafana 监控",
+    ),
 ]
 
 
@@ -45,7 +61,9 @@ async def seed() -> None:
             print(f"已插入: {server.name} ({server.ip_address})")
             created += 1
 
-        print(f"完成，共新增 {created} 条，跳过 {len(MOCK_SERVERS) - created} 条已存在的。")
+        print(
+            f"完成，共新增 {created} 条，跳过 {len(MOCK_SERVERS) - created} 条已存在的。"
+        )
 
 
 if __name__ == "__main__":

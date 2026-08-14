@@ -9,9 +9,9 @@
 #
 # 下面只是格式示例。复制为 services.map 后，只保留 web01 上实际登记的服务。
 
-pixel-forge-backend|prod|systemd|pixel-forge-backend.service|journal|-
-sub2api|prod|docker|sub2api|docker|-
-sub2api-postgres|prod|docker|sub2api-postgres|docker|-
-sub2api-redis|prod|docker|sub2api-redis|docker|-
+example-api|prod|systemd|example-api.service|journal|-
+example-api|prod|docker|example-api|docker|-
+example-api-postgres|prod|docker|example-api-postgres|docker|-
+example-api-redis|prod|docker|example-api-redis|docker|-
 mysqld|prod|systemd|mysql.service|file|/var/log/mysql/*.log
 unmanaged-uvicorn|prod|process|uvicorn:tcp-8010|file|/opt/app/logs/*.log

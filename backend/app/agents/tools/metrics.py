@@ -141,7 +141,7 @@ async def query_metrics(metric: str, instance: str = "") -> str:
 
     查询已纳管的业务服务器时优先使用 query_server_metrics，它会自动完成服务器到 instance 的映射。
     metric 可传 cpu / memory / disk / up；其它字符串会当成原始 PromQL。instance 可选，格式如
-    "node-exporter:9100"；不传时返回全部实例。
+    "192.0.2.10:9100"；不传时返回全部实例。
     """
     return await _query_metrics_text(metric, instance)
 

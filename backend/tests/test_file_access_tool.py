@@ -22,16 +22,18 @@ class _SessionContext:
 class GrantServerFileWriteAccessToolTest(unittest.IsolatedAsyncioTestCase):
     async def test_grant_resolves_service_instance_and_syncs_exact_file(self) -> None:
         server = SimpleNamespace(id=uuid.uuid4(), name="web-01")
-        service = SimpleNamespace(id=uuid.uuid4(), name="sub2api", environment="prod")
+        service = SimpleNamespace(
+            id=uuid.uuid4(), name="example-api", environment="prod"
+        )
         instance = SimpleNamespace(
             id=uuid.uuid4(),
             service_id=service.id,
-            name="sub2api",
+            name="example-api",
             server_id=server.id,
         )
         access = SimpleNamespace(
             id=uuid.uuid4(),
-            path="/home/OnlineAPI/deploy/docker-compose.yml",
+            path="/home/example-app/deploy/docker-compose.yml",
         )
         create_access = AsyncMock(return_value=access)
         session = _SessionContext()
@@ -61,9 +63,9 @@ class GrantServerFileWriteAccessToolTest(unittest.IsolatedAsyncioTestCase):
             result = await file_access.grant_server_file_write_access.ainvoke(
                 {
                     "server_name": "web-01",
-                    "service_name": "sub2api",
+                    "service_name": "example-api",
                     "environment": "prod",
-                    "instance_name": "sub2api",
+                    "instance_name": "example-api",
                     "path": access.path,
                 }
             )
@@ -80,7 +82,9 @@ class GrantServerFileWriteAccessToolTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_grant_refuses_ambiguous_service_instances(self) -> None:
         server = SimpleNamespace(id=uuid.uuid4(), name="web-01")
-        service = SimpleNamespace(id=uuid.uuid4(), name="sub2api", environment="prod")
+        service = SimpleNamespace(
+            id=uuid.uuid4(), name="example-api", environment="prod"
+        )
         instances = [
             SimpleNamespace(
                 id=uuid.uuid4(),
@@ -88,7 +92,7 @@ class GrantServerFileWriteAccessToolTest(unittest.IsolatedAsyncioTestCase):
                 name=name,
                 server_id=server.id,
             )
-            for name in ("sub2api-a", "sub2api-b")
+            for name in ("example-api-a", "example-api-b")
         ]
         create_access = AsyncMock()
         with (
@@ -119,8 +123,8 @@ class GrantServerFileWriteAccessToolTest(unittest.IsolatedAsyncioTestCase):
             result = await file_access.grant_server_file_write_access.ainvoke(
                 {
                     "server_name": "web-01",
-                    "service_name": "sub2api",
-                    "path": "/home/OnlineAPI/deploy/docker-compose.yml",
+                    "service_name": "example-api",
+                    "path": "/home/example-app/deploy/docker-compose.yml",
                 }
             )
 

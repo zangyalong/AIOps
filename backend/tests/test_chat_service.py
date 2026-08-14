@@ -210,7 +210,7 @@ class ChatStreamTest(unittest.IsolatedAsyncioTestCase):
         server = SimpleNamespace(
             id=server_id,
             name="web-01",
-            ip_address="139.196.175.226",
+            ip_address="192.0.2.10",
         )
 
         with (
@@ -252,7 +252,7 @@ class ChatStreamTest(unittest.IsolatedAsyncioTestCase):
             {
                 "id": str(server_id),
                 "name": "web-01",
-                "ip_address": "139.196.175.226",
+                "ip_address": "192.0.2.10",
             },
         )
 

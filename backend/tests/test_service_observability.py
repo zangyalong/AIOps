@@ -53,13 +53,13 @@ class ServiceRuntimeStatusTests(unittest.TestCase):
         )
 
         ports = service_runtime_service._parse_systemd_ports(
-            "301 1 ops 7200 pixel-forge-backend.service python -m uvicorn\n"
-            "302 1 ops 7200 pixel-forge-backend.service python worker.py\n",
+            "301 1 ops 7200 example-api.service python -m uvicorn\n"
+            "302 1 ops 7200 example-api.service python worker.py\n",
             listeners,
         )
 
         self.assertEqual(
-            ports["pixel-forge-backend.service"],
+            ports["example-api.service"],
             ("tcp/8010", "tcp/8011"),
         )
 
@@ -83,9 +83,9 @@ class ServiceRuntimeStatusTests(unittest.TestCase):
 
 class ServiceMetricDefinitionTests(unittest.TestCase):
     def test_database_service_uses_catalog_service_label(self) -> None:
-        service = SimpleNamespace(name="sub2api-postgres")
+        service = SimpleNamespace(name="example-api-postgres")
         instance = SimpleNamespace(
-            runtime_name="sub2api-postgres",
+            runtime_name="example-api-postgres",
             runtime_type="docker",
             metric_instance=None,
         )
@@ -97,7 +97,7 @@ class ServiceMetricDefinitionTests(unittest.TestCase):
 
         pg_up = next(item for item in definitions if item.key == "pg_up")
         self.assertIn('server="web-01"', pg_up.promql)
-        self.assertIn('service="sub2api-postgres"', pg_up.promql)
+        self.assertIn('service="example-api-postgres"', pg_up.promql)
         self.assertNotIn("runtime_name", pg_up.promql)
 
     def test_exporter_service_uses_exporter_runtime_label(self) -> None:
@@ -117,9 +117,9 @@ class ServiceMetricDefinitionTests(unittest.TestCase):
         self.assertIn('runtime_name="aiops-redis-exporter"', redis_up.promql)
 
     def test_systemd_service_uses_its_cgroup_metrics(self) -> None:
-        service = SimpleNamespace(name="pixel-forge-frontend")
+        service = SimpleNamespace(name="example-web")
         instance = SimpleNamespace(
-            runtime_name="pixel-forge-frontend.service",
+            runtime_name="example-web.service",
             runtime_type="systemd",
             metric_instance=None,
         )
@@ -136,14 +136,14 @@ class ServiceMetricDefinitionTests(unittest.TestCase):
         for definition in definitions:
             self.assertIn('server="web-01"', definition.promql)
             self.assertIn(
-                'id="/system.slice/pixel-forge-frontend.service"',
+                'id="/system.slice/example-web.service"',
                 definition.promql,
             )
             self.assertNotIn('instance="web-01:9100"', definition.promql)
 
     def test_server_metrics_use_node_exporter_instance(self) -> None:
         definitions = service_observability_service._server_metric_definitions(
-            "139.196.175.226:9100"
+            "192.0.2.10:9100"
         )
 
         self.assertEqual(
@@ -158,11 +158,11 @@ class ServiceMetricDefinitionTests(unittest.TestCase):
             ],
         )
         for definition in definitions:
-            self.assertIn('instance="139.196.175.226:9100"', definition.promql)
+            self.assertIn('instance="192.0.2.10:9100"', definition.promql)
 
     def test_server_trends_only_include_percentage_resources(self) -> None:
         definitions = service_observability_service._server_trend_definitions(
-            "139.196.175.226:9100"
+            "192.0.2.10:9100"
         )
 
         self.assertEqual(
@@ -190,13 +190,13 @@ class ServiceMetricDefinitionTests(unittest.TestCase):
 class ServerMetricResolutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_server_page_reuses_shared_host_metric_resolution(self) -> None:
         server = SimpleNamespace(
-            ip_address="139.196.175.226",
+            ip_address="192.0.2.10",
             monitor_labels=None,
         )
         with patch.object(
             service_observability_service,
             "resolve_server_host_metric_instance",
-            AsyncMock(return_value=("139.196.175.226:19100", None)),
+            AsyncMock(return_value=("192.0.2.10:19100", None)),
         ) as resolve:
             (
                 instance,
@@ -205,7 +205,7 @@ class ServerMetricResolutionTests(unittest.IsolatedAsyncioTestCase):
                 server
             )
 
-        self.assertEqual(instance, "139.196.175.226:19100")
+        self.assertEqual(instance, "192.0.2.10:19100")
         self.assertIsNone(message)
         resolve.assert_awaited_once_with(server)
 

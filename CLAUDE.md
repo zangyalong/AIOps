@@ -1,14 +1,14 @@
 # AIOps — AI 运维系统
 
-> 一个用 AI Agent 辅助日常运维工作的学习型项目。目标不只是"做出来"，更是"过程中学会"。
+> 一个用 AI Agent 调查真实运维证据、管理事件，并在人类审批后执行受控变更的开源项目。
 
 ---
 
 ## 1. 项目定位
 
-**是什么**：AIOps（Artificial Intelligence for IT Operations）是一个 AI 驱动的运维辅助系统。用户可以用自然语言让 Agent 去：查询服务器状态、检索/分析日志、诊断告警、执行常规运维脚本、总结值班报告等。
+**是什么**：AIOps（Artificial Intelligence for IT Operations）是一个 AI 驱动的运维辅助系统。用户可以用自然语言让 Agent 查询服务器状态、检索/分析日志、诊断告警，并在人工审批后执行已登记的结构化运维变更。
 
-**为什么做**：作为学习者从 0 到 1 掌握 AI Agent + 全栈开发的载体项目。选运维方向是因为它天然有"工具调用"的场景（SSH、Prometheus、日志系统、K8s 等），能自然引出 Agent 的核心能力。
+**为什么做**：把分散的指标、日志、告警、服务目录和服务器状态统一到可审计的 Agent 调查流程中，并用确定性策略、人工审批和最小权限网关约束运维变更。
 
 ---
 
@@ -26,7 +26,7 @@
 
 ## 3. 与 Claude 的协作模式（重要）
 
-用户是**学习者**，不是甲方。协作时请遵守：
+用户是项目维护者与协作者。协作时请遵守：
 
 1. **先解释，后动手**。每一步开始前，用 2–4 句话说清：这一步在做什么、为什么现在做、涉及哪些新概念。
 2. **小步交付，立即可验证**。每次改动尽量小（一个文件、一个函数、一个端点），交付后紧跟一句"这样验证它工作了：`<命令或 URL>`"。
@@ -34,7 +34,7 @@
 4. **不越权优化**。用户没提到的重构、抽象、"顺手改一下"，一律不做。宁可留 TODO。
 5. **报错时先教读错误**。看到 traceback，先指认关键行，再给修复方案；不要一上来就贴 patch。
 6. **中文交流**。代码里的标识符用英文，注释和面向用户的解释用中文。
-7. **不要制造演示假象**。做不到的、没测过的、只在脑子里跑过的，明确说"这段我没跑过，你跑一下看结果"。
+7. **不要制造验证假象**。做不到的、没测过的、只在脑子里跑过的，明确说"这段我没跑过，你跑一下看结果"。
 8. **不要启动服务**。开发完不要自己起后端/前端 dev server 来验证——用户自己有常驻服务在跑，另起一个只会端口冲突。改完代码用静态检查（类型检查、编译、import 是否报错这类一次性执行完就退出的检查）确认没有明显错误即可，运行时验证交给用户自己做。
 9. **开发计划表**。多步骤任务的进度记在 [`docs/dev-plan.md`](docs/dev-plan.md)，用 Markdown 勾选框（`- [ ]` / `- [x]`）跟踪。这不是固定路线图，跟第 8 节《附：给 Claude 的默认动作》里"不主动规划接下来该做什么"那条不冲突——只有用户明确列出一批任务时才新增/修改这个文件，Claude 不自己往里加计划外的任务。**勾选规则**：代码写完、静态检查过了，先不勾——等这个任务真正被验证过（用户跑起来确认没问题，或者用户明确回复"测试过了/可以勾"）才勾选成 `[x]`，不要因为"代码看起来写完了"就直接勾，避免计划表显示的进度跟实际能用的程度对不上。
 
@@ -46,7 +46,7 @@
 AIOps/
 ├── CLAUDE.md                # 本文档
 ├── AGENTS.md                # Codex 协作说明，与本文保持项目事实一致
-├── README.md                # 面向新用户的说明（后期补）
+├── README.md                # 项目入口、快速开始和文档导航
 ├── backend/                 # FastAPI 服务
 │   ├── app/
 │   │   ├── main.py          # FastAPI 入口
@@ -67,13 +67,13 @@ AIOps/
 │   ├── src/
 │   │   ├── views/           # 页面级组件
 │   │   ├── components/      # 可复用组件
-│   │   ├── stores/          # Pinia
+│   │   ├── stores/          # 跨页面状态复杂到需要 Pinia 时再创建
 │   │   ├── api/             # 后端 API 客户端
 │   │   ├── router/
 │   │   └── types/
 │   ├── index.html
 │   └── package.json
-├── docs/                    # 学习笔记、架构决策记录（ADR）
+├── docs/                    # 架构设计、调研、ADR 与 QA 记录
 │   └── aiops-feature-survey.md  # Keep/OpenSRE 源码级功能调研，涉及告警/工具/安全/Agent架构设计时先看这个
 ├── scripts/
 │   └── target-server/       # 纳管服务器的 root 只读沙箱、写网关、sudoers 和说明
@@ -98,7 +98,7 @@ AIOps/
 ### 前端 / Vue
 
 - Composition API + `<script setup>`
-- Pinia 管理跨页面状态
+- 需要集中管理跨页面状态时优先使用 Pinia；当前尚未引入，不提前创建空 store
 - API 调用统一封装在 `src/api/`
 - 组件命名 PascalCase，文件名与组件名一致
 
@@ -132,15 +132,15 @@ AIOps/
 ## 7. 常用命令（随进度补充）
 
 ```bash
-# 启动后端（FastAPI，默认 8010 端口，因为 8000 被本机其他项目占用；启动时会自动建表，不用单独迁移）：
+# 启动后端（FastAPI，项目开发端口固定为 8010；启动时会自动建表，不用单独迁移）：
 cd backend && uv run uvicorn app.main:app --reload --port 8010
 
 # 启动前端（Vite dev server，默认 5174）：
 cd frontend && npm run dev
 
-# 起数据库：Postgres 走 Homebrew service，长期运行，一般不用手动起
-brew services list | grep postgres   # 确认 postgresql@18 是 started
-psql -d aiops                        # 连接 aiops 库
+# 检查 PostgreSQL 并连接 aiops 库（具体服务管理命令取决于操作系统）
+pg_isready
+psql -d aiops
 
 # 跑后端测试（覆盖统一调查、审批边界、服务发现和 worker 写工具隔离）
 cd backend && uv run python -m unittest discover -s tests -v

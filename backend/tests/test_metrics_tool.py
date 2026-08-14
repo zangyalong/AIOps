@@ -26,9 +26,9 @@ class QueryServerMetricsTest(unittest.IsolatedAsyncioTestCase):
     async def test_uses_configured_instance_without_discovery(self) -> None:
         """服务器已有 instance 映射时，一次工具调用直接查询指标，不再枚举实例。"""
         server = SimpleNamespace(
-            name="docker-test-01",
-            ip_address="127.0.0.1",
-            monitor_labels={"instance": "127.0.0.1:9100"},
+            name="web-01",
+            ip_address="192.0.2.10",
+            monitor_labels={"instance": "192.0.2.10:9100"},
         )
         find_server = AsyncMock(return_value=server)
         query = AsyncMock(return_value="内存使用率：42.0%")
@@ -45,13 +45,13 @@ class QueryServerMetricsTest(unittest.IsolatedAsyncioTestCase):
             patch.object(metrics, "prom_label_values", discover),
         ):
             result = await metrics.query_server_metrics.ainvoke(
-                {"server": "docker-test-01", "metric": "memory"}
+                {"server": "web-01", "metric": "memory"}
             )
 
-        self.assertIn("docker-test-01 (127.0.0.1)", result)
-        self.assertIn("instance=127.0.0.1:9100", result)
+        self.assertIn("web-01 (192.0.2.10)", result)
+        self.assertIn("instance=192.0.2.10:9100", result)
         self.assertIn("内存使用率：42.0%", result)
-        query.assert_awaited_once_with("memory", "127.0.0.1:9100")
+        query.assert_awaited_once_with("memory", "192.0.2.10:9100")
         discover.assert_not_awaited()
 
     async def test_discovers_instance_by_ip_when_mapping_is_missing(self) -> None:

@@ -209,7 +209,8 @@ class MemoryServiceTest(unittest.IsolatedAsyncioTestCase):
             '"category":"lesson","content":"web-01 当前 CPU 使用率 98%"},'
             '{"action":"ADD","memory_key":"environment.unlabeled-secret",'
             '"category":"environment",'
-            '"content":"sk-1234567890abcdefghijklmnop"},'
+            '"content":"sk-'
+            '1234567890abcdefghijklmnop"},'
             '{"action":"ADD","memory_key":"preference.response.detail",'
             '"category":"preference","content":"用户偏好简短回答"}]}'
         )

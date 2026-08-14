@@ -38,4 +38,6 @@
 - 后端 Ruff format/check：通过。
 - 后端完整测试：205 项通过。
 
-final result: passed
+## 结论
+
+本次验收通过。

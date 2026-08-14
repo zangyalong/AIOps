@@ -20,7 +20,7 @@ def _server(*, monitor_labels: dict | None = None) -> SimpleNamespace:
     return SimpleNamespace(
         id=uuid.uuid4(),
         name="web-01",
-        ip_address="139.196.175.226",
+        ip_address="192.0.2.10",
         monitor_labels=monitor_labels,
     )
 
@@ -47,18 +47,18 @@ class ServerMetricResolutionTest(unittest.IsolatedAsyncioTestCase):
                 service_id=node_service.id,
                 name="host-metrics",
                 runtime_name="node_exporter_custom",
-                metric_instance="139.196.175.226:19100",
+                metric_instance="192.0.2.10:19100",
             ),
             SimpleNamespace(
                 service_id=mysql_service.id,
                 name="mysql-metrics",
                 runtime_name="mysqld_exporter",
-                metric_instance="139.196.175.226:9104",
+                metric_instance="192.0.2.10:9104",
             ),
         ]
         query = AsyncMock(
             return_value=[
-                {"metric": {"instance": "139.196.175.226:19100"}},
+                {"metric": {"instance": "192.0.2.10:19100"}},
             ]
         )
         with (
@@ -81,7 +81,7 @@ class ServerMetricResolutionTest(unittest.IsolatedAsyncioTestCase):
                 _server()
             )
 
-        self.assertEqual(instance, "139.196.175.226:19100")
+        self.assertEqual(instance, "192.0.2.10:19100")
         self.assertIsNone(error)
         query.assert_awaited_once_with("node_uname_info")
 
@@ -93,9 +93,9 @@ class ServerMetricResolutionTest(unittest.IsolatedAsyncioTestCase):
             service_id=node_service.id,
             name="host-metrics",
             runtime_name="node-exporter",
-            metric_instance="139.196.175.226:19100",
+            metric_instance="192.0.2.10:19100",
         )
-        rows = [{"metric": {"instance": "139.196.175.226:29100"}}]
+        rows = [{"metric": {"instance": "192.0.2.10:29100"}}]
         with (
             patch.object(
                 resolution, "AsyncSessionLocal", return_value=_SessionContext()
@@ -125,7 +125,7 @@ class ServerMetricResolutionTest(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         rows = [
-            {"metric": {"instance": "139.196.175.226:9100", "nodename": "web-01"}},
+            {"metric": {"instance": "192.0.2.10:9100", "nodename": "web-01"}},
             {"metric": {"instance": "10.0.0.9:9100", "nodename": "other"}},
         ]
         with (
@@ -150,14 +150,14 @@ class ServerMetricResolutionTest(unittest.IsolatedAsyncioTestCase):
                 _server()
             )
 
-        self.assertEqual(instance, "139.196.175.226:9100")
+        self.assertEqual(instance, "192.0.2.10:9100")
         self.assertIsNone(error)
         query.assert_awaited_once_with("node_uname_info")
 
     async def test_multiple_host_metric_instances_remain_ambiguous(self) -> None:
         rows = [
-            {"metric": {"instance": "139.196.175.226:19100"}},
-            {"metric": {"instance": "139.196.175.226:29100"}},
+            {"metric": {"instance": "192.0.2.10:19100"}},
+            {"metric": {"instance": "192.0.2.10:29100"}},
         ]
         with (
             patch.object(
