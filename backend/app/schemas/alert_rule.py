@@ -9,9 +9,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 Severity = Literal["info", "warning", "critical"]
 RuntimeState = Literal["disabled", "inactive", "pending", "firing", "unknown"]
-_ALERT_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,199}")
-_DURATION = re.compile(r"(?:0|[1-9][0-9]*)(?:ms|s|m|h|d|w|y)")
-_LABEL_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_ALERT_NAME_PATTERN = r"^[A-Za-z_][A-Za-z0-9_]{0,199}$"
+_DURATION_PATTERN = r"^(?:0|[1-9][0-9]*)(?:ms|s|m|h|d|w|y)$"
+_LABEL_NAME_PATTERN = r"^[A-Za-z_][A-Za-z0-9_]*$"
+_ALERT_NAME = re.compile(_ALERT_NAME_PATTERN)
+_DURATION = re.compile(_DURATION_PATTERN)
+_LABEL_NAME = re.compile(_LABEL_NAME_PATTERN)
 
 
 def _required(value: str) -> str:
@@ -46,14 +49,60 @@ def _labels(value: dict[str, str]) -> dict[str, str]:
 
 
 class AlertRuleBase(BaseModel):
-    name: str = Field(max_length=200)
-    expression: str = Field(max_length=5000)
-    duration: str = Field(default="0m", max_length=30)
-    severity: Severity = "warning"
-    summary: str = Field(max_length=500)
-    description: str | None = Field(default=None, max_length=2000)
-    labels: dict[str, str] = Field(default_factory=dict)
-    enabled: bool = True
+    name: str = Field(
+        max_length=200,
+        description=(
+            "Prometheus 预警规则机器标识符，不是展示标题；必须以英文字母或下划线开头，"
+            "且只能包含英文字母、数字和下划线。"
+        ),
+        examples=["NodeCpuUsageHigh"],
+        json_schema_extra={"pattern": _ALERT_NAME_PATTERN},
+    )
+    expression: str = Field(
+        max_length=5000,
+        description="返回需要预警的时间序列的 PromQL 表达式。",
+        examples=[
+            '100 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100 > 80'
+        ],
+    )
+    duration: str = Field(
+        default="0m",
+        max_length=30,
+        description=(
+            "Prometheus for 持续时间：表达式必须连续成立这么久才触发；格式例如 0m、5m、1h。"
+        ),
+        examples=["5m"],
+        json_schema_extra={"pattern": _DURATION_PATTERN},
+    )
+    severity: Severity = Field(
+        default="warning",
+        description="预警严重级别。",
+    )
+    summary: str = Field(
+        max_length=500,
+        description="面向运维人员展示的中文预警摘要，不要把规则标识符写在这里。",
+        examples=["服务器 CPU 占用率持续超过 80%"],
+    )
+    description: str | None = Field(
+        default=None,
+        max_length=2000,
+        description="可选的处置说明；没有内容时省略该字段。",
+    )
+    labels: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "可选的额外 Prometheus 标签；标签名只能包含英文字母、数字和下划线，"
+            "且不能包含 severity。没有标签时省略该字段，不要传 null。"
+        ),
+        examples=[{"team": "ops"}],
+        json_schema_extra={
+            "propertyNames": {"pattern": _LABEL_NAME_PATTERN},
+        },
+    )
+    enabled: bool = Field(
+        default=True,
+        description="创建后是否立即启用并同步到 Prometheus。",
+    )
 
     _clean_required = field_validator("name", "expression", "summary")(_required)
 

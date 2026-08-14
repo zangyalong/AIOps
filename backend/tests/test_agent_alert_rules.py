@@ -4,8 +4,11 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from app.agents.tools import alert_rules
+from pydantic import ValidationError
+
+from app.agents.tools import alert_rules, catalog
 from app.operations.executors import alert_rule as alert_rule_executor
+from app.operations.schemas import OperationCall, OperationContext
 
 
 class _SessionContext:
@@ -17,6 +20,25 @@ class _SessionContext:
 
 
 class AgentAlertRuleToolTest(unittest.IsolatedAsyncioTestCase):
+    def test_tool_schema_exposes_machine_readable_parameter_constraints(self) -> None:
+        schema = alert_rules.create_alert_rule.args_schema.model_json_schema()
+        properties = schema["properties"]
+
+        self.assertEqual(
+            properties["name"]["pattern"],
+            "^[A-Za-z_][A-Za-z0-9_]{0,199}$",
+        )
+        self.assertIn("机器标识符", properties["name"]["description"])
+        self.assertEqual(properties["name"]["examples"], ["NodeCpuUsageHigh"])
+        self.assertEqual(
+            properties["duration"]["pattern"],
+            "^(?:0|[1-9][0-9]*)(?:ms|s|m|h|d|w|y)$",
+        )
+        self.assertEqual(
+            properties["labels"]["propertyNames"]["pattern"],
+            "^[A-Za-z_][A-Za-z0-9_]*$",
+        )
+
     async def test_create_alert_rule_reuses_service_validation_and_apply(self) -> None:
         saved = SimpleNamespace(
             name="NodeDown",
@@ -57,17 +79,35 @@ class AgentAlertRuleToolTest(unittest.IsolatedAsyncioTestCase):
         with patch.object(
             alert_rule_executor.alert_rule_service, "create_rule", AsyncMock()
         ) as create_rule:
-            result = await alert_rules.create_alert_rule.ainvoke(
-                {
-                    "name": "bad-name",
-                    "expression": "up == 0",
-                    "summary": "节点不可用",
-                }
-            )
+            with self.assertRaises(ValidationError):
+                await alert_rules.create_alert_rule.ainvoke(
+                    {
+                        "name": "bad-name",
+                        "expression": "up == 0",
+                        "summary": "节点不可用",
+                    }
+                )
 
         create_rule.assert_not_awaited()
-        self.assertFalse(result.ok)
-        self.assertIn("参数校验失败", result.message)
+
+    async def test_broker_rejects_invalid_rule_before_building_approval(self) -> None:
+        with self.assertRaises(ValidationError):
+            await catalog.OPERATION_BROKER.aprepare(
+                OperationCall(
+                    id="rule-invalid",
+                    name="create_alert_rule",
+                    args={
+                        "name": "CPU 占用过高",
+                        "expression": "up == 0",
+                        "summary": "节点不可用",
+                    },
+                ),
+                OperationContext(
+                    actor_id="operator-1",
+                    actor_role="operator",
+                    run_mode="interactive",
+                ),
+            )
 
 
 if __name__ == "__main__":
