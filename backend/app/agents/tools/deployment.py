@@ -4,11 +4,16 @@ from __future__ import annotations
 
 from langchain_core.tools import tool
 
+from app.agents.tools.tool_schema import ServerIdentifier, ToolInputModel
 from app.operations.executors import deployment
 from app.operations.schemas import OperationResult
 
 
-@tool
+class DeployServerEnvironmentInput(ToolInputModel):
+    server_name: ServerIdentifier
+
+
+@tool(args_schema=DeployServerEnvironmentInput)
 async def deploy_server_environment(server_name: str) -> OperationResult:
     """把服务器页面保存的环境配置自动部署到目标服务器。
 

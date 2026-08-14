@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from langchain_core.tools import tool
-from pydantic import BaseModel, Field, field_validator
+from pydantic import Field, field_validator
 
+from app.agents.tools.tool_schema import AbsolutePath, ServerIdentifier, ToolInputModel
 from app.db.session import AsyncSessionLocal
 from app.operations.schemas import OperationResult
 from app.services import (
@@ -21,12 +22,24 @@ def _clean_text(value: str) -> str:
     return value
 
 
-class GrantServerFileWriteAccessInput(BaseModel):
-    server_name: str = Field(min_length=1, max_length=100)
-    service_name: str = Field(min_length=1, max_length=200)
-    path: str = Field(min_length=1, max_length=4096)
-    environment: str = Field(default="", max_length=100)
-    instance_name: str = Field(default="", max_length=200)
+class GrantServerFileWriteAccessInput(ToolInputModel):
+    server_name: ServerIdentifier
+    service_name: str = Field(
+        min_length=1,
+        max_length=200,
+        description="服务目录中的逻辑服务名，不要填写 systemd 单元名或 Docker 容器名。",
+    )
+    path: AbsolutePath
+    environment: str = Field(
+        default="",
+        max_length=100,
+        description="同名服务存在多个环境时填写；不确定时先查询服务目录。",
+    )
+    instance_name: str = Field(
+        default="",
+        max_length=200,
+        description="同一服务在该服务器存在多个实例时填写目录中的实例名。",
+    )
 
     _clean_required = field_validator("server_name", "service_name")(_clean_text)
 

@@ -19,8 +19,15 @@ from typing import Annotated, Literal
 
 import asyncssh
 from langchain_core.tools import tool
-from pydantic import BaseModel, Field, field_validator
+from pydantic import Field, field_validator
 
+from app.agents.tools.tool_schema import (
+    CatalogServiceName,
+    EnvironmentName,
+    RuntimeName,
+    ServerIdentifier,
+    ToolInputModel,
+)
 from app.db.session import AsyncSessionLocal
 from app.models.server import Server
 from app.operations.executors import service_catalog as service_catalog_executor
@@ -76,12 +83,14 @@ _SYSTEM_LISTENER_NAMES = frozenset(
 )
 
 
-class ServiceRegistrationInput(BaseModel):
+class ServiceRegistrationInput(ToolInputModel):
     """模型从发现结果中选择的一项服务目录注册映射。"""
 
-    service_name: str = Field(min_length=1, max_length=200)
-    runtime_type: RuntimeType
-    runtime_name: str = Field(min_length=1, max_length=200)
+    service_name: CatalogServiceName
+    runtime_type: RuntimeType = Field(
+        description="发现结果返回的运行时类型，必须与所选候选项一致。"
+    )
+    runtime_name: RuntimeName
 
     @field_validator("service_name", "runtime_name")
     @classmethod
@@ -94,11 +103,16 @@ class ServiceRegistrationInput(BaseModel):
         return value
 
 
-class RegisterServerServicesInput(BaseModel):
-    server_name: str = Field(min_length=1, max_length=100)
-    environment: str = Field(default="prod", min_length=1, max_length=50)
+class RegisterServerServicesInput(ToolInputModel):
+    server_name: ServerIdentifier
+    environment: EnvironmentName = "prod"
     services: list[ServiceRegistrationInput] = Field(
-        min_length=1, max_length=_MAX_CANDIDATES
+        min_length=1,
+        max_length=_MAX_CANDIDATES,
+        description=(
+            "从 discover_server_services 返回的 candidates 中选择的未登记项；"
+            "runtime_type 和 runtime_name 必须原样复制，可按业务语义调整 service_name。"
+        ),
     )
 
     @field_validator("server_name")

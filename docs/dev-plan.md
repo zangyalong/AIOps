@@ -320,6 +320,10 @@
   - `create_alert_rule` 登记为中风险写工具，审批后复用页面相同的 Pydantic 字段校验、PromQL 校验、数据库写入和 Prometheus 热重载
   - 工具输入直接复用 `AlertRuleCreate`，向模型暴露规则名、持续时间和标签名的正则、说明及示例；非法参数在生成审批卡前返回给 Agent 自行修正
   - 代码与自动化检查完成后保持未勾选，等用户从对话创建真实规则并在预警规则页面看到运行状态
+- [ ] **统一 Agent 工具入参 Schema 契约**
+  - 参考 Pi Agent、LangChain 和 OpenAI Agents SDK：所有模型可见工具使用显式 Pydantic Schema、共享约束类型和 `extra=forbid`，Broker 在审批前复用同一模型校验并把错误返回 Agent
+  - 模型绑定前从原始 Pydantic Schema 构造最终出站定义，保留 LangChain 子模型裁剪会丢失的正则、示例和 `additionalProperties=false`，同时隐藏后端解析器注入的哈希与运行时身份
+  - 契约测试逐个检查已注册工具的最终出站 Schema；代码与自动化检查完成后保持未勾选，等用户真实对话验证错误参数会自动纠正
 
 - [X] **扩充运维工具 + 给工具调用循环加步数上限**
   - 照 `query_servers`（`backend/app/agents/tools/servers.py`）的样子，再写几个运维领域工具（日志检索、告警查询、白名单命令执行等）

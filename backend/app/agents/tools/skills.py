@@ -1,12 +1,27 @@
 from __future__ import annotations
 
 from langchain_core.tools import tool
+from pydantic import Field
 
 from app.agents.skills import format_skill_content, load_skills
+from app.agents.tools.tool_schema import ToolInputModel
 from app.core.config import settings
 
 
-@tool("read_skill")
+class ReadSkillInput(ToolInputModel):
+    name: str = Field(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$",
+        description=(
+            "要读取的已安装 Skill 名称，必须从系统提示词的 available_skills 中原样选择；"
+            "不要传文件路径。"
+        ),
+        examples=["incident-analysis"],
+    )
+
+
+@tool("read_skill", args_schema=ReadSkillInput)
 async def read_skill(name: str) -> str:
     """按名称读取已安装 Skill 的完整教程。
 

@@ -9,12 +9,19 @@ import math
 import re
 import shlex
 from dataclasses import dataclass
-from typing import Literal
+from typing import Annotated, Literal
 
 import asyncssh
-from langchain_core.tools import tool
-from pydantic import BaseModel, Field, field_validator
+from langchain_core.tools import InjectedToolArg, tool
+from pydantic import Field, field_validator
 
+from app.agents.tools.tool_schema import (
+    AbsolutePath,
+    FilenamePattern,
+    ServerIdentifier,
+    Sha256Digest,
+    ToolInputModel,
+)
 from app.db.session import AsyncSessionLocal
 from app.models.server import Server
 from app.operations.executors import server_file as server_file_executor
@@ -55,10 +62,10 @@ def _clean_absolute_path(value: str) -> str:
     return value
 
 
-class FindServerFilesInput(BaseModel):
-    server_name: str = Field(min_length=1, max_length=100)
-    root_path: str = Field(min_length=1, max_length=4096)
-    filename_pattern: str = Field(default="*", min_length=1, max_length=100)
+class FindServerFilesInput(ToolInputModel):
+    server_name: ServerIdentifier
+    root_path: AbsolutePath
+    filename_pattern: FilenamePattern = "*"
 
     _clean_root = field_validator("root_path")(_clean_absolute_path)
 
@@ -79,9 +86,9 @@ class FindServerFilesInput(BaseModel):
         return value
 
 
-class ReadServerFileInput(BaseModel):
-    server_name: str = Field(min_length=1, max_length=100)
-    path: str = Field(min_length=1, max_length=4096)
+class ReadServerFileInput(ToolInputModel):
+    server_name: ServerIdentifier
+    path: AbsolutePath
 
     _clean_path = field_validator("path")(_clean_absolute_path)
 
@@ -95,37 +102,30 @@ class ReadServerFileInput(BaseModel):
 
 
 class PreviewServerFileUpdateInput(ReadServerFileInput):
-    new_content: str = Field(max_length=MAX_FILE_BYTES)
+    new_content: str = Field(
+        max_length=MAX_FILE_BYTES,
+        description=(
+            "普通文本文件的完整新内容；不能包含密码、Token、私钥、脱敏占位符或空字符。"
+        ),
+    )
 
 
 class UpdateServerFileInput(PreviewServerFileUpdateInput):
     # 三项由 Operation Broker 在审批前根据本次 new_content 重建。保留在执行 schema 中，
     # 是为了把冻结参数原样交给审批后的同一个 Tool；模型无需生成或复制它们。
-    expected_sha256: str = Field(
+    expected_sha256: Annotated[Sha256Digest, InjectedToolArg] = Field(
         default="",
-        max_length=64,
         description="由后端审批前填充，Agent 不要自行生成",
     )
-    preview_hash: str = Field(
+    preview_hash: Annotated[Sha256Digest, InjectedToolArg] = Field(
         default="",
-        max_length=64,
         description="由后端审批前填充，Agent 不要自行生成",
     )
-    preview_diff: str = Field(
+    preview_diff: Annotated[str, InjectedToolArg] = Field(
         default="",
         max_length=MAX_DIFF_CHARS,
         description="由后端审批前填充，Agent 不要自行生成",
     )
-
-    @field_validator("expected_sha256", "preview_hash")
-    @classmethod
-    def validate_sha256(cls, value: str) -> str:
-        value = value.strip().lower()
-        if not value:
-            return ""
-        if not _SHA256_PATTERN.fullmatch(value):
-            raise ValueError("必须是 64 位 SHA-256 十六进制摘要")
-        return value
 
     @field_validator("preview_diff")
     @classmethod
@@ -138,9 +138,20 @@ ConfigScalar = str | int | float | bool | None
 
 
 class PreviewServerConfigPatchInput(ReadServerFileInput):
-    config_format: ConfigFormat
-    selector: str = Field(min_length=1, max_length=1024)
-    value: ConfigScalar
+    config_format: ConfigFormat = Field(
+        description="目标文件的结构化格式：dotenv、json 或 yaml。"
+    )
+    selector: str = Field(
+        min_length=1,
+        max_length=1024,
+        description=(
+            "dotenv 使用已有环境变量名；JSON/YAML 使用指向已有标量的 JSON Pointer。"
+        ),
+        examples=["/services/app/ports/0"],
+    )
+    value: ConfigScalar = Field(
+        description="要写入的非敏感标量，只能是字符串、数字、布尔值或 null。"
+    )
 
     @field_validator("selector")
     @classmethod
@@ -152,17 +163,19 @@ class PreviewServerConfigPatchInput(ReadServerFileInput):
 
 
 class PatchServerConfigInput(PreviewServerConfigPatchInput):
-    expected_sha256: str = Field(min_length=64, max_length=64)
-    preview_hash: str = Field(min_length=64, max_length=64)
-    preview_diff: str = Field(max_length=MAX_DIFF_CHARS)
-
-    @field_validator("expected_sha256", "preview_hash")
-    @classmethod
-    def validate_sha256(cls, value: str) -> str:
-        value = value.strip().lower()
-        if not _SHA256_PATTERN.fullmatch(value):
-            raise ValueError("必须是 64 位 SHA-256 十六进制摘要")
-        return value
+    expected_sha256: Annotated[Sha256Digest, InjectedToolArg] = Field(
+        default="",
+        description="由后端审批前填充，Agent 不要自行生成",
+    )
+    preview_hash: Annotated[Sha256Digest, InjectedToolArg] = Field(
+        default="",
+        description="由后端审批前填充，Agent 不要自行生成",
+    )
+    preview_diff: Annotated[str, InjectedToolArg] = Field(
+        default="",
+        max_length=MAX_DIFF_CHARS,
+        description="由后端审批前填充，Agent 不要自行生成",
+    )
 
     @field_validator("preview_diff")
     @classmethod
@@ -552,6 +565,51 @@ async def resolve_update_server_file_call(
     return OperationCall(id=call.id, name=call.name, args=args)
 
 
+async def resolve_patch_server_config_call(
+    call: OperationCall,
+    context: OperationContext,
+) -> OperationCall:
+    """审批前按本次标量修改重新生成冻结预览，内部哈希不再交给模型复制。"""
+
+    del context
+    args = call.normalized_args()
+    path = str(args["path"])
+    config_format = args["config_format"]
+    selector = str(args["selector"])
+    value = args.get("value")
+    validation_error = _validate_config_patch(path, config_format, selector, value)
+    if validation_error:
+        raise ValueError(f"已拒绝结构化配置修改：{validation_error}")
+
+    server, resolve_error = await _resolve_server(str(args["server_name"]))
+    if server is None:
+        raise ValueError(resolve_error or "服务器不存在")
+    preview, preview_error = await _preview_config_patch(
+        server,
+        path,
+        config_format,
+        selector,
+        value,
+    )
+    if preview is None:
+        raise ValueError(preview_error or "无法生成结构化配置预览")
+    if not preview.changed:
+        raise ValueError("配置项的新旧值相同，不需要提交修改审批")
+
+    args.update(
+        {
+            "server_name": server.name,
+            "path": preview.path,
+            "config_format": preview.config_format,
+            "selector": preview.selector,
+            "expected_sha256": preview.expected_sha256,
+            "preview_hash": preview.preview_hash,
+            "preview_diff": preview.preview_diff,
+        }
+    )
+    return OperationCall(id=call.id, name=call.name, args=args)
+
+
 @tool(args_schema=FindServerFilesInput)
 async def find_server_files(
     server_name: str,
@@ -716,9 +774,9 @@ async def patch_server_config(
     config_format: ConfigFormat,
     selector: str,
     value: ConfigScalar,
-    expected_sha256: str,
-    preview_hash: str,
-    preview_diff: str,
+    expected_sha256: str = "",
+    preview_hash: str = "",
+    preview_diff: str = "",
 ) -> OperationResult:
     """审批后原子修改已授权 dotenv、JSON 或 YAML 文件中的一个非敏感标量。
 

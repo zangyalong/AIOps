@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 from pydantic import ValidationError
 
 from app.agents.tools import alert_rules, catalog
+from app.agents.tools.tool_schema import model_tool_parameters
 from app.operations.executors import alert_rule as alert_rule_executor
 from app.operations.schemas import OperationCall, OperationContext
 
@@ -21,7 +22,7 @@ class _SessionContext:
 
 class AgentAlertRuleToolTest(unittest.IsolatedAsyncioTestCase):
     def test_tool_schema_exposes_machine_readable_parameter_constraints(self) -> None:
-        schema = alert_rules.create_alert_rule.args_schema.model_json_schema()
+        schema = model_tool_parameters(alert_rules.create_alert_rule)
         properties = schema["properties"]
 
         self.assertEqual(

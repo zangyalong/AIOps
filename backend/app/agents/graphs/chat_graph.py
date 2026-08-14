@@ -40,6 +40,7 @@ from app.agents.tools.catalog import (
     get_operation_spec,
     is_write_tool,
 )
+from app.agents.tools.tool_schema import model_tool_definitions
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.operations.schemas import (
@@ -91,7 +92,7 @@ def _base_llm() -> ChatOpenAI:
 
 @cache
 def _ops_llm(allow_write_tools: bool) -> Runnable:
-    return _base_llm().bind_tools(_ops_tools(allow_write_tools))
+    return _base_llm().bind_tools(model_tool_definitions(_ops_tools(allow_write_tools)))
 
 
 def _ops_tools(allow_write_tools: bool) -> tuple[BaseTool, ...]:

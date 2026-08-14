@@ -49,6 +49,8 @@ def _labels(value: dict[str, str]) -> dict[str, str]:
 
 
 class AlertRuleBase(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(
         max_length=200,
         description=(

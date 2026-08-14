@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from typing import Any, Literal
 
 from langchain_core.tools import tool
-from pydantic import BaseModel, ConfigDict, Field, SkipValidation, field_validator
+from pydantic import ConfigDict, Field, SkipValidation, field_validator
 
 from app.agents.tools.alerts import query_alerts
 from app.agents.tools.commands import run_diagnostic_command
@@ -23,6 +23,7 @@ from app.agents.tools.metrics import (
 )
 from app.agents.tools.root_read import inspect_host
 from app.agents.tools.server_files import (
+    MAX_FILE_BYTES,
     find_server_files,
     preview_server_config_patch,
     preview_server_file_update,
@@ -32,6 +33,11 @@ from app.agents.tools.server_log_config import preview_server_log_config
 from app.agents.tools.servers import query_servers
 from app.agents.tools.service_discovery import discover_server_services
 from app.agents.tools.service_topology import query_server_services
+from app.agents.tools.tool_schema import (
+    AbsolutePath,
+    FilenamePattern,
+    ToolInputModel,
+)
 from app.operations.schemas import OperationResult
 
 InvestigationArea = Literal[
@@ -106,7 +112,7 @@ _CHANGE_QUERY_PARAMETERS: dict[str, frozenset[str]] = {
 }
 
 
-class InvestigationParameters(BaseModel):
+class InvestigationParameters(ToolInputModel):
     """统一调查入口支持的全部可选参数；字段说明负责标明所属 area。"""
 
     # 对模型声明 additionalProperties=false，阻止它发明 time/instance/monitor_labels；
@@ -125,6 +131,7 @@ class InvestigationParameters(BaseModel):
     )
     level: str | None = Field(
         default=None,
+        max_length=100,
         description="仅 area=logs 使用的日志级别。",
     )
     minutes: int | None = Field(
@@ -138,10 +145,12 @@ class InvestigationParameters(BaseModel):
     )
     severity: str | None = Field(
         default=None,
+        max_length=100,
         description="仅 area=alerts 使用的告警级别。",
     )
     at: str | None = Field(
         default=None,
+        max_length=100,
         description="仅 area=incident 使用的事件时间。",
     )
     window_minutes: int | None = Field(
@@ -152,6 +161,7 @@ class InvestigationParameters(BaseModel):
     )
     service: str | None = Field(
         default=None,
+        max_length=200,
         description=(
             "area=logs 或 incident 使用的业务服务名。查日志时 target 填服务器名称，"
             "service 填服务名，query 只填可选的日志正文关键词。"
@@ -159,26 +169,28 @@ class InvestigationParameters(BaseModel):
     )
     environment: str | None = Field(
         default=None,
+        max_length=100,
         description="仅 area=incident 使用的环境筛选。",
     )
     kind: Literal["metrics", "logs", "alerts"] | None = Field(
         default=None,
         description="仅 area=visualization 使用的 Grafana 图表类型。",
     )
-    root_path: str | None = Field(
+    root_path: AbsolutePath | None = Field(
         default=None,
         description="仅 area=change、query=find-files 使用。",
     )
-    filename_pattern: str | None = Field(
+    filename_pattern: FilenamePattern | None = Field(
         default=None,
         description="仅 area=change、query=find-files 使用。",
     )
-    path: str | None = Field(
+    path: AbsolutePath | None = Field(
         default=None,
         description="仅 area=change 的文件读取或变更预览使用。",
     )
     new_content: str | None = Field(
         default=None,
+        max_length=MAX_FILE_BYTES,
         description="仅 area=change、query=file-update-preview 使用。",
     )
     config_format: Literal["dotenv", "json", "yaml"] | None = Field(
@@ -187,6 +199,7 @@ class InvestigationParameters(BaseModel):
     )
     selector: str | None = Field(
         default=None,
+        max_length=1024,
         description="仅 area=change、query=config-patch-preview 使用。",
     )
     value: Any = Field(
@@ -197,7 +210,7 @@ class InvestigationParameters(BaseModel):
     )
 
 
-class InvestigationInput(BaseModel):
+class InvestigationInput(ToolInputModel):
     area: InvestigationArea = Field(
         description=(
             "证据领域：servers/services/runtime/host/metrics/logs/alerts/"

@@ -7,11 +7,19 @@ import json
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Annotated, Literal
 
-from langchain_core.tools import tool
-from pydantic import BaseModel, Field, field_validator
+from langchain_core.tools import InjectedToolArg, tool
+from pydantic import Field, field_validator
 
+from app.agents.tools.tool_schema import (
+    EnvironmentName,
+    LogServiceName,
+    RuntimeName,
+    ServerIdentifier,
+    Sha256Digest,
+    ToolInputModel,
+)
 from app.db.session import AsyncSessionLocal
 from app.operations.executors import log_config as log_config_executor
 from app.operations.schemas import OperationCall, OperationContext, OperationResult
@@ -22,12 +30,11 @@ LogSource = Literal["journal", "docker", "none"]
 _SAFE_SERVICE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,199}")
 _SAFE_ENVIRONMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,49}")
 _SAFE_RUNTIME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.@:-]{0,199}")
-_HASH = re.compile(r"[0-9a-f]{64}")
 _MAX_MAPPINGS = 100
 
 
-class PreviewServerLogConfigInput(BaseModel):
-    server_name: str = Field(min_length=1, max_length=100)
+class PreviewServerLogConfigInput(ToolInputModel):
+    server_name: ServerIdentifier
 
     @field_validator("server_name")
     @classmethod
@@ -38,22 +45,31 @@ class PreviewServerLogConfigInput(BaseModel):
         return value
 
 
-class LogMappingItem(BaseModel):
-    service_name: str
-    environment: str
-    runtime_type: RuntimeType
-    runtime_name: str
-    log_source: LogSource
+class LogMappingItem(ToolInputModel):
+    service_name: LogServiceName
+    environment: EnvironmentName
+    runtime_type: RuntimeType = Field(
+        description="日志配置预览返回的运行时类型，必须原样复制。"
+    )
+    runtime_name: RuntimeName
+    log_source: LogSource = Field(
+        description="预览建议的日志来源，必须原样复制；process 对应 none。"
+    )
 
 
-class ApplyServerLogConfigInput(BaseModel):
-    server_name: str = Field(min_length=1, max_length=100)
-    preview_hash: str = Field(
+class ApplyServerLogConfigInput(ToolInputModel):
+    server_name: ServerIdentifier
+    preview_hash: Annotated[Sha256Digest, InjectedToolArg] = Field(
         default="",
-        max_length=64,
         description="由后端审批前按本次所选 mappings 填充，Agent 不要自行生成",
     )
-    mappings: list[LogMappingItem] = Field(min_length=1, max_length=_MAX_MAPPINGS)
+    mappings: list[LogMappingItem] = Field(
+        min_length=1,
+        max_length=_MAX_MAPPINGS,
+        description=(
+            "从 preview_server_log_config 返回结果中选择的映射；每个字段必须原样复制。"
+        ),
+    )
 
     @field_validator("server_name")
     @classmethod
@@ -61,16 +77,6 @@ class ApplyServerLogConfigInput(BaseModel):
         value = value.strip()
         if not value:
             raise ValueError("不能为空")
-        return value
-
-    @field_validator("preview_hash")
-    @classmethod
-    def validate_hash(cls, value: str) -> str:
-        value = value.strip().lower()
-        if not value:
-            return ""
-        if not _HASH.fullmatch(value):
-            raise ValueError("必须是 64 位 SHA-256 十六进制摘要")
         return value
 
 

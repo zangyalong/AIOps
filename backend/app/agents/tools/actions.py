@@ -5,21 +5,22 @@ from __future__ import annotations
 from typing import Annotated
 
 from langchain_core.tools import InjectedToolArg, tool
-from pydantic import BaseModel, Field, field_validator
+from pydantic import Field, field_validator
 
+from app.agents.tools.tool_schema import (
+    ContainerName,
+    ServerIdentifier,
+    ToolInputModel,
+)
 from app.operations.executors import compose_recreate, service_control
 from app.operations.executors.service_control import RuntimeType
 from app.operations.schemas import OperationResult
 
 
-class ServiceControlInput(BaseModel):
+class ServiceControlInput(ToolInputModel):
     """模型只表达业务目标；运行时身份由审批前的目录解析器注入。"""
 
-    server_name: str = Field(
-        min_length=1,
-        max_length=100,
-        description="已纳管服务器名称或 IP，例如 web-01。",
-    )
+    server_name: ServerIdentifier
     service_name: str = Field(
         min_length=1,
         max_length=200,
@@ -46,6 +47,11 @@ class ServiceControlInput(BaseModel):
     @classmethod
     def clean_text(cls, value: str) -> str:
         return value.strip()
+
+
+class RecreateComposeServiceInput(ToolInputModel):
+    server_name: ServerIdentifier
+    container_name: ContainerName
 
 
 async def _control(
@@ -152,7 +158,7 @@ async def restart_service(
     )
 
 
-@tool
+@tool(args_schema=RecreateComposeServiceInput)
 async def recreate_compose_service(
     server_name: str,
     container_name: str,

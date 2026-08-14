@@ -27,6 +27,7 @@ from app.agents.tools.file_access import grant_server_file_write_access
 from app.agents.tools.investigation import investigate
 from app.agents.tools.server_files import (
     patch_server_config,
+    resolve_patch_server_config_call,
     resolve_update_server_file_call,
     update_server_file,
 )
@@ -410,6 +411,8 @@ def _registered_write_operation(write_spec: WriteToolSpec) -> RegisteredOperatio
             in {start_service.name, stop_service.name, restart_service.name}
             else resolve_update_server_file_call
             if write_spec.tool.name == update_server_file.name
+            else resolve_patch_server_config_call
+            if write_spec.tool.name == patch_server_config.name
             else resolve_apply_server_log_config_call
             if write_spec.tool.name == apply_server_log_config.name
             else None
