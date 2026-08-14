@@ -19,10 +19,16 @@ class ChatRun(Base, UUIDMixin):
             name="ck_chat_runs_status",
         ),
         Index("ix_chat_runs_conversation_status", "conversation_id", "status"),
+        Index("ix_chat_runs_memory_server_id", "memory_server_id"),
     )
 
     conversation_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    # 后端从界面默认目标或用户正文中唯一命中的已纳管服务器；仅用于服务器记忆，
+    # 不是模型自报的目标。删除服务器时保留 Chat Run 审计并把这里置空。
+    memory_server_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("servers.id", ondelete="SET NULL"), nullable=True
     )
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="running", server_default="running"

@@ -15,6 +15,7 @@ class ChatRunRecordServiceTest(unittest.IsolatedAsyncioTestCase):
             {
                 "id",
                 "conversation_id",
+                "memory_server_id",
                 "status",
                 "langgraph_thread_id",
                 "error_message",

@@ -25,8 +25,10 @@ from app.schemas.chat import OperationApprovalDecision
 from app.services import (
     chat_run_record_service,
     conversation_service,
+    conversation_summary_service,
     memory_service,
     message_service,
+    server_service,
 )
 
 
@@ -56,6 +58,15 @@ class PreparedChatTurn:
     graph_input: dict
     thread_id: str
     run_id: uuid.UUID
+
+
+@dataclass(frozen=True)
+class LoadedConversationHistory:
+    """近期原文及其前面已经压缩好的单会话摘要。"""
+
+    messages: list[BaseMessage]
+    summary: str | None = None
+    summary_updated_at: str | None = None
 
 
 def _stream_tool_args(value: object) -> dict[str, object]:
@@ -110,7 +121,7 @@ def _business_tool_names(message_or_chunk: object) -> set[str]:
 
 async def _load_history_messages(
     db: AsyncSession, conversation_id: uuid.UUID
-) -> list[BaseMessage]:
+) -> LoadedConversationHistory:
     """把历史消息行还原成可安全喂给模型的 LangChain 消息序列。
 
     前端会拿到全部消息，包括失败 Run 的现场；这里的模型历史更严格：assistant 只要带
@@ -118,9 +129,33 @@ async def _load_history_messages(
     残留结果都跳过，避免旧失败现场再次触发 OpenAI 兼容接口的 400。
     """
     history = await message_service.list_messages(db, conversation_id)
-    return _trim_history_messages(
-        _safe_history_messages(history),
-        max_chars=settings.memory_short_term_max_chars,
+    conversation = await conversation_service.get_conversation(db, conversation_id)
+    summary: str | None = None
+    summary_updated_at: str | None = None
+    if (
+        conversation is not None
+        and conversation.memory_summary
+        and conversation.memory_summary_through_message_id is not None
+    ):
+        for index, message in enumerate(history):
+            if message.id == conversation.memory_summary_through_message_id:
+                history = history[index + 1 :]
+                summary = conversation.memory_summary
+                summary_updated_at = (
+                    conversation.memory_summary_updated_at.isoformat()
+                    if conversation.memory_summary_updated_at is not None
+                    else ""
+                )
+                break
+
+    history_budget = max(settings.memory_short_term_max_chars - len(summary or ""), 0)
+    return LoadedConversationHistory(
+        messages=_trim_history_messages(
+            _safe_history_messages(history),
+            max_chars=history_budget,
+        ),
+        summary=summary,
+        summary_updated_at=summary_updated_at,
     )
 
 
@@ -583,6 +618,7 @@ async def prepare_chat_turn(
     conversation_id: uuid.UUID,
     user_message: str,
     default_server: Server | None = None,
+    memory_server: Server | None = None,
 ) -> PreparedChatTurn:
     """先持久化用户消息并准备图输入，确保 API 返回 run_id 时历史中已经能看到用户提问。
 
@@ -594,16 +630,19 @@ async def prepare_chat_turn(
     # 短事务：加载历史（还原成真消息序列）+ 用户消息落库。用户这句先落库——即使后面 LLM 调用失败，
     # 至少用户发过什么是有记录的。开完就关，不占着连接跑后面的流式。
     async with AsyncSessionLocal() as db:
-        history_messages = await _load_history_messages(db, conversation_id)
+        history_context = await _load_history_messages(db, conversation_id)
         retrieved_memories = await memory_service.search_memories(
             db,
             scope_id=settings.operation_actor_id,
             query=user_message,
+            server_id=memory_server.id if memory_server is not None else None,
+            server_name=memory_server.name if memory_server is not None else None,
         )
         chat_run = await chat_run_record_service.create_chat_run(
             db,
             conversation_id=conversation_id,
             langgraph_thread_id=thread_id,
+            memory_server_id=(memory_server.id if memory_server is not None else None),
         )
         try:
             await message_service.create_message(
@@ -626,7 +665,7 @@ async def prepare_chat_turn(
         thread_id=thread_id,
         run_id=chat_run.id,
         graph_input={
-            "messages": [*history_messages, HumanMessage(user_message)],
+            "messages": [*history_context.messages, HumanMessage(user_message)],
             "allow_write_tools": True,
             "approval": None,
             "operation_execution_id": str(chat_run.id),
@@ -648,8 +687,19 @@ async def prepare_chat_turn(
                     if default_server is not None
                     else None
                 ),
+                "conversation_summary": (
+                    {
+                        "content": history_context.summary,
+                        "updated_at": history_context.summary_updated_at or "",
+                    }
+                    if history_context.summary
+                    else None
+                ),
                 "long_term_memories": [
                     {
+                        "scope_type": memory.scope_type,
+                        "server_id": memory.server_id,
+                        "server_name": memory.server_name,
                         "category": memory.category,
                         "content": memory.content,
                         "updated_at": memory.updated_at,
@@ -715,16 +765,41 @@ async def consolidate_chat_run_memories(
     conversation_id: uuid.UUID,
     run_id: uuid.UUID,
 ) -> None:
-    """Chat Run 发出 done 后后台整理记忆；失败不影响已经完成的用户回答。"""
-    async with AsyncSessionLocal() as db:
-        result = await memory_service.consolidate_run_memories(
-            db,
-            scope_id=settings.operation_actor_id,
-            conversation_id=conversation_id,
-            run_id=run_id,
-        )
-    if result.added_or_updated or result.deleted:
-        print(
-            f"[memory] Chat Run {run_id}：写入/更新 {result.added_or_updated} 条，"
-            f"停用 {result.deleted} 条，跳过 {result.skipped} 条"
-        )
+    """Chat Run 完成后整理两级长期记忆，并按需滚动压缩会话历史。"""
+    try:
+        async with AsyncSessionLocal() as db:
+            chat_run = await chat_run_record_service.get_chat_run(db, run_id)
+            memory_server = (
+                await server_service.get_server(db, chat_run.memory_server_id)
+                if chat_run is not None and chat_run.memory_server_id is not None
+                else None
+            )
+            result = await memory_service.consolidate_run_memories(
+                db,
+                scope_id=settings.operation_actor_id,
+                conversation_id=conversation_id,
+                run_id=run_id,
+                server_id=(memory_server.id if memory_server is not None else None),
+                server_name=(memory_server.name if memory_server is not None else None),
+            )
+        if result.added_or_updated or result.deleted:
+            print(
+                f"[memory] Chat Run {run_id}：写入/更新 {result.added_or_updated} 条，"
+                f"停用 {result.deleted} 条，跳过 {result.skipped} 条"
+            )
+    except Exception as exc:  # noqa: BLE001 - 长期记忆失败不能阻止会话摘要
+        print(f"[memory] Chat Run {run_id} 长期记忆整理失败：{exc}")
+
+    try:
+        async with AsyncSessionLocal() as db:
+            summary_result = await conversation_summary_service.compact_conversation(
+                db,
+                conversation_id,
+            )
+        if summary_result.updated:
+            print(
+                f"[memory] 会话 {conversation_id} 已压缩 "
+                f"{summary_result.summarized_messages} 条旧消息"
+            )
+    except Exception as exc:  # noqa: BLE001 - 摘要失败不能反向改写 Chat Run 终态
+        print(f"[memory] 会话 {conversation_id} 历史压缩失败：{exc}")

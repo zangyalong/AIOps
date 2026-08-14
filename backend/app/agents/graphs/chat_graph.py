@@ -25,6 +25,7 @@ from langgraph.types import interrupt
 
 from app.agents.presentation import compact_narration, restore_truncated_tool_links
 from app.agents.prompts import (
+    ConversationSummaryContext,
     DefaultServerContext,
     LongTermMemoryContext,
     build_ops_system_prompt,
@@ -252,15 +253,28 @@ async def ops_agent_node(state: ChatState) -> dict:
             category=str(item.get("category") or ""),
             content=str(item.get("content") or ""),
             updated_at=str(item.get("updated_at") or ""),
+            scope_type=str(item.get("scope_type") or "global"),
+            server_id=str(item.get("server_id") or ""),
+            server_name=str(item.get("server_name") or ""),
         )
         for item in memory_items
         if isinstance(item, dict)
+    )
+    raw_summary = operation_context.get("conversation_summary")
+    conversation_summary = (
+        ConversationSummaryContext(
+            content=str(raw_summary.get("content") or ""),
+            updated_at=str(raw_summary.get("updated_at") or ""),
+        )
+        if isinstance(raw_summary, dict) and raw_summary.get("content")
+        else None
     )
     assembly = build_ops_system_prompt(
         tools=_ops_tools(allow_write_tools),
         allow_write_tools=allow_write_tools,
         run_mode=str(operation_context.get("run_mode") or ""),
         default_server=default_server,
+        conversation_summary=conversation_summary,
         long_term_memories=long_term_memories,
     )
     model_messages, explicit_skill, invocation_error = expand_explicit_skill_invocation(

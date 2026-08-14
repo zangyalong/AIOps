@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import AlertRulesView from '../views/AlertRulesView.vue'
 import ChatView from '../views/ChatView.vue'
 import IncidentsView from '../views/IncidentsView.vue'
+import MemoriesView from '../views/MemoriesView.vue'
 import ServicesView from '../views/ServicesView.vue'
 import ServersView from '../views/ServersView.vue'
 import SkillsView from '../views/SkillsView.vue'
@@ -26,6 +27,7 @@ export const router = createRouter({
     { path: '/services', name: 'services', component: ServicesView },
     { path: '/services/:serviceId', name: 'service-detail', component: ServicesView },
     { path: '/servers', name: 'servers', component: ServersView },
+    { path: '/memories', name: 'memories', component: MemoriesView },
     { path: '/skills', name: 'skills', component: SkillsView },
     { path: '/settings', redirect: '/skills' },
     { path: '/:pathMatch(.*)*', redirect: '/chat' },

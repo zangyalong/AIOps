@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     memory_candidate_limit: int = 200
     # 全量聊天记录仍留在 messages 表；只限制每轮送给模型的近期历史，避免上下文无限增长。
     memory_short_term_max_chars: int = 120_000
+    # 未摘要的安全历史超过阈值后，后台把旧完整轮次滚入摘要；近期原文至少按目标预算保留。
+    memory_conversation_summary_enabled: bool = True
+    memory_conversation_summary_trigger_chars: int = 80_000
+    memory_conversation_recent_chars: int = 40_000
+    memory_conversation_summary_input_chars: int = 60_000
+    memory_conversation_summary_max_chars: int = 8_000
 
     # ---- 可观测性数据源（PLG），本地默认地址，无认证 ----
     # 地址非敏感，进不进 .env 都行；真接了带 token 的远端再加 *_token 字段。

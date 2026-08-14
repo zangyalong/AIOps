@@ -41,18 +41,21 @@ Letta 用可编辑 memory blocks、对话摘要和外部记忆构建完整的 st
 ```text
 messages（完整、可审计聊天记录）
     │
-    ├─ 每轮开始：按完整用户轮次裁剪近期历史 ───────────┐
+    ├─ 每轮开始：会话滚动摘要 + 近期完整轮次 ──────────┐
     │                                                   │
-    └─ 成功 Run 结束：只取 user + 最终 assistant        │
-           │                                             │
-           ▼                                             ▼
-    DeepSeek JSON 抽取                           memories 相关性检索
-           │                                             │
-    ADD / UPDATE / DELETE                                │
-           │                                             │
-           └──────── PostgreSQL memories ────────────────┤
+    └─ 成功 Run 结束：                                   │
+           ├─ 只取 user + 最终 assistant → 长期记忆整理  │
+           └─ 超预算旧完整轮次 → 滚动会话摘要             │
+                    │                                     ▼
+                    ▼                           memories 两级相关性检索
+             DeepSeek JSON 整理                           │
+                    │                                     │
+          ADD / UPDATE / DELETE                           │
+                    │                                     │
+                    └──── PostgreSQL memories ────────────┤
                                                          ▼
-                                              <long_term_memories>
+                                      <conversation_summary>
+                                      <long_term_memories>
                                                          │
                                                          ▼
                                                    Ops Agent Prompt
@@ -65,9 +68,15 @@ LangGraph 图状态 ── AsyncPostgresSaver ── PostgreSQL checkpoint table
 
 | 数据 | 作用域 | 是否完整 | 用途 |
 | --- | --- | --- | --- |
-| `messages` | 单个 conversation | 是 | UI 历史、审计、失败现场 |
+| `messages` | 单个 conversation | 是 | UI 历史、审计、失败现场；压缩不删除原文 |
+| `conversations.memory_summary` | 单个 conversation | 否，滚动摘要 | 旧摘要 + 被淘汰完整轮次；与近期原文共同进入模型上下文 |
 | LangGraph checkpoint | 单个 Chat Run/thread | 图执行状态 | 审批中断和跨重启恢复；终态后删除 |
-| `memories` | 当前可信 actor，跨 conversation | 否，只存提炼事实 | 个性化、稳定环境线索、已确认决策、复用经验 |
+| `memories` 全局作用域 | 当前可信 actor，跨 conversation / server | 否，只存提炼事实 | 用户偏好、通用约定、跨服务器决策和经验 |
+| `memories` 服务器作用域 | 当前可信 actor + 已纳管服务器 UUID | 否，只存提炼事实 | 单台服务器的稳定环境线索、决策和经验 |
+
+每轮始终检索全局记忆。只有界面默认目标，或用户正文唯一命中服务器目录中的名称/IP 时，才追加
+该服务器记忆；正文同时命中多台服务器时不猜测。服务器被删除后，其记忆由外键级联删除，不会提升
+为全局记忆。
 
 ## 3. 记忆类别和时效性边界
 
@@ -84,9 +93,11 @@ LangGraph 图状态 ── AsyncPostgresSaver ── PostgreSQL checkpoint table
 
 - 整理器只读取本轮用户正文和最终回答，不读取 ToolMessage、日志和其它工具原始输出，降低日志 Prompt 注入进入长期记忆的风险。
 - 整理器输出经过 JSON、Pydantic、稳定键、类别、长度、敏感词和瞬时状态校验后才落库。
-- 记忆使用服务端 `operation_actor_id` 作为 scope，前端不能自报用户身份。
-- 删除使用软停用，保留纠正来源与审计语义；提供 `/memories` 查询、单条遗忘和全部清空 API。
+- 记忆使用服务端 `operation_actor_id` 作为 owner scope，前端不能自报用户身份；服务器 scope 只接受后端目录中的 UUID。
+- 删除使用软停用，保留纠正来源与审计语义；服务器本身被删除时，其服务器记忆级联删除。
+- `/memories` 支持按全局/服务器查看、手动新增、单条遗忘和按作用域清空；手动新增同样执行敏感信息与瞬时状态校验。
 - 记忆整理发生在 `done` 之后；失败只记日志，不会把已经完成的 Chat Run 改成失败。
+- 会话摘要也在 `done` 后按需生成，只读取用户正文和最终回答，不复制工具原文；摘要失败不会影响 Chat Run，原始消息永不改写。
 - PostgreSQL checkpoint 使用 LangGraph 安全类型白名单反序列化。
 - 进程重启只恢复尚未执行的 `waiting_approval`。执行中的 Run 和 Operation 仍失败关闭，绝不自动重放可能有副作用的工具。
 - checkpoint 和 `operation_records` 的待批操作 ID 必须完全一致才允许恢复，否则 Run 直接失败。
@@ -96,7 +107,7 @@ LangGraph 图状态 ── AsyncPostgresSaver ── PostgreSQL checkpoint table
 1. 当前是本地单用户模式，scope 使用 `operation_actor_id`；接入鉴权后应换成真实、不可伪造的用户/租户 ID。
 2. 关键词相关性检索适合当前数据量和中文运维实体名，但不等价于语义向量检索。配置独立 embedding 后可在 `memory_service.search_memories()` 内替换为 pgvector。
 3. 后台整理目前依附 FastAPI 进程内 Chat Run；进程恰好在回答完成后、整理前退出时，本轮记忆会延迟缺失。若需要强投递保证，可把同一个幂等服务挂到 arq 作业。
-4. 第一版没有让 Agent 自由调用“记住/遗忘”工具，避免工具选择干扰运维调查；用户可以通过明确纠正语句触发整理，或使用管理 API 遗忘。
+4. 第一版没有让 Agent 自由调用“记住/遗忘”工具，避免工具选择干扰运维调查；用户可以通过明确纠正语句触发整理，或在 Memory 页面手动新增/遗忘。
 5. 还没有 memory eval 数据集。需要持续收集“应该记 / 不该记 / 应该更新 / 检索是否相关”的真实样本，再调 Prompt 和阈值。
 
 ## 6. 参考资料

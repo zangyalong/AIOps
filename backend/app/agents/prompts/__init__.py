@@ -1,5 +1,6 @@
 from app.agents.prompts.core import OPS_CORE_PROMPT, SIMPLIFIED_CHINESE_REQUIREMENT
 from app.agents.prompts.runtime import (
+    ConversationSummaryContext,
     DefaultServerContext,
     LongTermMemoryContext,
     PromptAssembly,
@@ -11,6 +12,7 @@ __all__ = [
     "OPS_CORE_PROMPT",
     "OPS_SAFETY_BOUNDARY",
     "PromptAssembly",
+    "ConversationSummaryContext",
     "DefaultServerContext",
     "LongTermMemoryContext",
     "SIMPLIFIED_CHINESE_REQUIREMENT",

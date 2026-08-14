@@ -13,6 +13,7 @@ from app.services import (
     chat_run_record_service,
     chat_service,
     conversation_service,
+    memory_service,
     server_service,
 )
 from app.services.chat_run_service import ChatRun, ChatRunManager
@@ -49,6 +50,12 @@ async def chat(data: ChatRequest, request: Request, db: DBSession) -> ChatRunOut
                 status_code=422, detail="选择的默认服务器不存在或已删除"
             )
 
+    memory_server = memory_service.resolve_memory_server(
+        data.message,
+        await server_service.list_servers(db),
+        default_server,
+    )
+
     if data.conversation_id is None:
         new_title = conversation_service.make_title(data.message)
         conversation = await conversation_service.create_conversation(
@@ -70,6 +77,7 @@ async def chat(data: ChatRequest, request: Request, db: DBSession) -> ChatRunOut
         conversation.id,
         data.message,
         default_server=default_server,
+        memory_server=memory_server,
     )
     try:
         run = manager.start(

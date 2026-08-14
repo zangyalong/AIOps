@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,3 +43,19 @@ async def touch(db: AsyncSession, conversation_id: uuid.UUID) -> None:
         .values(updated_at=func.now())
     )
     await db.commit()
+
+
+async def save_memory_summary(
+    db: AsyncSession,
+    conversation: Conversation,
+    *,
+    summary: str,
+    through_message_id: uuid.UUID,
+    summarized_at: datetime,
+) -> Conversation:
+    conversation.memory_summary = summary
+    conversation.memory_summary_through_message_id = through_message_id
+    conversation.memory_summary_updated_at = summarized_at
+    await db.commit()
+    await db.refresh(conversation)
+    return conversation

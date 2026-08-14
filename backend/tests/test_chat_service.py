@@ -222,7 +222,7 @@ class ChatStreamTest(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 chat_service,
                 "_load_history_messages",
-                AsyncMock(return_value=[]),
+                AsyncMock(return_value=chat_service.LoadedConversationHistory([])),
             ),
             patch.object(
                 chat_service.chat_run_record_service,
@@ -244,6 +244,7 @@ class ChatStreamTest(unittest.IsolatedAsyncioTestCase):
                 conversation_id,
                 "检查默认服务器",
                 default_server=server,
+                memory_server=server,
             )
 
         self.assertEqual(

@@ -24,6 +24,7 @@ async def create_chat_run(
     *,
     conversation_id: uuid.UUID,
     langgraph_thread_id: str,
+    memory_server_id: uuid.UUID | None = None,
 ) -> ChatRun:
     return await chat_run_repository.create(
         db,
@@ -31,6 +32,7 @@ async def create_chat_run(
             conversation_id=conversation_id,
             status="running",
             langgraph_thread_id=langgraph_thread_id,
+            memory_server_id=memory_server_id,
         ),
     )
 

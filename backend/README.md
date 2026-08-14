@@ -93,6 +93,16 @@ cd backend
 uv run python scripts/migrate_chat_runs.py
 ```
 
+已经运行过基础 Memory 版本的开发库，还需要增加全局/服务器作用域、Chat Run 服务器绑定和
+会话滚动摘要字段：
+
+```bash
+cd backend
+uv run python scripts/migrate_memory_scopes.py
+```
+
+两个脚本都使用幂等 DDL，可以重复执行。全新数据库不需要手动迁移，启动时会直接创建完整表结构。
+
 LangGraph checkpoint 使用同一个 PostgreSQL 数据库。后端重启后会恢复仍在等待人工确认、且
 checkpoint 与 `operation_records` 完整匹配的审批断点；执行中的 Run 和操作结果未知，仍失败关闭并
 要求人工核验，不自动重放写操作。终态 Run 的 checkpoint 会删除，完整聊天记录继续保留在业务表中。
@@ -111,6 +121,11 @@ checkpoint 与 `operation_records` 完整匹配的审批断点；执行中的 Ru
 | `MEMORY_RETRIEVAL_LIMIT`       | `6`                        | 每轮最多注入的长期记忆条数                            |
 | `MEMORY_CANDIDATE_LIMIT`       | `200`                      | 关键词检索前最多读取的活跃候选数                      |
 | `MEMORY_SHORT_TERM_MAX_CHARS`  | `120000`                   | 每轮送给模型的近期完整历史字符预算                    |
+| `MEMORY_CONVERSATION_SUMMARY_ENABLED` | `true` | 是否在完成 Chat Run 后滚动压缩过长会话 |
+| `MEMORY_CONVERSATION_SUMMARY_TRIGGER_CHARS` | `80000` | 未摘要历史触发压缩的字符数 |
+| `MEMORY_CONVERSATION_RECENT_CHARS` | `40000` | 压缩后希望保留的近期原文字符预算 |
+| `MEMORY_CONVERSATION_SUMMARY_INPUT_CHARS` | `60000` | 单次送给摘要器的旧对话字符上限 |
+| `MEMORY_CONVERSATION_SUMMARY_MAX_CHARS` | `8000` | 滚动摘要最大字符数 |
 | `PROMETHEUS_BASE_URL`           | `http://localhost:9090`    | 指标查询                                              |
 | `LOKI_BASE_URL`                 | `http://localhost:3100`    | 日志查询                                              |
 | `LOKI_ORG_ID`                   | 空                           | 多租户 Loki 的组织 ID                                 |
@@ -194,9 +209,10 @@ uv run arq app.worker.WorkerSettings
 | `GET /chat/runs/active/{conversation_id}` | 查询对话当前活跃运行              |
 | `GET /chat/runs/{run_id}/events`          | 订阅或重连运行的 SSE 事件         |
 | `POST /chat/resume`                       | 恢复被人工审批门挂起的运行        |
-| `GET /memories`                           | 查看当前用户长期记忆              |
+| `GET /memories`                           | 按 `scope_type/server_id` 查看全局或服务器长期记忆 |
+| `POST /memories`                          | 手动新增经安全校验的长期记忆       |
 | `DELETE /memories/{id}`                   | 遗忘一条长期记忆                  |
-| `DELETE /memories`                        | 清空当前用户活跃长期记忆          |
+| `DELETE /memories`                        | 按作用域清空当前用户活跃长期记忆   |
 | `GET/POST /servers`                       | 查询、新增服务器                  |
 | `PATCH/DELETE /servers/{id}`              | 修改、删除服务器                  |
 | `POST /servers/{id}/test-connection`      | 测试 SSH 连接                     |

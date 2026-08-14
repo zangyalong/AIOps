@@ -48,6 +48,12 @@ const items = computed(() => [
     path: 'M5 4.5h14v6H5v-6Zm0 9h14v6H5v-6ZM8 7.5h.1M8 16.5h.1',
   },
   {
+    to: '/memories',
+    label: 'MEMORY',
+    shortLabel: 'MEMORY',
+    path: 'M8 5.5a4 4 0 0 1 8 0v.8a3.5 3.5 0 0 1 2.5 3.35v.7A3.5 3.5 0 0 1 16 13.7v.8a4 4 0 0 1-8 0v-.8a3.5 3.5 0 0 1-2.5-3.35v-.7A3.5 3.5 0 0 1 8 6.3v-.8ZM9 10h6M9.5 14h5',
+  },
+  {
     to: '/skills',
     label: 'SKILLS',
     shortLabel: 'SKILLS',
