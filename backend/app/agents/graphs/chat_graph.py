@@ -16,6 +16,7 @@ from langchain_core.messages import (
 from langchain_core.runnables import Runnable, RunnableConfig
 from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
@@ -23,7 +24,11 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import interrupt
 
 from app.agents.presentation import compact_narration, restore_truncated_tool_links
-from app.agents.prompts import DefaultServerContext, build_ops_system_prompt
+from app.agents.prompts import (
+    DefaultServerContext,
+    LongTermMemoryContext,
+    build_ops_system_prompt,
+)
 from app.agents.skills import expand_explicit_skill_invocation
 from app.agents.tools.catalog import (
     READ_TOOLS_BY_NAME,
@@ -240,11 +245,23 @@ async def ops_agent_node(state: ChatState) -> dict:
         and raw_default_server.get("ip_address")
         else None
     )
+    raw_memories = operation_context.get("long_term_memories")
+    memory_items = raw_memories if isinstance(raw_memories, list) else []
+    long_term_memories = tuple(
+        LongTermMemoryContext(
+            category=str(item.get("category") or ""),
+            content=str(item.get("content") or ""),
+            updated_at=str(item.get("updated_at") or ""),
+        )
+        for item in memory_items
+        if isinstance(item, dict)
+    )
     assembly = build_ops_system_prompt(
         tools=_ops_tools(allow_write_tools),
         allow_write_tools=allow_write_tools,
         run_mode=str(operation_context.get("run_mode") or ""),
         default_server=default_server,
+        long_term_memories=long_term_memories,
     )
     model_messages, explicit_skill, invocation_error = expand_explicit_skill_invocation(
         [*state["messages"], *protocol_repairs],
@@ -555,7 +572,9 @@ async def route_after_agent(
     return "tools"
 
 
-def build_chat_graph() -> CompiledStateGraph:
+def build_chat_graph(
+    checkpointer: BaseCheckpointSaver | None = None,
+) -> CompiledStateGraph:
     """构建统一 Ops Agent 图：调查自动执行，变更进入同一个审批门。"""
     builder = StateGraph(ChatState)
     builder.add_node("ops_agent", ops_agent_node)
@@ -567,4 +586,4 @@ def build_chat_graph() -> CompiledStateGraph:
     builder.add_edge("tools", "ops_agent")
     builder.add_edge("approval", "tools")
 
-    return builder.compile(checkpointer=MemorySaver())
+    return builder.compile(checkpointer=checkpointer or MemorySaver())

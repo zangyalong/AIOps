@@ -28,7 +28,7 @@
 | 5 | 事件生命周期 | ✅ 有 | `incidents` 一等实体，`FIRING/ACKNOWLEDGED/RESOLVED` 状态机，告警全 resolved 时自动 resolve，ack/resolve API |
 | 6 | 后台/事件驱动 | ✅ 有 | Alertmanager webhook → arq + Redis 队列 → 独立 worker 进程消费 |
 | 7 | 写操作/自动化+审批 | ⚠️ 半 | systemd/Docker 控制、文件更新、日志配置和规则创建接入真审批；固定参数网关、双端校验和执行审计已落地，仍缺鉴权、RBAC 和不可篡改审计存储 |
-| 8 | 知识/记忆/RAG | ❌ 无 | 无向量库/知识图谱/runbook 检索 |
+| 8 | 知识/记忆/RAG | ⚠️ 部分 | PostgreSQL 长期记忆支持抽取、合并、跨对话检索与遗忘；当前是关键词相关性，尚无向量语义检索/知识图谱/runbook RAG |
 | 9 | 可观测性/工程化 | ⚠️ 部分 | 已有后端单元测试、工具超时和 Chat Run 轨迹；仍无 Agent tracing/LangSmith 与系统化 eval 集 |
 | 10 | 通知/协作 | ❌ 无 | 推 Slack/IM 明确缓做，诊断只落库 + `GET /alerts` 可查 |
 | 11 | 鉴权/审计/RBAC/密钥 | ⚠️ 部分 | `operation_records` 记录调查与变更执行，审批身份由服务端配置；端点仍无正式 auth/RBAC，私钥仍以文件管理，审计日志尚不可篡改 |
@@ -122,7 +122,7 @@
 | 写操作 + **审批门控** | ⚠️ 固定写网关 + 真审批 + 执行审计，仍无正式鉴权/RBAC | ⚠️ 窄，且审批常缺/假（OSS 尤甚） | ✅ 真 workflow + 审批（PD/incident.io） |
 | **On-call / 排班 / 升级 / 通知路由** | ❌ **零** | ❌（少数有 sink 通知，如 K8sGPT/Robusta） | ✅✅ **命根子**（PD/Opsgenie/incident.io/Grafana） |
 | 复盘 / postmortem / 学习闭环 | ❌ | ❌（个别有记忆宣传） | ✅（incident.io/PD 强） |
-| 知识 / RAG / runbook | ❌ | ⚠️ 多为宣传（实测常是半成品） | ⚠️ 挂链接为主 |
+| 知识 / RAG / runbook | ⚠️ 长期 memory 已有，runbook RAG/图谱仍无 | ⚠️ 多为宣传（实测常是半成品） | ⚠️ 挂链接为主 |
 | **Agent 工程化（tracing/eval）** | ⚠️ 只有 print | ⚠️（OpenSRE 有 eval 套件、Cleric 有闭环度量） | ✅（Datadog 有 LLM judge eval 平台） |
 | UI / 看板 / SLA / 报表 | ⚠️ Chat+Servers+Services+Alerts+Incidents，无 SLA/审计看板 | ❌ 多为 CLI/Slack | ✅✅ 重 UI + MTTA/MTTR/Insights |
 | 对外 Status Page | ❌ | ❌ | ✅（incident.io 等） |
@@ -148,7 +148,7 @@
 4. **Agent 可观测性 / eval 集**（⚠️）——**这是让 AI「可靠」的关键**。Cleric 的话最扎心：「调查 agent 是个周末项目，让它可靠的那套系统才不是」。Datadog 专门建了带 LLM judge 的 eval 平台。AIOps 现在只有 print，改 prompt/换模型无法量化回归（方向四）。
 5. **UI 看板**（⚠️）——无告警页/事件页/时间线，运维「看不见」全局。
 6. **集成广度**（深而不广）——PLG 够学习，离真实环境的上百连接器还远（可借 Keep 的 provider 模型）。
-7. **知识 / RAG / runbook**、**对外 Status Page**、**报表/SLA/MTTR**（均 ❌）——次优先。
+7. **知识 / RAG / runbook**（memory 已有第一版，仍缺向量语义检索、知识图谱和 runbook RAG）、**对外 Status Page**、**报表/SLA/MTTR**——次优先。
 
 ---
 

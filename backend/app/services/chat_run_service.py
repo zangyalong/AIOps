@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -17,6 +17,7 @@ from app.services.chat_service import ChatStreamEvent
 
 ChatRunStatus = Literal["running", "waiting_approval", "completed", "failed"]
 EventProducer = Callable[[], AsyncIterator[ChatStreamEvent]]
+CompletionCallback = Callable[[uuid.UUID, uuid.UUID], Awaitable[None]]
 _CLOSED_STATUSES = frozenset({"waiting_approval", "completed", "failed"})
 
 
@@ -30,6 +31,8 @@ class ChatRun:
     pending_approval_actions: dict[str, dict] = field(default_factory=dict)
     task: asyncio.Task[None] | None = None
     condition: asyncio.Condition = field(default_factory=asyncio.Condition)
+    on_completed: CompletionCallback | None = None
+    completion_handled: bool = False
 
     @property
     def last_sequence(self) -> int:
@@ -70,6 +73,7 @@ class ChatRunManager:
         producer: EventProducer,
         *,
         run_id: str | None = None,
+        on_completed: CompletionCallback | None = None,
     ) -> ChatRun:
         active = self.get_active(conversation_id)
         if active is not None:
@@ -79,10 +83,47 @@ class ChatRunManager:
         run = ChatRun(
             id=run_id or uuid.uuid4().hex,
             conversation_id=conversation_id,
+            on_completed=on_completed,
         )
         self._runs[run.id] = run
         self._active_by_conversation[conversation_id] = run.id
         self._launch(run, producer)
+        return run
+
+    def restore_waiting_approval(
+        self,
+        *,
+        run_id: uuid.UUID,
+        conversation_id: uuid.UUID,
+        thread_id: str,
+        actions: list[dict],
+        on_completed: CompletionCallback | None = None,
+    ) -> ChatRun:
+        """从数据库与 PostgreSQL checkpoint 重建一个尚未执行的审批断点。"""
+        key = str(run_id)
+        run = ChatRun(
+            id=key,
+            conversation_id=conversation_id,
+            status="waiting_approval",
+            approval_thread_id=thread_id,
+            pending_approval_actions={
+                str(action["tool_call_id"]): dict(action)
+                for action in actions
+                if action.get("tool_call_id") and action.get("operation_id")
+            },
+            on_completed=on_completed,
+        )
+        run.events.append(
+            {
+                "type": "approval_required",
+                "seq": 1,
+                "thread_id": thread_id,
+                "conversation_id": str(conversation_id),
+                "actions": actions,
+            }
+        )
+        self._runs[key] = run
+        self._active_by_conversation[conversation_id] = key
         return run
 
     def get(self, run_id: str) -> ChatRun | None:
@@ -202,6 +243,16 @@ class ChatRunManager:
                 current = self._active_by_conversation.get(run.conversation_id)
                 if current == run.id:
                     self._active_by_conversation.pop(run.conversation_id, None)
+            if (
+                run.status == "completed"
+                and not run.completion_handled
+                and run.on_completed is not None
+            ):
+                run.completion_handled = True
+                try:
+                    await run.on_completed(run.conversation_id, uuid.UUID(run.id))
+                except Exception as exc:  # noqa: BLE001 - 记忆整理不能反向改写对话终态
+                    print(f"[memory] 整理 Chat Run {run.id} 失败：{exc}")
 
     def _trim_finished_runs(self) -> None:
         finished_ids = [

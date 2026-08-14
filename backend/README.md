@@ -8,6 +8,8 @@ AIOps 的 FastAPI 后端，负责业务 API、LangGraph Ops Agent 工作流、�
 
 - 服务器管理与 SSH 连通性测试
 - 多轮流式对话和会话历史；`chat_runs` 持久化每轮状态，消息正文只存在 `messages`
+- PostgreSQL LangGraph checkpoint：等待人工审批的图状态可跨后端重启恢复
+- 跨会话长期记忆：从成功对话提炼稳定偏好、环境约定、决策和经验，按当前问题检索注入
 - 工具调用旁白、工具状态与最终回答实时展示，刷新后按同一轨迹重建
 - 单一 Ops Agent 通过统一调查入口获取证据，通过结构化变更工具进入人工审批
 - Prometheus 指标、Loki 日志、Alertmanager 告警查询；指标工具可按服务器名/IP 自动解析 instance
@@ -91,8 +93,9 @@ cd backend
 uv run python scripts/migrate_chat_runs.py
 ```
 
-方案 B 仍使用内存 LangGraph checkpointer：后端重启后不能从审批断点继续，启动时会把遗留的
-`running` / `waiting_approval` Run 标成 `failed`；跨重启恢复留给后续持久化 checkpointer。
+LangGraph checkpoint 使用同一个 PostgreSQL 数据库。后端重启后会恢复仍在等待人工确认、且
+checkpoint 与 `operation_records` 完整匹配的审批断点；执行中的 Run 和操作结果未知，仍失败关闭并
+要求人工核验，不自动重放写操作。终态 Run 的 checkpoint 会删除，完整聊天记录继续保留在业务表中。
 
 ## 配置项
 
@@ -104,6 +107,10 @@ uv run python scripts/migrate_chat_runs.py
 | `DEEPSEEK_API_KEY`              | 空                           | DeepSeek API 密钥                                     |
 | `DEEPSEEK_BASE_URL`             | `https://api.deepseek.com` | OpenAI 兼容接口地址                                   |
 | `DEEPSEEK_MODEL`                | `deepseek-v4-flash`        | 对话、路由和回答模型                                  |
+| `MEMORY_ENABLED`               | `true`                     | 是否提炼并检索跨会话长期记忆                          |
+| `MEMORY_RETRIEVAL_LIMIT`       | `6`                        | 每轮最多注入的长期记忆条数                            |
+| `MEMORY_CANDIDATE_LIMIT`       | `200`                      | 关键词检索前最多读取的活跃候选数                      |
+| `MEMORY_SHORT_TERM_MAX_CHARS`  | `120000`                   | 每轮送给模型的近期完整历史字符预算                    |
 | `PROMETHEUS_BASE_URL`           | `http://localhost:9090`    | 指标查询                                              |
 | `LOKI_BASE_URL`                 | `http://localhost:3100`    | 日志查询                                              |
 | `LOKI_ORG_ID`                   | 空                           | 多租户 Loki 的组织 ID                                 |
@@ -187,6 +194,9 @@ uv run arq app.worker.WorkerSettings
 | `GET /chat/runs/active/{conversation_id}` | 查询对话当前活跃运行              |
 | `GET /chat/runs/{run_id}/events`          | 订阅或重连运行的 SSE 事件         |
 | `POST /chat/resume`                       | 恢复被人工审批门挂起的运行        |
+| `GET /memories`                           | 查看当前用户长期记忆              |
+| `DELETE /memories/{id}`                   | 遗忘一条长期记忆                  |
+| `DELETE /memories`                        | 清空当前用户活跃长期记忆          |
 | `GET/POST /servers`                       | 查询、新增服务器                  |
 | `PATCH/DELETE /servers/{id}`              | 修改、删除服务器                  |
 | `POST /servers/{id}/test-connection`      | 测试 SSH 连接                     |
@@ -208,6 +218,9 @@ uv run arq app.worker.WorkerSettings
 | `PATCH/DELETE /service-instances/{id}`    | 修改、删除部署实例                |
 
 前端开发环境请求 `/api/...`，由 Vite 代理去掉 `/api` 前缀后转发到这里。
+
+长期记忆的类别、安全边界、checkpoint 恢复语义和选型依据见
+[`docs/agent-memory-design.md`](../docs/agent-memory-design.md)。
 
 新接入的实体应在服务目录创建 `service_instances`，分别填写 `metric_instance`、`log_service` 并绑定
 `server_id`。关联查询会优先使用规范化服务实例，旧的 `servers.monitor_labels` 仍作为兼容回退。

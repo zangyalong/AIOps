@@ -46,6 +46,15 @@ class Settings(BaseSettings):
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-v4-flash"
 
+    # ---- Agent 长期记忆 ----
+    # 当前复用 DeepSeek 做事实抽取，检索先使用 PostgreSQL 记录上的确定性关键词评分；以后配置
+    # 独立 embedding 模型时可原位切换 pgvector，不影响 memories 表和上层调用。
+    memory_enabled: bool = True
+    memory_retrieval_limit: int = 6
+    memory_candidate_limit: int = 200
+    # 全量聊天记录仍留在 messages 表；只限制每轮送给模型的近期历史，避免上下文无限增长。
+    memory_short_term_max_chars: int = 120_000
+
     # ---- 可观测性数据源（PLG），本地默认地址，无认证 ----
     # 地址非敏感，进不进 .env 都行；真接了带 token 的远端再加 *_token 字段。
     prometheus_base_url: str = "http://localhost:9090"

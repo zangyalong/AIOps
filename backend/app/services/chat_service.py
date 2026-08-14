@@ -25,6 +25,7 @@ from app.schemas.chat import OperationApprovalDecision
 from app.services import (
     chat_run_record_service,
     conversation_service,
+    memory_service,
     message_service,
 )
 
@@ -117,7 +118,10 @@ async def _load_history_messages(
     残留结果都跳过，避免旧失败现场再次触发 OpenAI 兼容接口的 400。
     """
     history = await message_service.list_messages(db, conversation_id)
-    return _safe_history_messages(history)
+    return _trim_history_messages(
+        _safe_history_messages(history),
+        max_chars=settings.memory_short_term_max_chars,
+    )
 
 
 def _safe_history_messages(history: list[Message]) -> list[BaseMessage]:
@@ -176,6 +180,45 @@ def _safe_history_messages(history: list[Message]) -> list[BaseMessage]:
         # 孤立 tool 行和未知角色都不进入模型历史。
         index += 1
     return messages
+
+
+def _message_chars(message: BaseMessage) -> int:
+    content = (
+        message.content if isinstance(message.content, str) else str(message.content)
+    )
+    tool_calls = getattr(message, "tool_calls", [])
+    return len(content) + len(json.dumps(tool_calls, ensure_ascii=False, default=str))
+
+
+def _trim_history_messages(
+    messages: list[BaseMessage],
+    *,
+    max_chars: int,
+) -> list[BaseMessage]:
+    """按完整用户轮次保留近期历史，绝不拆散 tool_calls / ToolMessage 协议。"""
+    if max_chars <= 0:
+        return []
+    turns: list[list[BaseMessage]] = []
+    current: list[BaseMessage] = []
+    for message in messages:
+        if isinstance(message, HumanMessage) and current:
+            turns.append(current)
+            current = []
+        current.append(message)
+    if current:
+        turns.append(current)
+
+    selected: list[list[BaseMessage]] = []
+    used = 0
+    for turn in reversed(turns):
+        turn_chars = sum(_message_chars(item) for item in turn)
+        if selected and used + turn_chars > max_chars:
+            break
+        selected.append(turn)
+        used += turn_chars
+        if used >= max_chars:
+            break
+    return [message for turn in reversed(selected) for message in turn]
 
 
 def _current_turn_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
@@ -270,6 +313,17 @@ async def _persist_checkpoint_messages(
         _current_turn_messages(all_messages),
     )
     return snapshot
+
+
+async def _delete_graph_thread(graph: CompiledStateGraph, thread_id: str) -> None:
+    """终态 Run 不再需要执行快照；失败的清理也不能改变已经确定的对话结果。"""
+    checkpointer = getattr(graph, "checkpointer", None)
+    if checkpointer is None:
+        return
+    try:
+        await checkpointer.adelete_thread(thread_id)
+    except Exception as exc:  # noqa: BLE001 - checkpoint 清理是独立的维护动作
+        print(f"[chat-run] 清理 checkpoint 线程 {thread_id} 失败：{exc}")
 
 
 async def _set_run_status(
@@ -481,6 +535,7 @@ async def _drive_graph(
         if new_title is not None:
             done_event["title"] = new_title
         yield done_event
+        await _delete_graph_thread(graph, thread_id)
     except StreamChunkTimeoutError:
         message = "模型流式响应长时间没有返回新内容，请重试本次提问。"
         try:
@@ -498,6 +553,7 @@ async def _drive_graph(
         except Exception as exc:  # noqa: BLE001 - 继续记录原始超时
             print(f"[chat-run] 保存 {run_id} 的超时现场时出错：{exc}")
         await _mark_failed(run_id, message)
+        await _delete_graph_thread(graph, thread_id)
         yield {
             "type": "error",
             "message": message,
@@ -519,6 +575,7 @@ async def _drive_graph(
         except Exception as persist_exc:  # noqa: BLE001 - 继续记录原始异常
             print(f"[chat-run] 保存 {run_id} 的失败现场时出错：{persist_exc}")
         await _mark_failed(run_id, message)
+        await _delete_graph_thread(graph, thread_id)
         yield {"type": "error", "message": message}
 
 
@@ -538,6 +595,11 @@ async def prepare_chat_turn(
     # 至少用户发过什么是有记录的。开完就关，不占着连接跑后面的流式。
     async with AsyncSessionLocal() as db:
         history_messages = await _load_history_messages(db, conversation_id)
+        retrieved_memories = await memory_service.search_memories(
+            db,
+            scope_id=settings.operation_actor_id,
+            query=user_message,
+        )
         chat_run = await chat_run_record_service.create_chat_run(
             db,
             conversation_id=conversation_id,
@@ -586,6 +648,14 @@ async def prepare_chat_turn(
                     if default_server is not None
                     else None
                 ),
+                "long_term_memories": [
+                    {
+                        "category": memory.category,
+                        "content": memory.content,
+                        "updated_at": memory.updated_at,
+                    }
+                    for memory in retrieved_memories
+                ],
             },
         },
     )
@@ -639,3 +709,22 @@ async def resume_chat_turn(
         new_title=None,
     ):
         yield event
+
+
+async def consolidate_chat_run_memories(
+    conversation_id: uuid.UUID,
+    run_id: uuid.UUID,
+) -> None:
+    """Chat Run 发出 done 后后台整理记忆；失败不影响已经完成的用户回答。"""
+    async with AsyncSessionLocal() as db:
+        result = await memory_service.consolidate_run_memories(
+            db,
+            scope_id=settings.operation_actor_id,
+            conversation_id=conversation_id,
+            run_id=run_id,
+        )
+    if result.added_or_updated or result.deleted:
+        print(
+            f"[memory] Chat Run {run_id}：写入/更新 {result.added_or_updated} 条，"
+            f"停用 {result.deleted} 条，跳过 {result.skipped} 条"
+        )

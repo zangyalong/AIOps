@@ -3,11 +3,55 @@ from __future__ import annotations
 import asyncio
 import unittest
 import uuid
+from unittest.mock import AsyncMock
 
 from app.services.chat_run_service import ChatRunManager
 
 
 class ChatRunManagerTest(unittest.IsolatedAsyncioTestCase):
+    async def test_completed_run_invokes_memory_callback_once(self) -> None:
+        manager = ChatRunManager()
+        callback = AsyncMock()
+        run_id = uuid.uuid4()
+        conversation_id = uuid.uuid4()
+
+        async def producer():
+            yield {"type": "done", "conversation_id": str(conversation_id)}
+
+        run = manager.start(
+            conversation_id,
+            producer,
+            run_id=str(run_id),
+            on_completed=callback,
+        )
+        await run.task
+
+        callback.assert_awaited_once_with(conversation_id, run_id)
+
+    def test_restore_waiting_approval_rebuilds_active_run(self) -> None:
+        manager = ChatRunManager()
+        run_id = uuid.uuid4()
+        conversation_id = uuid.uuid4()
+        operation_id = uuid.uuid4()
+
+        run = manager.restore_waiting_approval(
+            run_id=run_id,
+            conversation_id=conversation_id,
+            thread_id="persisted-thread",
+            actions=[
+                {
+                    "tool_call_id": "write-1",
+                    "operation_id": str(operation_id),
+                    "risk_level": "medium",
+                }
+            ],
+        )
+
+        self.assertIs(manager.get_active(conversation_id), run)
+        self.assertEqual(run.status, "waiting_approval")
+        self.assertEqual(run.events[0]["type"], "approval_required")
+        self.assertEqual(run.events[0]["seq"], 1)
+
     async def test_disconnect_subscriber_does_not_cancel_background_run(self) -> None:
         """SSE 订阅者离开后，独立 producer 仍继续并产生 done。"""
         manager = ChatRunManager()

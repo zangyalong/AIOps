@@ -175,6 +175,33 @@ class _TruncatedToolLinkGraph(_FakeGraph):
 
 
 class ChatStreamTest(unittest.IsolatedAsyncioTestCase):
+    def test_history_budget_keeps_complete_recent_turns(self) -> None:
+        messages = [
+            HumanMessage("旧问题"),
+            AIMessage("旧回答"),
+            HumanMessage("新问题"),
+            AIMessage(
+                "准备调查",
+                tool_calls=[
+                    {
+                        "name": "investigate",
+                        "args": {"area": "metrics"},
+                        "id": "new-tool",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            ToolMessage("新结果", tool_call_id="new-tool"),
+            AIMessage("新回答"),
+        ]
+
+        trimmed = chat_service._trim_history_messages(messages, max_chars=90)
+
+        self.assertIsInstance(trimmed[0], HumanMessage)
+        self.assertEqual(trimmed[0].content, "新问题")
+        self.assertEqual(len(trimmed), 4)
+        self.assertEqual(trimmed[2].tool_call_id, "new-tool")
+
     async def test_prepare_turn_carries_trusted_default_server_context(self) -> None:
         conversation_id = uuid.uuid4()
         run_id = uuid.uuid4()
@@ -206,6 +233,11 @@ class ChatStreamTest(unittest.IsolatedAsyncioTestCase):
                 chat_service.message_service,
                 "create_message",
                 AsyncMock(),
+            ),
+            patch.object(
+                chat_service.memory_service,
+                "search_memories",
+                AsyncMock(return_value=()),
             ),
         ):
             prepared = await chat_service.prepare_chat_turn(

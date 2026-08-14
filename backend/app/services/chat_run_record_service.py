@@ -43,6 +43,10 @@ async def list_chat_runs(db: AsyncSession, conversation_id: uuid.UUID) -> list[C
     return await chat_run_repository.list_by_conversation(db, conversation_id)
 
 
+async def list_waiting_approval_runs(db: AsyncSession) -> list[ChatRun]:
+    return await chat_run_repository.list_by_status(db, "waiting_approval")
+
+
 async def set_status(
     db: AsyncSession,
     chat_run: ChatRun,
@@ -64,10 +68,10 @@ async def set_status(
     return await chat_run_repository.save(db, chat_run)
 
 
-async def fail_incomplete_runs(db: AsyncSession) -> int:
-    """方案 B 没有持久化 checkpoint；进程重启后旧挂起 Run 必须明确标为失败。"""
-    return await chat_run_repository.fail_incomplete(
+async def fail_running_runs(db: AsyncSession) -> int:
+    """执行中断的 Run 不自动重放；等待审批的 Run 由 PostgreSQL checkpoint 安全恢复。"""
+    return await chat_run_repository.fail_running(
         db,
-        error_message="后端进程已重启，内存中的执行状态或审批断点已丢失，请重新发起请求。",
+        error_message="后端进程已重启，本轮执行结果未知，请核验目标状态后重新发起请求。",
         finished_at=datetime.now(UTC),
     )

@@ -81,6 +81,7 @@ async def chat(data: ChatRequest, request: Request, db: DBSession) -> ChatRunOut
                 new_title=new_title,
             ),
             run_id=str(prepared.run_id),
+            on_completed=chat_service.consolidate_chat_run_memories,
         )
     except ValueError as exc:
         chat_run = await chat_run_record_service.get_chat_run(db, prepared.run_id)
