@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import {
   acknowledgeIncident,
+  deleteIncident,
   fetchIncidentAlertOccurrences,
   fetchIncidents,
   resolveIncident,
@@ -11,6 +12,7 @@ import type {
   AlertOccurrence,
   Incident,
   IncidentStatus,
+  IncidentStatusCounts,
 } from '../types/incident'
 
 type IncidentFilter = 'all' | IncidentStatus
@@ -24,6 +26,17 @@ const pendingAction = ref<string | null>(null)
 const alertOccurrences = ref<AlertOccurrence[]>([])
 const occurrencesLoading = ref(false)
 const occurrencesError = ref<string | null>(null)
+const page = ref(1)
+const pageSize = 10
+const total = ref(0)
+const totalPages = ref(0)
+const statusCounts = ref<IncidentStatusCounts>({
+  all: 0,
+  firing: 0,
+  acknowledged: 0,
+  resolved: 0,
+})
+let latestListRequest = 0
 
 const filters: { value: IncidentFilter; label: string }[] = [
   { value: 'all', label: '全部' },
@@ -37,18 +50,6 @@ const statusLabel: Record<IncidentStatus, string> = {
   acknowledged: '已认领',
   resolved: '已解决',
 }
-
-const filteredIncidents = computed(() => {
-  if (activeFilter.value === 'all') return incidents.value
-  return incidents.value.filter((incident) => incident.status === activeFilter.value)
-})
-
-const statusCounts = computed<Record<IncidentFilter, number>>(() => ({
-  all: incidents.value.length,
-  firing: incidents.value.filter((incident) => incident.status === 'firing').length,
-  acknowledged: incidents.value.filter((incident) => incident.status === 'acknowledged').length,
-  resolved: incidents.value.filter((incident) => incident.status === 'resolved').length,
-}))
 
 async function loadAlertOccurrences(incident: Incident) {
   const incidentId = incident.id
@@ -80,19 +81,30 @@ function closeIncident() {
 }
 
 async function loadIncidents() {
+  const requestId = ++latestListRequest
   loading.value = true
   error.value = null
   try {
-    incidents.value = await fetchIncidents()
+    const result = await fetchIncidents({
+      status: activeFilter.value === 'all' ? undefined : activeFilter.value,
+      page: page.value,
+      pageSize,
+    })
+    if (requestId !== latestListRequest) return
+    incidents.value = result.items
+    total.value = result.total
+    totalPages.value = result.total_pages
+    statusCounts.value = result.status_counts
     if (selectedIncident.value) {
       selectedIncident.value =
         incidents.value.find((incident) => incident.id === selectedIncident.value?.id) ?? null
       if (selectedIncident.value) await loadAlertOccurrences(selectedIncident.value)
     }
   } catch (e) {
+    if (requestId !== latestListRequest) return
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
-    loading.value = false
+    if (requestId === latestListRequest) loading.value = false
   }
 }
 
@@ -118,10 +130,29 @@ function severityLabel(severity: string): string {
   return labels[severity.toLowerCase()] ?? severity
 }
 
-function replaceIncident(updated: Incident) {
-  const index = incidents.value.findIndex((incident) => incident.id === updated.id)
-  if (index !== -1) incidents.value[index] = updated
-  if (selectedIncident.value?.id === updated.id) selectedIncident.value = updated
+async function reloadAfterMutation() {
+  await loadIncidents()
+  if (page.value > 1 && page.value > totalPages.value) {
+    page.value = Math.max(totalPages.value, 1)
+    await loadIncidents()
+  }
+}
+
+async function selectFilter(filter: IncidentFilter) {
+  if (activeFilter.value === filter) return
+  activeFilter.value = filter
+  page.value = 1
+  closeIncident()
+  await loadIncidents()
+}
+
+async function goToPage(nextPage: number) {
+  if (loading.value || nextPage < 1 || nextPage > totalPages.value || nextPage === page.value) {
+    return
+  }
+  page.value = nextPage
+  closeIncident()
+  await loadIncidents()
 }
 
 async function acknowledge(incident: Incident) {
@@ -131,7 +162,8 @@ async function acknowledge(incident: Incident) {
   pendingAction.value = incident.id
   error.value = null
   try {
-    replaceIncident(await acknowledgeIncident(incident.id, operator))
+    await acknowledgeIncident(incident.id, operator)
+    await reloadAfterMutation()
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -145,7 +177,34 @@ async function resolve(incident: Incident) {
   pendingAction.value = incident.id
   error.value = null
   try {
-    replaceIncident(await resolveIncident(incident.id))
+    await resolveIncident(incident.id)
+    await reloadAfterMutation()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    pendingAction.value = null
+  }
+}
+
+async function remove(incident: Incident) {
+  if (incident.status !== 'resolved') {
+    error.value = '待处理或已认领事件不能删除，请先将事件标记为已解决'
+    return
+  }
+  if (
+    !confirm(
+      `确定删除事件“${incident.alertname}”？关联的原始告警历史快照也会删除，且无法撤销。`,
+    )
+  ) {
+    return
+  }
+
+  pendingAction.value = incident.id
+  error.value = null
+  try {
+    await deleteIncident(incident.id)
+    if (selectedIncident.value?.id === incident.id) closeIncident()
+    await reloadAfterMutation()
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -176,7 +235,7 @@ async function resolve(incident: Incident) {
         :class="{ active: activeFilter === filter.value }"
         :aria-selected="activeFilter === filter.value"
         role="tab"
-        @click="activeFilter = filter.value"
+        @click="selectFilter(filter.value)"
       >
         {{ filter.label }}
         <span class="filter-count">{{ statusCounts[filter.value] }}</span>
@@ -185,14 +244,14 @@ async function resolve(incident: Incident) {
 
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <p v-if="loading && incidents.length === 0" class="hint">加载中…</p>
-    <div v-else-if="filteredIncidents.length === 0" class="empty">
-      <p>{{ incidents.length === 0 ? '还没有事件' : '当前筛选条件下没有事件' }}</p>
+    <div v-else-if="incidents.length === 0" class="empty">
+      <p>{{ statusCounts.all === 0 ? '还没有事件' : '当前筛选条件下没有事件' }}</p>
       <span>收到新的 Alertmanager 告警后，关联事件会自动出现在这里。</span>
     </div>
 
     <div v-else class="incident-list">
       <article
-        v-for="incident in filteredIncidents"
+        v-for="incident in incidents"
         :key="incident.id"
         class="incident-card"
         tabindex="0"
@@ -222,7 +281,7 @@ async function resolve(incident: Incident) {
           {{ incident.diagnosis ? '诊断完成' : '等待诊断' }}
         </div>
 
-        <div v-if="incident.status !== 'resolved'" class="card-actions" @click.stop>
+        <div class="card-actions" @click.stop>
           <button
             v-if="incident.status === 'firing'"
             type="button"
@@ -233,6 +292,7 @@ async function resolve(incident: Incident) {
             认领
           </button>
           <button
+            v-if="incident.status !== 'resolved'"
             type="button"
             class="btn-resolve"
             :disabled="pendingAction === incident.id"
@@ -240,9 +300,38 @@ async function resolve(incident: Incident) {
           >
             {{ pendingAction === incident.id ? '处理中…' : '标记解决' }}
           </button>
+          <button
+            v-else
+            type="button"
+            class="btn-delete"
+            :disabled="pendingAction === incident.id"
+            @click="remove(incident)"
+          >
+            {{ pendingAction === incident.id ? '删除中…' : '删除记录' }}
+          </button>
         </div>
       </article>
     </div>
+
+    <nav v-if="total > 0" class="pagination" aria-label="事件列表分页">
+      <span>第 {{ page }} / {{ totalPages }} 页，共 {{ total }} 条</span>
+      <div>
+        <button
+          type="button"
+          :disabled="loading || page <= 1"
+          @click="goToPage(page - 1)"
+        >
+          上一页
+        </button>
+        <button
+          type="button"
+          :disabled="loading || page >= totalPages"
+          @click="goToPage(page + 1)"
+        >
+          下一页
+        </button>
+      </div>
+    </nav>
 
     <div v-if="selectedIncident" class="drawer-backdrop" @click.self="closeIncident">
       <aside class="detail-drawer" aria-modal="true" role="dialog" aria-label="事件详情">
@@ -311,7 +400,7 @@ async function resolve(incident: Incident) {
           <p v-else class="no-diagnosis">自动诊断尚未完成，稍后刷新查看。</p>
         </section>
 
-        <div v-if="selectedIncident.status !== 'resolved'" class="drawer-actions">
+        <div class="drawer-actions">
           <button
             v-if="selectedIncident.status === 'firing'"
             type="button"
@@ -322,12 +411,22 @@ async function resolve(incident: Incident) {
             认领事件
           </button>
           <button
+            v-if="selectedIncident.status !== 'resolved'"
             type="button"
             class="btn-resolve"
             :disabled="pendingAction === selectedIncident.id"
             @click="resolve(selectedIncident)"
           >
             {{ pendingAction === selectedIncident.id ? '处理中…' : '标记为已解决' }}
+          </button>
+          <button
+            v-else
+            type="button"
+            class="btn-delete"
+            :disabled="pendingAction === selectedIncident.id"
+            @click="remove(selectedIncident)"
+          >
+            {{ pendingAction === selectedIncident.id ? '删除中…' : '删除事件记录' }}
           </button>
         </div>
       </aside>
@@ -384,6 +483,54 @@ h1 {
 .btn-resolve:hover {
   border-color: var(--color-accent-hover);
   background: var(--color-accent-hover);
+}
+
+.btn-delete {
+  min-height: 38px;
+  border: 1px solid #f04438;
+  border-radius: 7px;
+  padding: 0.5rem 0.85rem;
+  color: #b42318;
+  background: #fff;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.btn-delete:hover {
+  border-color: #d92d20;
+  color: #fff;
+  background: #d92d20;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 1rem;
+  padding: 0.8rem 0.15rem;
+  color: var(--color-text-muted);
+  font-family: var(--font-data);
+  font-size: 0.76rem;
+}
+
+.pagination > div {
+  display: flex;
+  gap: 0.45rem;
+}
+
+.pagination button {
+  min-height: 34px;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  padding: 0.4rem 0.75rem;
+  color: var(--color-text);
+  background: var(--color-surface);
+}
+
+.pagination button:not(:disabled):hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
 }
 
 button:disabled {
@@ -806,6 +953,11 @@ button:disabled {
 
   .diagnosis-state {
     order: 3;
+  }
+
+  .pagination {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 

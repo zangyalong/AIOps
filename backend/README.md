@@ -225,7 +225,8 @@ uv run arq app.worker.WorkerSettings
 | `GET/POST /alert-rules`                   | 查询、新增预警规则                |
 | `PATCH/DELETE /alert-rules/{id}`          | 修改、删除预警规则                |
 | `POST /alert-rules/apply`                 | 从数据库重新生成并应用规则        |
-| `GET /incidents`                          | 查询关联后的事件                  |
+| `GET /incidents`                          | 按状态、页码查询事件中心记录       |
+| `DELETE /incidents/{id}`                  | 删除一条已解决的历史事件           |
 | `POST /incidents/{id}/ack`                | 认领事件                          |
 | `POST /incidents/{id}/resolve`            | 人工解决事件                      |
 | `GET/POST /services`                      | 查询、新增逻辑服务                |

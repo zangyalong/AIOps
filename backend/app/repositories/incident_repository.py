@@ -55,6 +55,39 @@ async def list_recent(
     return list(result)
 
 
+async def list_page(
+    db: AsyncSession,
+    *,
+    status: str | None,
+    page: int,
+    page_size: int,
+) -> tuple[list[Incident], int]:
+    """按最近更新时间倒序读取一页，并返回同一筛选条件下的总数。"""
+    filters = (Incident.status == status,) if status is not None else ()
+    total = await db.scalar(select(func.count()).select_from(Incident).where(*filters))
+    result = await db.scalars(
+        select(Incident)
+        .where(*filters)
+        .order_by(Incident.updated_at.desc(), Incident.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    return list(result), total or 0
+
+
+async def count_by_status(db: AsyncSession) -> dict[str, int]:
+    """一次聚合查询得到各状态的全库数量。"""
+    rows = await db.execute(
+        select(Incident.status, func.count()).group_by(Incident.status)
+    )
+    return {str(status): int(count) for status, count in rows.all()}
+
+
+async def delete(db: AsyncSession, incident: Incident) -> None:
+    await db.delete(incident)
+    await db.commit()
+
+
 async def count_firing_alerts(db: AsyncSession, incident_id: uuid.UUID) -> int:
     """事件下当前还有几条 firing 的告警——全 0 了就可以自动把事件置为 resolved。"""
     stmt = (

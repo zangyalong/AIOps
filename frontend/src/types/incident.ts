@@ -33,3 +33,19 @@ export interface AlertOccurrence {
   created_at: string
   updated_at: string
 }
+
+export interface IncidentStatusCounts {
+  all: number
+  firing: number
+  acknowledged: number
+  resolved: number
+}
+
+export interface IncidentPage {
+  items: Incident[]
+  page: number
+  page_size: number
+  total: number
+  total_pages: number
+  status_counts: IncidentStatusCounts
+}

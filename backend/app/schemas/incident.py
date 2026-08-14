@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
+
+IncidentStatus = Literal["firing", "acknowledged", "resolved"]
 
 
 class IncidentRead(BaseModel):
@@ -15,7 +18,7 @@ class IncidentRead(BaseModel):
 
     id: uuid.UUID
     group_key: str
-    status: str
+    status: IncidentStatus
     alertname: str
     severity: str
     instance: str | None
@@ -27,6 +30,26 @@ class IncidentRead(BaseModel):
     resolved_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class IncidentStatusCounts(BaseModel):
+    """事件中心状态标签展示的全库数量，不受当前分页和状态筛选影响。"""
+
+    all: int
+    firing: int
+    acknowledged: int
+    resolved: int
+
+
+class IncidentPageRead(BaseModel):
+    """事件中心的数据库分页结果。"""
+
+    items: list[IncidentRead]
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+    status_counts: IncidentStatusCounts
 
 
 class AckRequest(BaseModel):

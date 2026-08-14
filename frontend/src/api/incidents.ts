@@ -1,6 +1,7 @@
 import type {
   AlertOccurrence,
   Incident,
+  IncidentPage,
   IncidentStatus,
 } from '../types/incident'
 
@@ -11,12 +12,17 @@ async function parseIncidentResponse(res: Response, fallbackMessage: string): Pr
   return res.json()
 }
 
-export async function fetchIncidents(status?: IncidentStatus): Promise<Incident[]> {
+export async function fetchIncidents(options: {
+  status?: IncidentStatus
+  page: number
+  pageSize: number
+}): Promise<IncidentPage> {
   const params = new URLSearchParams()
-  if (status) params.set('status', status)
+  if (options.status) params.set('status', options.status)
+  params.set('page', String(options.page))
+  params.set('page_size', String(options.pageSize))
 
-  const query = params.toString()
-  const res = await fetch(`/api/incidents${query ? `?${query}` : ''}`)
+  const res = await fetch(`/api/incidents?${params.toString()}`, { cache: 'no-store' })
   if (!res.ok) {
     throw new Error(`获取事件列表失败：${res.status}`)
   }
@@ -41,4 +47,18 @@ export async function acknowledgeIncident(id: string, ackedBy: string): Promise<
 export async function resolveIncident(id: string): Promise<Incident> {
   const res = await fetch(`/api/incidents/${id}/resolve`, { method: 'POST' })
   return parseIncidentResponse(res, '解决事件失败')
+}
+
+export async function deleteIncident(id: string): Promise<void> {
+  const res = await fetch(`/api/incidents/${id}`, { method: 'DELETE' })
+  if (!res.ok) {
+    let detail = ''
+    try {
+      const body = (await res.json()) as { detail?: string }
+      detail = body.detail ? `：${body.detail}` : ''
+    } catch {
+      // 非 JSON 错误响应使用状态码兜底。
+    }
+    throw new Error(`删除事件失败${detail || `：${res.status}`}`)
+  }
 }

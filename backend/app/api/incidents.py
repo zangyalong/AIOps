@@ -6,26 +6,40 @@
 from __future__ import annotations
 
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from app.dependencies import DBSession
 from app.models.alert_occurrence import AlertOccurrence
 from app.models.incident import Incident
 from app.repositories import alert_occurrence_repository
 from app.schemas.alert import AlertOccurrenceRead
-from app.schemas.incident import AckRequest, IncidentRead
+from app.schemas.incident import (
+    AckRequest,
+    IncidentPageRead,
+    IncidentRead,
+    IncidentStatus,
+)
 from app.services import incident_service
 
 router = APIRouter(prefix="/incidents", tags=["incidents"])
 
 
-@router.get("", response_model=list[IncidentRead])
+@router.get("", response_model=IncidentPageRead)
 async def list_incidents(
-    db: DBSession, status: str | None = None, limit: int = 100
-) -> list[Incident]:
-    """列出事件，可按 status（firing/acknowledged/resolved）过滤，默认按最近更新倒序。"""
-    return await incident_service.list_incidents(db, status=status, limit=limit)
+    db: DBSession,
+    status_filter: Annotated[IncidentStatus | None, Query(alias="status")] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 10,
+) -> IncidentPageRead:
+    """按状态分页列出事件，默认按最近更新倒序。"""
+    return await incident_service.list_incidents(
+        db,
+        status=status_filter,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.get(
@@ -60,3 +74,15 @@ async def resolve_incident(incident_id: uuid.UUID, db: DBSession) -> Incident:
     if incident is None:
         raise HTTPException(status_code=404, detail="incident not found")
     return incident
+
+
+@router.delete("/{incident_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_incident(incident_id: uuid.UUID, db: DBSession) -> Response:
+    """删除一条已解决的历史事件；活动事件必须先解决。"""
+    try:
+        deleted = await incident_service.delete_resolved(db, incident_id)
+    except incident_service.IncidentDeleteConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="incident not found")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
