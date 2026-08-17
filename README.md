@@ -35,15 +35,15 @@ AIOps 不是只会回答运维知识的聊天机器人。它把自然语言请�
 
 ### 运维助手
 
-![AIOps 运维助手首页，提供可审计的 Agent 调查入口、历史对话和服务器上下文选择](docs/images/aiops-chat.jpg)
+![AIOps 运维助手首页，提供 Agent 调查入口、历史对话和服务器上下文选择](docs/images/aiops-chat.png)
 
 ### 预警规则管理
 
-![AIOps 预警规则页面，展示 Prometheus 规则状态、严重级别和 PromQL](docs/images/aiops-alert-rules.jpg)
+![AIOps 预警规则页面，展示规则状态、严重级别和 PromQL](docs/images/aiops-alert-rules.png)
 
 ### 受控变更审批
 
-![AIOps 运维助手中的调查结果与高风险变更审批卡片](docs/images/aiops-operation-approval.jpg)
+![AIOps 运维助手中的调查结果与高风险变更审批卡片](docs/images/aiops-operation-approval.png)
 
 ## Quick Start
 
