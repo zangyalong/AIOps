@@ -1,17 +1,39 @@
-# AIOps 本地依赖：Prometheus、Loki、Alertmanager、Grafana 和 Redis。
+# AIOps 本地依赖：PostgreSQL、Prometheus、Loki、Alertmanager、Grafana 和 Redis。
 # 指标抓取目标来自 docker/prometheus-targets/ 下被 Git 忽略的本地配置；日志由纳管服务器上的
 # Alloy 或其他外部采集端写入 Loki。这里不再捆绑仅供演示的指标、日志发生器。
 #
 # 用法：
-#   docker compose up -d          # 后台起
-#   docker compose ps             # 看状态
-#   docker compose logs -f        # 看日志
-#   docker compose down           # 停并删容器（数据在容器里，删了重来即可，纯本地开发无所谓）
+#   cp backend/.env.example backend/.env  # 首次配置，填写数据库密码和连接 URL
+#   docker compose --env-file backend/.env up -d          # 后台起
+#   docker compose --env-file backend/.env ps             # 看状态
+#   docker compose --env-file backend/.env logs -f        # 看日志
+#   docker compose --env-file backend/.env down           # 停并删容器，PostgreSQL 数据保留在命名卷中
+#   不要随意加 -v：这会删除命名卷及其中的数据库数据。
 #
 # 所有宿主机端口只绑定 127.0.0.1。这套配置包含无认证服务和匿名 Grafana Editor，
 # 只用于本地开发或受控测试，不能直接改成 0.0.0.0 暴露到局域网/公网。
 
 services:
+  # 业务数据库；首次启动自动创建 aiops 用户和数据库，后端负责创建业务表。
+  postgres:
+    image: postgres:16-alpine
+    container_name: aiops-postgres
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: aiops
+      POSTGRES_DB: aiops
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 backend/.env 中填写 POSTGRES_PASSWORD，并使用 --env-file backend/.env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
   # 时序指标数据库 + PromQL 查询引擎。后端的 query_metrics 工具就是打它的 HTTP API。
   prometheus:
     image: prom/prometheus:latest   # 先用 latest 保证能拉到；稳定后可以 pin 成具体版本
@@ -84,3 +106,6 @@ services:
     ports:
       - "127.0.0.1:6379:6379"       # 对应 backend config 里的 redis_url
     restart: unless-stopped
+
+volumes:
+  postgres_data:

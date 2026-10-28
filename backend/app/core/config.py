@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # .env 固定在 backend/ 目录下。不能写成相对路径 ".env"——它会相对进程工作目录解析，
@@ -14,6 +15,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding="utf-8")
+
+    # 与 Compose 共用 backend/.env，显式接收容器初始化配置；连接仍由 database_url 决定。
+    postgres_password: str = Field(default="", repr=False)
+    postgres_port: int = Field(default=5432, ge=1, le=65535)
 
     database_url: str = "postgresql+psycopg://localhost:5432/aiops"
     database_echo: bool = False

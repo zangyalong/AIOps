@@ -52,15 +52,13 @@ AIOps 不是只会回答运维知识的聊天机器人。它把自然语言请�
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/)
 - Node.js `^20.19.0` 或 `>=22.12.0`，以及 npm
-- PostgreSQL 16+
+- PostgreSQL 16+（默认由下面的 Docker Compose 提供，无需另行安装）
 - Docker Engine + Compose plugin，或 Docker Desktop
 - DeepSeek API Key
 
-PostgreSQL 不在 `docker-compose.yml` 中。先启动本机 PostgreSQL 并创建数据库：
+Compose 和后端统一使用 `backend/.env`，按下一步配置即可。首次启动 PostgreSQL 容器会自动创建 `aiops` 用户和数据库，无需手工执行 `createdb`。宿主机已有 PostgreSQL 占用 `5432` 时，可将 `backend/.env` 中的 `POSTGRES_PORT` 改为 `5433`，`DATABASE_URL` 的端口也要一起修改。
 
-```bash
-createdb aiops
-```
+已有本机数据库也可继续使用：后端保留原有连接配置，启动依赖时显式指定 `docker compose --env-file backend/.env up -d prometheus loki alertmanager grafana redis`，跳过 Compose 中的 PostgreSQL。`backend/.env` 仍需填写 `POSTGRES_PASSWORD`，以便 Compose 解析配置。
 
 ### 2. 配置后端
 
@@ -70,18 +68,20 @@ cp .env.example .env
 uv sync
 ```
 
-编辑 `backend/.env`，至少填写 `DEEPSEEK_API_KEY`，并按本机 PostgreSQL 角色确认 `DATABASE_URL`。模型地址与名称以当前 DeepSeek 官方文档为准；全新数据库会在后端启动时创建缺失的表，已有开发库的字段变更见 [后端迁移说明](backend/README.md#首次配置)。
+编辑 `backend/.env`，至少填写 `DEEPSEEK_API_KEY`、`POSTGRES_PASSWORD`，并将 `DATABASE_URL` 中的占位密码替换成相同的数据库密码，端口与 `POSTGRES_PORT` 一致。示例：`postgresql+psycopg://aiops:replace_with_your_password@127.0.0.1:5432/aiops`。若密码包含 URL 特殊字符，写入 `DATABASE_URL` 前需做百分号编码。模型地址与名称以当前 DeepSeek 官方文档为准；全新数据库会在后端启动时创建缺失的表，已有开发库的字段变更见 [后端迁移说明](backend/README.md#首次配置)。
 
 ### 3. 启动本地依赖
 
 回到仓库根目录：
 
 ```bash
-docker compose up -d
-docker compose ps
+docker compose --env-file backend/.env up -d
+docker compose --env-file backend/.env ps
 ```
 
-这会启动 Prometheus、Loki、Alertmanager、Grafana 和 Redis，不包含 PostgreSQL、FastAPI 或 Vue。新 clone 默认只有 Prometheus 自身指标；如需真实主机指标，按 [`docker/prometheus-targets/README.md`](docker/prometheus-targets/README.md) 复制示例并填写本机忽略的 targets 文件。Loki 日志由纳管服务器 Alloy 或其他外部采集端写入。
+这会启动 PostgreSQL、Prometheus、Loki、Alertmanager、Grafana 和 Redis，不包含 FastAPI 或 Vue。等 `docker compose --env-file backend/.env ps` 中的 PostgreSQL 显示 `healthy` 后再启动后端。新 clone 默认只有 Prometheus 自身指标；如需真实主机指标，按 [`docker/prometheus-targets/README.md`](docker/prometheus-targets/README.md) 复制示例并填写本机忽略的 targets 文件。Loki 日志由纳管服务器 Alloy 或其他外部采集端写入。
+
+PostgreSQL 数据保存在 `postgres_data` 命名卷中，`docker compose --env-file backend/.env down` 会保留数据；`docker compose --env-file backend/.env down -v` 会删除卷和数据库数据。初始化变量只对空数据目录生效，已有数据卷的密码不会随 `.env` 修改而更新。现有本机数据库的数据也不会自动迁入容器。
 
 > [!CAUTION]
 > 这套 Compose 使用无认证的本地服务和匿名 Grafana Editor，只适合开发/受控测试。端口默认只绑定 `127.0.0.1`，不要改成 `0.0.0.0` 后直接暴露。

@@ -49,12 +49,12 @@ Agent 对外只认识“调查”和“变更”。`investigate` 是统一运维
 
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/)
-- PostgreSQL 16+
+- PostgreSQL 16+（默认由仓库根目录的 Compose 提供）
 - DeepSeek API Key
 - Redis：告警自动诊断队列需要
-- Docker Engine + Compose plugin，或 Docker Desktop：本地 PLG 数据栈和 SSH 测试沙箱需要
+- Docker Engine + Compose plugin，或 Docker Desktop：本地 PostgreSQL、PLG 数据栈、Redis 和 SSH 测试沙箱需要
 
-PostgreSQL 当前不在 `docker-compose.yml` 中，项目默认连接宿主机上的 `aiops` 数据库。
+`docker-compose.yml` 包含 PostgreSQL 16，首次启动会自动创建 `aiops` 用户和数据库；后端仍在宿主机运行，通过 `127.0.0.1` 连接数据库。
 
 ## 首次配置
 
@@ -69,15 +69,17 @@ uv sync
 编辑 `backend/.env`，至少填写：
 
 ```dotenv
-DATABASE_URL=postgresql+psycopg://你的用户名@localhost:5432/aiops
+POSTGRES_PASSWORD=replace_with_your_password
+POSTGRES_PORT=5432
+DATABASE_URL=postgresql+psycopg://aiops:replace_with_your_password@127.0.0.1:5432/aiops
 DEEPSEEK_API_KEY=你的密钥
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-v4-flash
 ```
 
-不要提交 `.env`、SSH 私钥或其他密钥。
+Compose 和后端统一使用 `backend/.env`。设置 `POSTGRES_PASSWORD` 后，将连接 URL 的 `replace_with_your_password` 替换为相同密码，端口与 `POSTGRES_PORT` 一致；建议密码只用随机字母和数字，若包含 URL 特殊字符需百分号编码。不要提交 `.env`、SSH 私钥或其他密钥。
 
-创建本地数据库的示例：
+如继续使用已有本机 PostgreSQL，请改用实际连接信息，并在启动依赖时使用 `docker compose --env-file backend/.env up -d prometheus loki alertmanager grafana redis` 跳过容器数据库（`backend/.env` 仍需填写 `POSTGRES_PASSWORD`，以便 Compose 解析）。只有自行管理数据库时才需手工创建，例如：
 
 ```bash
 createdb aiops
@@ -166,22 +168,25 @@ Shell、Docker 或 root 登录。服务器编辑页还会把
 
 ## 启动依赖
 
-从仓库根目录启动本地可观测性数据栈和 Redis：
+从仓库根目录启动 PostgreSQL、本地可观测性数据栈和 Redis：
 
 ```bash
-docker compose up -d
-docker compose ps
+docker compose --env-file backend/.env up -d
+docker compose --env-file backend/.env ps
 ```
 
 它会启动：
 
+- PostgreSQL `:5432`（可通过 `backend/.env` 的 `POSTGRES_PORT` 修改）
 - Prometheus `:9090`
 - Loki `:3100`
 - Alertmanager `:9093`
 - Grafana `:3000`
 - Redis `:6379`
 
-这套 Compose 不包含 PostgreSQL、FastAPI 和 Vue 前端。新 clone 默认只有 Prometheus 自身指标；
+等待 `docker compose --env-file backend/.env ps` 中 PostgreSQL 显示 `healthy` 后再启动后端。数据库使用 `postgres_data` 命名卷，普通 `docker compose --env-file backend/.env down` 会保留数据；加 `-v` 会删除数据库数据。已有数据卷的密码不会随 `.env` 修改而更新，现有本机数据库也不会自动迁入容器。
+
+这套 Compose 不包含 FastAPI 和 Vue 前端。新 clone 默认只有 Prometheus 自身指标；
 按 [`docker/prometheus-targets/README.md`](../docker/prometheus-targets/README.md) 复制示例后，真实指标目标才会从本机 Git 忽略的
 `managed-targets.yml` 读取。日志由纳管服务器 Alloy 或其他外部采集端写入 Loki。
 

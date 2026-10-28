@@ -77,7 +77,7 @@ AIOps/
 │   └── aiops-feature-survey.md  # Keep/OpenSRE 源码级功能调研，涉及告警/工具/安全/Agent架构设计时先看这个
 ├── scripts/
 │   └── target-server/       # 纳管服务器的 root 只读沙箱、写网关、sudoers 和说明
-└── docker-compose.yml       # 本地 PLG 可观测性数据栈 + Redis（不含 pg/backend/frontend）
+└── docker-compose.yml       # 本地 PostgreSQL + PLG 可观测性数据栈 + Redis（不含 backend/frontend）
 ```
 
 **说明**：这只是目标结构，**不要一次性全建**。用到什么再加什么，不用的目录不要提前搭。
