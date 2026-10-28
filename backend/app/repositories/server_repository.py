@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.server import Server
@@ -54,3 +55,15 @@ async def save(db: AsyncSession, server: Server) -> Server:
 async def delete(db: AsyncSession, server: Server) -> None:
     await db.delete(server)
     await db.commit()
+
+
+async def try_lock_environment_deployment(
+    db: AsyncSession, host: str, port: int
+) -> bool:
+    """同一 SSH 目标在当前事务内仅允许一份环境配置上传，事务结束自动释放。"""
+    # 按实际 SSH 地址加锁，避免同一机器被登记为多个服务器后绕过串行限制。
+    target = f"aiops:environment-deployment:{host.lower()}:{port}"
+    key = int.from_bytes(
+        hashlib.sha256(target.encode("utf-8")).digest()[:8], "big", signed=True
+    )
+    return bool(await db.scalar(select(func.pg_try_advisory_xact_lock(key))))

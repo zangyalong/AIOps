@@ -8,6 +8,7 @@ from pydantic import SecretStr, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.server import Server
+from app.repositories import server_repository
 from app.schemas.server import DeploymentBundleSecrets, TargetDeploymentConfig
 from app.services import service_catalog_service
 from app.services.ssh_service import (
@@ -33,6 +34,10 @@ _SECRET_MAX_LENGTH = 4096
 
 
 class EnvironmentDeploymentError(RuntimeError):
+    pass
+
+
+class EnvironmentDeploymentBusy(EnvironmentDeploymentError):
     pass
 
 
@@ -167,6 +172,13 @@ async def apply_saved_environment(
         ) from exc
     except SSHKeyMissing as exc:
         raise EnvironmentDeploymentError(str(exc)) from exc
+
+    # 事务锁覆盖上传和远程应用，多个后端进程也不能同时覆盖相同暂存文件。
+    # 调用方持有会话直到本函数结束，期间不得提前提交事务。
+    if not await server_repository.try_lock_environment_deployment(
+        db, params.host, params.port
+    ):
+        raise EnvironmentDeploymentBusy("该目标已有环境部署正在执行，请等待完成后重试")
 
     try:
         async with asyncssh.connect(

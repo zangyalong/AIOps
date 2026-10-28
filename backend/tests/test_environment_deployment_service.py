@@ -145,6 +145,11 @@ class EnvironmentDeploymentServiceTests(unittest.IsolatedAsyncioTestCase):
                 ),
             ),
             patch.object(
+                environment_deployment_service.server_repository,
+                "try_lock_environment_deployment",
+                AsyncMock(return_value=True),
+            ) as lock,
+            patch.object(
                 environment_deployment_service.asyncssh,
                 "connect",
                 return_value=connection_context,
@@ -161,6 +166,8 @@ class EnvironmentDeploymentServiceTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(detail, "部署完成")
+        lock.assert_awaited_once()
+        self.assertEqual(lock.await_args.args[1:], ("192.0.2.10", 22))
         self.assertEqual(upload.await_count, 2)
         self.assertEqual(
             [call.args[1] for call in upload.await_args_list],
@@ -174,6 +181,39 @@ class EnvironmentDeploymentServiceTests(unittest.IsolatedAsyncioTestCase):
             check=False,
             timeout=600,
         )
+
+    async def test_busy_target_is_rejected_before_connecting_or_uploading(self) -> None:
+        server = make_server()
+        server.deployment_config = TargetDeploymentConfig().model_dump()
+        with (
+            patch.object(
+                environment_deployment_service,
+                "service_control_allowlist_for_server",
+                AsyncMock(return_value=""),
+            ),
+            patch.object(
+                environment_deployment_service,
+                "build_connect_params",
+                return_value=SimpleNamespace(host="192.0.2.10", port=22),
+            ),
+            patch.object(
+                environment_deployment_service.server_repository,
+                "try_lock_environment_deployment",
+                AsyncMock(return_value=False),
+            ),
+            patch.object(environment_deployment_service.asyncssh, "connect") as connect,
+            patch.object(
+                environment_deployment_service, "_upload_text", AsyncMock()
+            ) as upload,
+            self.assertRaisesRegex(
+                environment_deployment_service.EnvironmentDeploymentBusy, "正在执行"
+            ),
+        ):
+            await environment_deployment_service.apply_saved_environment(
+                object(), server
+            )
+        connect.assert_not_called()
+        upload.assert_not_awaited()
 
 
 if __name__ == "__main__":

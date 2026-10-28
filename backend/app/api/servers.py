@@ -147,6 +147,8 @@ async def deploy_server_environment(
         detail = await environment_deployment_service.apply_saved_environment(
             db, server, data.secrets
         )
+    except environment_deployment_service.EnvironmentDeploymentBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except environment_deployment_service.EnvironmentDeploymentError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return DeploymentApplyResult(status="applied", detail=detail)

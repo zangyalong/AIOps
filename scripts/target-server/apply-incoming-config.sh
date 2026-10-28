@@ -51,6 +51,10 @@ verify_upload() {
 
 verify_root_runtime "$DEPLOY_SCRIPT" "固定部署脚本"
 verify_root_runtime "$INSTALL_DIR/apply-incoming-config.sh" "固定配置应用器"
+# 在读取共享上传文件前拒绝并发调用，不能验证后排队等待旧任务清理文件。
+exec 9>"$LOCK_FILE"
+flock -xn 9 || fail "已有环境部署正在执行，请等待完成后重试"
+
 verify_upload "$INCOMING_CONFIG" "部署配置" "$MAX_CONFIG_SIZE"
 verify_upload "$INCOMING_MANIFEST" "部署清单" 1024
 
@@ -98,18 +102,10 @@ for key in MYSQL_SECRET POSTGRES_SECRET REDIS_SECRET; do
     fi
 done
 
-exec 9>"$LOCK_FILE"
-flock -x 9
-
 backup_dir="$(mktemp -d /var/lib/aiops/.deployment-backup.XXXXXX)"
 cleanup() {
+    # 后续请求可能已上传新配置，退出时只删除本次 root 私有备份。
     rm -rf -- "$backup_dir"
-    rm -f -- \
-        "$INCOMING_CONFIG" \
-        "$INCOMING_MANIFEST" \
-        "${SECRET_UPLOADS[MYSQL_SECRET]}" \
-        "${SECRET_UPLOADS[POSTGRES_SECRET]}" \
-        "${SECRET_UPLOADS[REDIS_SECRET]}"
 }
 trap cleanup EXIT
 
@@ -138,6 +134,15 @@ for key in MYSQL_SECRET POSTGRES_SECRET REDIS_SECRET; do
         preserve) ;;
     esac
 done
+
+# 配置和凭据已经复制到 root 管理目录，耗时部署开始前消耗本次上传。
+# 此后不再删除 incoming 文件，避免超时后的新请求被旧任务清理。
+rm -f -- \
+    "$INCOMING_CONFIG" \
+    "$INCOMING_MANIFEST" \
+    "${SECRET_UPLOADS[MYSQL_SECRET]}" \
+    "${SECRET_UPLOADS[POSTGRES_SECRET]}" \
+    "${SECRET_UPLOADS[REDIS_SECRET]}"
 
 restore_previous_files() {
     local target backup
