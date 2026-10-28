@@ -322,25 +322,32 @@ async def build_deployment_bundle(
         if regenerate_ssh_key_pair:
             key_pair_backup = remove_deployment_ssh_key_pair(server)
 
-        process = await asyncio.create_subprocess_exec(
-            str(script_path),
-            "--server",
-            server.name,
-            "--host",
-            server.ip_address,
-            "--port",
-            str(server.ssh_port or 22),
-            "--config",
-            str(config_path),
-            "--key-dir",
-            str(settings.ssh_key_dir),
-            "--output-dir",
-            str(output_dir),
-            "--config-assets-dir",
-            str(assets_dir),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        try:
+            # 仓库脚本可能以 0644 检出，显式使用 Bash，不依赖源文件执行位。
+            process = await asyncio.create_subprocess_exec(
+                "bash",
+                str(script_path),
+                "--server",
+                server.name,
+                "--host",
+                server.ip_address,
+                "--port",
+                str(server.ssh_port or 22),
+                "--config",
+                str(config_path),
+                "--key-dir",
+                str(settings.ssh_key_dir),
+                "--output-dir",
+                str(output_dir),
+                "--config-assets-dir",
+                str(assets_dir),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except OSError as exc:
+            raise DeploymentBundleError(
+                "无法启动安装包生成程序，请检查 Bash 是否可用以及打包脚本的读取权限"
+            ) from exc
         try:
             stdout, stderr = await asyncio.wait_for(
                 process.communicate(), timeout=BUNDLE_TIMEOUT_SECONDS

@@ -170,7 +170,7 @@ cleanup() {
 trap cleanup EXIT
 
 readonly GENERATED_ROOT="$stage_root/generated"
-"$SCRIPT_DIR/bootstrap/prepare-client.sh" \
+bash "$SCRIPT_DIR/bootstrap/prepare-client.sh" \
     --server "$SERVER_NAME" \
     --host "$SERVER_HOST" \
     --port "$SSH_PORT" \
@@ -202,6 +202,13 @@ package_tar="$stage_root/target-server.tar"
     cd "$TARGET_COPY"
     tar -xf "$package_tar"
 )
+
+# 源码可按普通文件检出；只在安装包副本中恢复脚本执行权限，配置文件权限不变。
+while IFS= read -r -d '' script_path; do
+    if [[ "$(head -n 1 -- "$script_path")" == '#!'* ]]; then
+        chmod 0755 "$script_path"
+    fi
+done < <(find "$TARGET_COPY" -type f -print0)
 
 install -m 0644 "$ROLE_SOURCE/aiops.pub" "$ROLE_COPY/aiops.pub"
 install -m 0755 "$ROLE_SOURCE/configure-role.sh" "$ROLE_COPY/configure-role.sh"

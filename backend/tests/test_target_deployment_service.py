@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import shutil
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from pydantic import SecretStr
 
@@ -12,6 +14,8 @@ from app.schemas.server import DeploymentBundleSecrets, TargetDeploymentConfig
 from app.services.target_deployment_service import (
     DeploymentBundleError,
     _normalize_service_control_allowlist,
+    build_deployment_bundle,
+    cleanup_bundle,
     remove_deployment_ssh_key_pair,
     render_deploy_config,
     restore_deployment_ssh_key_pair,
@@ -170,6 +174,118 @@ class TargetDeploymentServiceTests(unittest.TestCase):
                 "redis-secret\n",
             )
             self.assertEqual(mysql_config.stat().st_mode & 0o777, 0o600)
+
+
+class DeploymentBundleBuildTests(unittest.IsolatedAsyncioTestCase):
+    @unittest.skipUnless(
+        shutil.which("bash") and shutil.which("ssh-keygen"),
+        "需要 Bash 和 ssh-keygen",
+    )
+    async def test_bundle_builds_from_non_executable_sources(self) -> None:
+        source = Path(__file__).resolve().parents[2] / "scripts" / "target-server"
+        server = make_server()
+        server.deployment_config = TargetDeploymentConfig(
+            enable_alloy=False,
+            enable_node_exporter=False,
+            enable_cadvisor=False,
+        ).model_dump()
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            scripts = root / "scripts"
+            shutil.copytree(
+                source,
+                scripts,
+                ignore=shutil.ignore_patterns(
+                    "dist",
+                    "generated",
+                    "__pycache__",
+                    "deploy.conf",
+                    "services.map",
+                    "mysql-exporter.my.cnf",
+                    "postgres-exporter.password",
+                    "redis-exporter.password",
+                ),
+            )
+            # 模拟跨平台检出时，所有仓库脚本均没有执行位。
+            for path in scripts.rglob("*"):
+                if path.is_file():
+                    path.chmod(0o644)
+            key_dir = root / "keys"
+            with (
+                patch(
+                    "app.services.target_deployment_service.settings.target_server_scripts_dir",
+                    scripts,
+                ),
+                patch(
+                    "app.services.target_deployment_service.settings.ssh_key_dir",
+                    key_dir,
+                ),
+            ):
+                artifact = await build_deployment_bundle(
+                    server, DeploymentBundleSecrets(), service_control_allowlist=""
+                )
+            try:
+                with tarfile.open(artifact.archive_path) as archive:
+                    names = archive.getnames()
+                    script_count = 0
+                    for member in archive.getmembers():
+                        if not member.isfile():
+                            continue
+                        stream = archive.extractfile(member)
+                        self.assertIsNotNone(stream)
+                        with stream:
+                            first_line = stream.readline()
+                        if first_line.startswith(b"#!"):
+                            script_count += 1
+                            self.assertEqual(member.mode & 0o777, 0o755, member.name)
+                    self.assertGreater(script_count, 20)
+                    self.assertIn("aiops-web01/install.sh", names)
+                    config = archive.getmember("aiops-web01/target-server/deploy.conf")
+                    self.assertEqual(config.mode & 0o777, 0o600)
+                    self.assertNotIn("aiops-web01/role/web01-aiops", names)
+                    self.assertNotIn("aiops-web01/role/aiops", names)
+                    # 私钥字节不能进入安装包，公钥可以。
+                    private_bytes = (key_dir / "web01-aiops").read_bytes()
+                    for member in archive.getmembers():
+                        if member.isfile():
+                            with archive.extractfile(member) as stream:
+                                self.assertNotIn(
+                                    private_bytes, stream.read(), member.name
+                                )
+                self.assertEqual(
+                    (scripts / "make-bundle.sh").stat().st_mode & 0o777, 0o644
+                )
+            finally:
+                cleanup_bundle(artifact.temporary_root)
+
+    async def test_process_start_failure_restores_keys_and_reports_bundle_error(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            key_dir = Path(temporary_dir)
+            private_key = key_dir / "web01-aiops"
+            public_key = key_dir / "web01-aiops.pub"
+            private_key.write_text("original-private", encoding="utf-8")
+            public_key.write_text("original-public", encoding="utf-8")
+            private_key.chmod(0o600)
+            with (
+                patch(
+                    "app.services.target_deployment_service.settings.ssh_key_dir",
+                    key_dir,
+                ),
+                patch(
+                    "app.services.target_deployment_service.asyncio.create_subprocess_exec",
+                    new=AsyncMock(side_effect=PermissionError("permission denied")),
+                ),
+                self.assertRaisesRegex(DeploymentBundleError, "检查 Bash"),
+            ):
+                await build_deployment_bundle(
+                    make_server(),
+                    DeploymentBundleSecrets(),
+                    regenerate_ssh_key_pair=True,
+                )
+            self.assertEqual(private_key.read_text(), "original-private")
+            self.assertEqual(public_key.read_text(), "original-public")
 
 
 if __name__ == "__main__":
