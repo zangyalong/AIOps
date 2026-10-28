@@ -240,6 +240,14 @@ class DeploymentBundleBuildTests(unittest.IsolatedAsyncioTestCase):
                             self.assertEqual(member.mode & 0o777, 0o755, member.name)
                     self.assertGreater(script_count, 20)
                     self.assertIn("aiops-web01/install.sh", names)
+                    with archive.extractfile(
+                        "aiops-web01/target-server/root-read/Dockerfile"
+                    ) as stream:
+                        dockerfile = stream.read().decode("utf-8")
+                    self.assertIn("library/python:3.12-slim-bookworm", dockerfile)
+                    self.assertIn(
+                        'ENTRYPOINT ["/usr/local/bin/python3.12", ', dockerfile
+                    )
                     config = archive.getmember("aiops-web01/target-server/deploy.conf")
                     self.assertEqual(config.mode & 0o777, 0o600)
                     self.assertNotIn("aiops-web01/role/web01-aiops", names)

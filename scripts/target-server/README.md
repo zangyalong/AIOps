@@ -146,6 +146,7 @@ target-server/
 目标服务器需要满足：
 
 - Linux 使用 systemd，并有 Bash、sudo、`visudo` 和 `ss`（iproute2）。
+- 宿主机必须安装 `/usr/bin/python3.12`，并为该解释器安装 PyYAML；安装器和固定网关不回退到 Python 3.11，也不替换系统默认 Python。
 - AIOps 用于 SSH 登录的普通用户已经存在并安装公钥，例如 `aiops`；没有时先执行下一节的
   首次 SSH 初始化。
 - 启用 Alloy 时，目标服务器能访问中央 Loki 的 HTTP 推送地址。

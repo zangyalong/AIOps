@@ -43,14 +43,14 @@
 sudo ./install.sh aiops
 ```
 
-首次安装需要 Docker 和 `/usr/bin/python3.11` 可用；Alibaba Cloud Linux 3 可先执行
-`sudo dnf install -y python3.11`。宿主机挂载解析器固定使用 Python 3.11，不会替换系统默认
-Python 3.6。Debian 基础镜像默认通过 DaoCloud 国内代理
-`m.daocloud.io/docker.io/library/debian:bookworm-slim` 拉取，只影响本次镜像构建，不修改目标机
+首次安装需要 Docker 和 `/usr/bin/python3.12` 可用；Alibaba Cloud Linux 3 可先执行
+`sudo dnf install -y python3.12`。宿主机挂载解析器固定使用 Python 3.12，不会替换系统默认
+Python 3.6。诊断镜像使用自带 Python 3.12 的官方基础镜像，默认通过 DaoCloud 国内代理
+`m.daocloud.io/docker.io/library/python:3.12-slim-bookworm` 拉取，只影响本次镜像构建，不修改目标机
 Docker daemon 的全局镜像源。镜像内部较大的 Debian 主仓库索引通过清华 TUNA 拉取，安全更新
 仍保留 Debian 官方源；APT 构建阶段设置 3 次重试、30 秒连接超时，并关闭 HTTP Pipelining，
-减少国内网络抖动造成的长时间停顿。镜像安装完整的 Debian `python3` 标准库，并在构建阶段验证
-入口所需模块，避免最小解释器缺少 `json`。后续内容未变化时直接复用已固定的本地 image ID，
+减少国内网络抖动造成的长时间停顿。镜像直接使用 `/usr/local/bin/python3.12`，不通过 APT 安装 Debian 的 `python3`；
+构建阶段会断言解释器版本为 3.12，并验证入口所需的完整标准库和 libcap2。后续内容未变化时直接复用已固定的本地 image ID，
 不会重复构建。`bind-recursive=disabled` 要求 Docker Engine 25+；安装器会明确检查。Linux 5.10
 可用，因为每个安全子挂载都独立设为只读，不依赖 Linux 5.12 才提供的递归只读。
 

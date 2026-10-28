@@ -1,4 +1,4 @@
-#!/usr/bin/python3.11
+#!/usr/bin/python3.12
 """在目标机本地生成 dotenv / JSON / YAML 标量补丁，真实配置不会返回后端。"""
 
 from __future__ import annotations

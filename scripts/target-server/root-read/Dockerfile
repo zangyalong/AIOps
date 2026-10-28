@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=m.daocloud.io/docker.io/library/debian:bookworm-slim
+ARG BASE_IMAGE=m.daocloud.io/docker.io/library/python:3.12-slim-bookworm
 FROM ${BASE_IMAGE}
 
 RUN sed -Ei \
@@ -25,11 +25,10 @@ RUN sed -Ei \
         jq \
         libcap2 \
         procps \
-        python3 \
         ripgrep \
         systemd \
-    && /usr/bin/python3 -c \
-        'import ctypes, json, os, re, selectors, signal, subprocess, sys, time; ctypes.CDLL("libcap.so.2"); from typing import NoReturn' \
+    && /usr/local/bin/python3.12 -c \
+        'import ctypes, json, os, re, selectors, signal, subprocess, sys, time; assert sys.version_info[:2] == (3, 12), sys.version; ctypes.CDLL("libcap.so.2"); from typing import NoReturn' \
     && rm -rf /var/lib/apt/lists/* \
     && rm -f /etc/apt/apt.conf.d/99aiops-build
 
@@ -45,4 +44,4 @@ ENV HOME=/tmp \
     PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     SYSTEMD_PAGER=cat
 
-ENTRYPOINT ["/usr/bin/python3", "/usr/local/libexec/aiops/root-read-entrypoint.py"]
+ENTRYPOINT ["/usr/local/bin/python3.12", "/usr/local/libexec/aiops/root-read-entrypoint.py"]

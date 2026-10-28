@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/local/bin/python3.12
 """AIOps root 只读容器入口：校验 stdin 协议并在容器内执行诊断命令。"""
 
 from __future__ import annotations

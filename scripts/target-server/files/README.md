@@ -7,6 +7,8 @@
 - `aiops-file-write`：校验预览时的 SHA-256、保留权限、生成备份并原子替换；
 - `config_patch.py`：只在目标机处理 dotenv 已有变量或 JSON Pointer 指向的 JSON/YAML 已有标量，其他真实字段不会返回后端。
 
+安装和运行固定使用 `/usr/bin/python3.12`，该解释器必须能导入 PyYAML（`/usr/bin/python3.12 -c 'import yaml'`）。不使用系统默认 `python3` 或 Python 3.11 回退，也不修改系统默认 Python。
+
 默认白名单为空。私钥、`/etc/shadow`、sudoers 等路径始终禁止；包含密码、Token、连接串凭据的行只返回脱敏值。
 
 结构化补丁只允许精确写授权文件，并拒绝敏感字段、自动新增、对象/数组替换、重复键和含换行值。dotenv、JSON 与 YAML 补丁只替换目标标量的原始字节；YAML 还会拒绝别名、合并键和自定义标签，避免一个路径影响多个字段。普通文本仍走完整 diff 的整文件更新。

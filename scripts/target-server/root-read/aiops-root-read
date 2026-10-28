@@ -17,7 +17,7 @@ readonly EMPTY_DIR="/var/lib/aiops/root-read/empty-dir"
 readonly EMPTY_FILE="/var/lib/aiops/root-read/empty-file"
 readonly MASKED_DEV_DIR="/var/lib/aiops/root-read/masked-dev"
 readonly HOST_MOUNTS_HELPER="/usr/local/libexec/aiops/root-read-host-mounts.py"
-readonly HOST_PYTHON="/usr/bin/python3.11"
+readonly HOST_PYTHON="/usr/bin/python3.12"
 readonly DOCKER_BIN="$(command -v docker || true)"
 
 [[ -n "$DOCKER_BIN" ]] || fail "找不到 Docker CLI"
@@ -26,7 +26,7 @@ readonly DOCKER_BIN="$(command -v docker || true)"
     && -d "$MASKED_DEV_DIR" && -f "$MASKED_DEV_DIR/null" ]] \
     || fail "敏感路径遮蔽资源不完整"
 [[ -x "$HOST_MOUNTS_HELPER" ]] || fail "缺少 root 所有的宿主机挂载解析器"
-[[ -x "$HOST_PYTHON" ]] || fail "缺少 Python 3.11：请先安装 python3.11"
+[[ -x "$HOST_PYTHON" ]] || fail "缺少 Python 3.12：请先安装 python3.12"
 command -v timeout >/dev/null 2>&1 || fail "系统缺少 timeout 命令"
 command -v mktemp >/dev/null 2>&1 || fail "系统缺少 mktemp 命令"
 

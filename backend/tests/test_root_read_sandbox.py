@@ -62,7 +62,7 @@ class RootReadSandboxContractTest(unittest.TestCase):
     def test_dockerfile_uses_the_daocloud_base_image_proxy(self) -> None:
         dockerfile = (ROOT_READ_DIR / "Dockerfile").read_text()
         self.assertIn(
-            "ARG BASE_IMAGE=m.daocloud.io/docker.io/library/debian:bookworm-slim",
+            "ARG BASE_IMAGE=m.daocloud.io/docker.io/library/python:3.12-slim-bookworm",
             dockerfile,
         )
         self.assertIn("FROM ${BASE_IMAGE}", dockerfile)
@@ -80,9 +80,15 @@ class RootReadSandboxContractTest(unittest.TestCase):
                 self.assertIn(fragment, dockerfile)
         self.assertNotIn("mirrors.tuna.tsinghua.edu.cn/debian-security", dockerfile)
 
-    def test_dockerfile_installs_the_full_python_standard_library(self) -> None:
+    def test_dockerfile_uses_python_312_and_checks_the_standard_library(self) -> None:
         dockerfile = (ROOT_READ_DIR / "Dockerfile").read_text()
-        self.assertIn("        python3 \\", dockerfile)
+        self.assertNotIn("\n        python3 ", dockerfile)
+        self.assertIn("/usr/local/bin/python3.12 -c", dockerfile)
+        self.assertIn("assert sys.version_info[:2] == (3, 12)", dockerfile)
+        self.assertIn('ENTRYPOINT ["/usr/local/bin/python3.12", ', dockerfile)
+        self.assertTrue(
+            ENTRYPOINT.read_text().startswith("#!/usr/local/bin/python3.12\n")
+        )
         self.assertIn("        libcap2 \\", dockerfile)
         self.assertNotIn("python3-minimal", dockerfile)
         self.assertIn("import ctypes, json, os, re, selectors", dockerfile)
@@ -136,14 +142,14 @@ class RootReadSandboxContractTest(unittest.TestCase):
             [(b"/", b"ext4"), (b"/data disk", b"ext4")],
         )
 
-    def test_host_mount_parser_uses_explicit_python_311(self) -> None:
+    def test_host_mount_parser_uses_explicit_python_312(self) -> None:
         helper = (ROOT_READ_DIR / "host_mounts.py").read_text()
         launcher = (ROOT_READ_DIR / "aiops-root-read").read_text()
         installer = (ROOT_READ_DIR / "install.sh").read_text()
-        self.assertTrue(helper.startswith("#!/usr/bin/python3.11\n"))
-        self.assertIn('readonly HOST_PYTHON="/usr/bin/python3.11"', launcher)
+        self.assertTrue(helper.startswith("#!/usr/bin/python3.12\n"))
+        self.assertIn('readonly HOST_PYTHON="/usr/bin/python3.12"', launcher)
         self.assertIn('"$HOST_PYTHON" "$HOST_MOUNTS_HELPER"', launcher)
-        self.assertIn('readonly HOST_PYTHON="/usr/bin/python3.11"', installer)
+        self.assertIn('readonly HOST_PYTHON="/usr/bin/python3.12"', installer)
         self.assertIn('"$HOST_PYTHON" "$SCRIPT_DIR/host_mounts.py"', installer)
 
     def test_sudoers_allows_only_the_no_argument_gateway(self) -> None:

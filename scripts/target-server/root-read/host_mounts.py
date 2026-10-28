@@ -1,4 +1,4 @@
-#!/usr/bin/python3.11
+#!/usr/bin/python3.12
 """从 Linux mountinfo 输出去重后的挂载点与文件系统类型，使用 NUL 分隔。"""
 
 from __future__ import annotations

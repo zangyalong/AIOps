@@ -4,7 +4,7 @@
 
 POLICY_FILE="/etc/aiops/file-access.allowlist"
 MAX_FILE_BYTES=65536
-CONFIG_PATCH_PYTHON="/usr/bin/python3.11"
+CONFIG_PATCH_PYTHON="/usr/bin/python3.12"
 CONFIG_PATCH_HELPER="/usr/local/libexec/aiops/config-patch.py"
 
 file_fail() {
@@ -75,7 +75,7 @@ validate_text_file() {
 }
 
 validate_config_patch_helper() {
-    [[ -x "$CONFIG_PATCH_PYTHON" ]] || file_fail "缺少 Python 3.11 配置补丁运行时"
+    [[ -x "$CONFIG_PATCH_PYTHON" ]] || file_fail "缺少 Python 3.12 配置补丁运行时"
     [[ -f "$CONFIG_PATCH_HELPER" && ! -L "$CONFIG_PATCH_HELPER" ]] ||
         file_fail "结构化配置补丁器不存在或不安全"
     local owner mode

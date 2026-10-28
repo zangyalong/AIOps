@@ -248,6 +248,11 @@ class FileGatewayContractTest(unittest.TestCase):
         self.assertNotIn("reload", writer.lower())
         self.assertIn("config_patch.py", installer)
         self.assertIn("import yaml", installer)
+        common = (FILES_DIR / "aiops-file-common").read_text()
+        helper = PATCH_HELPER.read_text()
+        self.assertIn('readonly HOST_PYTHON="/usr/bin/python3.12"', installer)
+        self.assertIn('CONFIG_PATCH_PYTHON="/usr/bin/python3.12"', common)
+        self.assertTrue(helper.startswith("#!/usr/bin/python3.12\n"))
         self.assertNotIn("NOPASSWD: ALL", sudoers)
 
     def test_gateway_shell_scripts_parse(self) -> None:
